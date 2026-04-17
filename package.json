@@ -9,6 +9,9 @@
     "types": "wrangler types",
     "check": "vp check && tsc --noEmit"
   },
+  "dependencies": {
+    "grammy": "^1.42.0"
+  },
   "devDependencies": {
     "typescript": "~6.0.2",
     "vite": "catalog:",
