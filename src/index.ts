@@ -1,23 +1,18 @@
-import { Bot, webhookCallback } from "grammy";
+import { webhookCallback, type Bot } from "grammy";
+import { createBot } from "./telegram";
 
 export interface Env {
   BOT_TOKEN: string;
 }
 
+let bot: Bot | undefined;
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const bot = new Bot(env.BOT_TOKEN);
-
-    bot.command("start", async (ctx) => {
-      await ctx.reply("Started!");
-    });
-
-    bot.on("message:text", async (ctx) => {
-      await ctx.reply("It's working!");
-    });
 
     if (url.pathname === "/telegram") {
+      bot ??= createBot(env.BOT_TOKEN);
       return webhookCallback(bot, "cloudflare-mod")(request);
     }
 
