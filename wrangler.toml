@@ -1,3 +1,7 @@
 name = "rei"
 main = "src/index.ts"
 compatibility_date = "2025-04-17"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
