@@ -2,7 +2,7 @@ import { routeAgentRequest } from "agents";
 import type { Env } from "./agent";
 import { handleTelegramWebhook } from "./telegram";
 
-export { ReiAgent } from "./agent";
+export { MizookAgent } from "./agent";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

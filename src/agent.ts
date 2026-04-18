@@ -7,7 +7,7 @@ import { getTelegramApi } from "./telegram-client";
 export interface Env {
   AI: Ai;
   BOT_TOKEN: string;
-  REI_AGENT: DurableObjectNamespace<ReiAgent>;
+  MIZOOK_AGENT: DurableObjectNamespace<MizookAgent>;
 }
 
 type TelegramTurn = {
@@ -61,7 +61,7 @@ function createTelegramTurn(input: { chatId: number; replyToMessageId?: number }
   };
 }
 
-export class ReiAgent extends Think<Env> {
+export class MizookAgent extends Think<Env> {
   private telegramTurn: TelegramTurn | null = null;
 
   getModel() {
@@ -69,7 +69,7 @@ export class ReiAgent extends Think<Env> {
   }
 
   getSystemPrompt() {
-    return "You are Rei, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.";
+    return "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.";
   }
 
   configureSession(session: Session) {

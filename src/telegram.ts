@@ -1,6 +1,6 @@
 import { webhookCallback } from "grammy";
 import { getTelegramBot } from "./telegram-client";
-import type { Env, ReiAgent } from "./agent";
+import type { Env, MizookAgent } from "./agent";
 
 let bot: ReturnType<typeof getTelegramBot> | undefined;
 
@@ -12,8 +12,8 @@ function getBot(env: Env) {
   });
 
   bot.on("message:text", async (ctx) => {
-    const agentId = env.REI_AGENT.idFromName(String(ctx.chat.id));
-    const agent = env.REI_AGENT.get(agentId) as unknown as ReiAgent;
+    const agentId = env.MIZOOK_AGENT.idFromName(String(ctx.chat.id));
+    const agent = env.MIZOOK_AGENT.get(agentId) as unknown as MizookAgent;
 
     await agent.submitTelegramMessage({
       chatId: ctx.chat.id,
