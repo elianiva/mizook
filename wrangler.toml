@@ -1,6 +1,18 @@
 name = "rei"
 main = "src/index.ts"
 compatibility_date = "2025-04-17"
+compatibility_flags = ["nodejs_compat", "experimental"]
+
+[ai]
+binding = "AI"
+
+[[durable_objects.bindings]]
+class_name = "ReiAgent"
+name = "REI_AGENT"
+
+[[migrations]]
+new_sqlite_classes = ["ReiAgent"]
+tag = "v1"
 
 [observability.logs]
 enabled = true

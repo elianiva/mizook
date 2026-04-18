@@ -10,7 +10,12 @@
     "check": "vp check && tsc --noEmit"
   },
   "dependencies": {
-    "grammy": "^1.42.0"
+    "@cloudflare/think": "^0.2.4",
+    "agents": "^0.11.2",
+    "ai": "^6.0.168",
+    "grammy": "^1.42.0",
+    "workers-ai-provider": "^3.1.11",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "typescript": "~6.0.2",

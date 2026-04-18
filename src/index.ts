@@ -1,21 +1,18 @@
-import { webhookCallback, type Bot } from "grammy";
-import { createBot } from "./telegram";
+import { routeAgentRequest } from "agents";
+import type { Env } from "./agent";
+import { handleTelegramWebhook } from "./telegram";
 
-export interface Env {
-  BOT_TOKEN: string;
-}
-
-let bot: Bot | undefined;
+export { ReiAgent } from "./agent";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+    const routed = await routeAgentRequest(request, env);
+    if (routed) return routed;
 
-    if (url.pathname === "/telegram") {
-      bot ??= createBot(env.BOT_TOKEN);
-      return webhookCallback(bot, "cloudflare-mod")(request);
+    if (new URL(request.url).pathname === "/telegram") {
+      return handleTelegramWebhook(request, env);
     }
 
-    return new Response("Nothing to see here...", { status: 404 });
+    return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
