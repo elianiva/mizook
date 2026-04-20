@@ -54,7 +54,11 @@ function getBot(env: Env) {
           text: ctx.message.text,
         });
       } catch (err) {
-        log.error({ action: "bot_response", phase: "error", error: err });
+        log.error({
+          action: "bot_response",
+          phase: "error",
+          error: err.message ?? "Unknown Error",
+        });
       }
     });
 
