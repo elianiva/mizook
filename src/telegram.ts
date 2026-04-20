@@ -1,6 +1,7 @@
 import { webhookCallback } from "grammy";
 import { getTelegramBot } from "./telegram-client";
-import type { Env, MizookAgent } from "./agent";
+import type { Env } from "./agent";
+import { log } from "evlog";
 
 let bot: ReturnType<typeof getTelegramBot> | undefined;
 let initialized = false;
@@ -23,6 +24,7 @@ function getBot(env: Env) {
   if (!initialized) {
     const allowedUserIds = parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS);
 
+    log.info({ action: "bot_init", phase: "applying whitelist middleware" });
     bot.use(async (ctx, next) => {
       if (ctx.from?.id == null || !allowedUserIds.has(ctx.from.id)) {
         await ctx.reply("Access denied.");
@@ -32,19 +34,28 @@ function getBot(env: Env) {
       await next();
     });
 
+    log.info({ action: "bot_init", phase: "registering start command" });
     bot.command("start", async (ctx) => {
+      log.info({ action: "bot_command", phase: "responding /start" });
       await ctx.reply("Hello. Send me a message.");
     });
 
+    log.info({ action: "bot_init", phase: "registering message handler" });
     bot.on("message:text", async (ctx) => {
-      const agentId = env.MIZOOK_AGENT.idFromString(String(ctx.chat.username));
-      const agent = env.MIZOOK_AGENT.get(agentId);
+      try {
+        log.info({ action: "bot_response", phase: "getting DO agent" });
+        const agentId = env.MIZOOK_AGENT.idFromString(String(ctx.chatId));
+        const agent = env.MIZOOK_AGENT.get(agentId);
 
-      await agent.submitTelegramMessage({
-        chatId: ctx.chat.id,
-        messageId: ctx.message.message_id,
-        text: ctx.message.text,
-      });
+        log.info({ action: "bot_response", phase: "responding to message" });
+        await agent.submitTelegramMessage({
+          chatId: ctx.chat.id,
+          messageId: ctx.message.message_id,
+          text: ctx.message.text,
+        });
+      } catch (err) {
+        log.error({ action: "bot_response", phase: "error", error: err });
+      }
     });
 
     initialized = true;
