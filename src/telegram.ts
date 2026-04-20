@@ -38,7 +38,7 @@ function getBot(env: Env) {
 
     bot.on("message:text", async (ctx) => {
       const agentId = env.MIZOOK_AGENT.idFromString(String(ctx.chat.id));
-      const agent = env.MIZOOK_AGENT.get(agentId) as unknown as MizookAgent;
+      const agent = env.MIZOOK_AGENT.get(agentId);
 
       await agent.submitTelegramMessage({
         chatId: ctx.chat.id,
