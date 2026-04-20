@@ -9,6 +9,7 @@ export interface Env {
   BOT_TOKEN: string;
   MIZOOK_AGENT: DurableObjectNamespace<MizookAgent>;
   MODEL_API_KEY: string;
+  TELEGRAM_ALLOWED_USER_IDS: string;
 }
 
 type TelegramTurn = {
