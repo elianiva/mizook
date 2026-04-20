@@ -1,6 +1,5 @@
 import { callable } from "agents";
 import { Think, type ChatResponseResult, type Session, type TurnContext } from "@cloudflare/think";
-import { createWorkersAI } from "workers-ai-provider";
 import type { UIMessage } from "ai";
 import { getTelegramApi } from "./telegram-client";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
@@ -9,6 +8,7 @@ export interface Env {
   AI: Ai;
   BOT_TOKEN: string;
   MIZOOK_AGENT: DurableObjectNamespace<MizookAgent>;
+  MODEL_API_KEY: string;
 }
 
 type TelegramTurn = {
@@ -69,11 +69,6 @@ export class MizookAgent extends Think<Env> {
     // TODO: might worth migrating to CF ai gateway?
     const openrouter = createOpenRouter({
       apiKey: this.env.MODEL_API_KEY,
-      extraBody: {
-        provider: {
-          only: ["cloudflare"],
-        },
-      },
     });
     // TODO: dynamic model selection?
     return openrouter.languageModel("moonshotai/kimi-k2.5");
