@@ -3,6 +3,7 @@ import { Think, type ChatResponseResult, type Session, type TurnContext } from "
 import { createWorkersAI } from "workers-ai-provider";
 import type { UIMessage } from "ai";
 import { getTelegramApi } from "./telegram-client";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 export interface Env {
   AI: Ai;
@@ -65,7 +66,17 @@ export class MizookAgent extends Think<Env> {
   private telegramTurn: TelegramTurn | null = null;
 
   getModel() {
-    return createWorkersAI({ binding: this.env.AI })("@cf/moonshotai/kimi-k2.5");
+    // TODO: might worth migrating to CF ai gateway?
+    const openrouter = createOpenRouter({
+      apiKey: this.env.MODEL_API_KEY,
+      extraBody: {
+        provider: {
+          only: ["cloudflare"],
+        },
+      },
+    });
+    // TODO: dynamic model selection?
+    return openrouter.languageModel("moonshotai/kimi-k2.5");
   }
 
   getSystemPrompt() {
@@ -103,9 +114,15 @@ export class MizookAgent extends Think<Env> {
 
     if (turn.messageIds[0] != null) return;
 
-    const sent = await api.sendMessage(turn.chatId, "Thinking…", turn.replyToMessageId ? {
-      reply_parameters: { message_id: turn.replyToMessageId },
-    } : undefined);
+    const sent = await api.sendMessage(
+      turn.chatId,
+      "Thinking…",
+      turn.replyToMessageId
+        ? {
+          reply_parameters: { message_id: turn.replyToMessageId },
+        }
+        : undefined,
+    );
 
     turn.messageIds[0] = sent.message_id;
     turn.renderedChunks[0] = "Thinking…";
@@ -166,7 +183,7 @@ export class MizookAgent extends Think<Env> {
       if (!turn.flushTimer) {
         turn.flushTimer = setTimeout(() => {
           turn.flushTimer = null;
-          void this.flushTelegramTurn(turn, true).catch(() => {});
+          void this.flushTelegramTurn(turn, true).catch(() => { });
         }, wait);
       }
       return;
@@ -196,9 +213,15 @@ export class MizookAgent extends Think<Env> {
         const previous = turn.renderedChunks[i];
 
         if (existingId == null) {
-          const sent = await api.sendMessage(turn.chatId, text, i === 0 && turn.replyToMessageId ? {
-            reply_parameters: { message_id: turn.replyToMessageId },
-          } : undefined);
+          const sent = await api.sendMessage(
+            turn.chatId,
+            text,
+            i === 0 && turn.replyToMessageId
+              ? {
+                reply_parameters: { message_id: turn.replyToMessageId },
+              }
+              : undefined,
+          );
           turn.messageIds[i] = sent.message_id;
           turn.renderedChunks[i] = text;
           continue;
@@ -221,7 +244,7 @@ export class MizookAgent extends Think<Env> {
       turn.lastEditAt = Date.now();
       const pending = turn.flushRequested;
       turn.flushRequested = false;
-      if (pending) void this.flushTelegramTurn(turn, true).catch(() => {});
+      if (pending) void this.flushTelegramTurn(turn, true).catch(() => { });
     });
 
     return turn.flushInFlight;
