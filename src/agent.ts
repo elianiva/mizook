@@ -3,7 +3,7 @@ import { Think, type ChatResponseResult, type Session, type TurnContext } from "
 import type { UIMessage } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getTelegramApi } from "./telegram-client";
-import { log } from "evlog";
+import { createScopedLogger } from "./logger";
 
 export interface Env {
   AI: Ai;
@@ -71,6 +71,7 @@ function createTelegramTurn(input: { chatId: number; replyToMessageId?: number }
 
 export class MizookAgent extends Think<Env> {
   private telegramTurn: TelegramTurn | null = null;
+  private turnLog: ReturnType<typeof createScopedLogger> | null = null;
 
   getModel() {
     const opencode = createOpenAICompatible({
@@ -113,6 +114,13 @@ export class MizookAgent extends Think<Env> {
       replyToMessageId: input.messageId,
     });
 
+    this.turnLog = createScopedLogger({
+      action: "turn",
+      chat_id: input.chatId,
+      message_id: input.messageId,
+      phase: "submitted",
+    });
+
     await this.saveMessages((current) => [
       ...current,
       {
@@ -127,6 +135,10 @@ export class MizookAgent extends Think<Env> {
   override async beforeTurn(_ctx: TurnContext) {
     const turn = this.telegramTurn;
     if (!turn) return;
+
+    if (this.turnLog) {
+      this.turnLog.set({ phase: "before_turn" });
+    }
 
     const api = getTelegramApi(this.env.BOT_TOKEN);
     await api.sendChatAction(turn.chatId, "typing");
@@ -163,18 +175,25 @@ export class MizookAgent extends Think<Env> {
     const turn = this.telegramTurn;
     this.telegramTurn = null;
 
-    if (!turn || result.status !== "completed") return;
+    if (!turn || result.status !== "completed") {
+      this.turnLog = null;
+      return;
+    }
 
     turn.buffer = extractText(result.message) || turn.buffer;
     await this.flushTelegramTurn(turn, true);
 
-    log.info({
-      action: "turn_complete",
-      requestId: result.requestId,
-      model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
-      latencyMs: Date.now() - turn.startTime,
-      status: result.status,
-    });
+    if (this.turnLog) {
+      this.turnLog.set({
+        phase: "complete",
+        requestId: result.requestId,
+        model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
+        latencyMs: Date.now() - turn.startTime,
+        result: result.status,
+      });
+      this.turnLog.emit();
+      this.turnLog = null;
+    }
   }
 
   override async onChatError(error: unknown) {
@@ -194,10 +213,14 @@ export class MizookAgent extends Think<Env> {
       await api.sendMessage(turn.chatId, "Sorry, something went wrong.");
     }
 
-    log.error({
-      action: "turn_error",
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (this.turnLog) {
+      this.turnLog.set({
+        phase: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.turnLog.emit();
+      this.turnLog = null;
+    }
 
     return error;
   }

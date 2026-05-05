@@ -1,7 +1,8 @@
 import { webhookCallback } from "grammy";
 import { getTelegramBot } from "./telegram-client";
 import type { Env } from "./env";
-import { log } from "evlog";
+import type { RequestLogger } from "evlog";
+import { createScopedLogger } from "./logger";
 
 let bot: ReturnType<typeof getTelegramBot> | undefined;
 let initialized = false;
@@ -24,41 +25,52 @@ function getBot(env: Env) {
   if (!initialized) {
     const allowedUserIds = parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS);
 
-    log.info({ action: "bot_init", phase: "applying whitelist middleware" });
     bot.use(async (ctx, next) => {
       if (ctx.from?.id == null || !allowedUserIds.has(ctx.from.id)) {
+        const l = createScopedLogger({ action: "access_denied", user_id: ctx.from?.id });
         await ctx.reply("Access denied.");
+        l.emit({ result: "denied" });
         return;
       }
 
       await next();
     });
 
-    log.info({ action: "bot_init", phase: "registering start command" });
     bot.command("start", async (ctx) => {
-      log.info({ action: "bot_command", phase: "responding /start" });
+      const l = createScopedLogger({
+        action: "command",
+        command: "/start",
+        user_id: ctx.from?.id,
+        chat_id: ctx.chat?.id,
+      });
       await ctx.reply("Hello. I am Mizook. Send me a message and I will respond.");
+      l.emit({ result: "ok" });
     });
 
-    log.info({ action: "bot_init", phase: "registering message handler" });
     bot.on("message:text", async (ctx) => {
+      const l = createScopedLogger({
+        action: "message",
+        user_id: ctx.from?.id,
+        chat_id: ctx.chat.id,
+        message_id: ctx.message.message_id,
+      });
+
       try {
-        log.info({ action: "bot_response", phase: "getting DO agent" });
+        l.set({ phase: "routing_agent" });
         const agentId = env.MIZOOK_AGENT.idFromString(String(ctx.chatId));
         const agent = env.MIZOOK_AGENT.get(agentId);
 
-        log.info({ action: "bot_response", phase: "responding to message" });
+        l.set({ phase: "submitting_to_agent" });
         await agent.submitTelegramMessage({
           chatId: ctx.chat.id,
           messageId: ctx.message.message_id,
           text: ctx.message.text,
         });
+
+        l.emit({ result: "submitted" });
       } catch (err) {
-        log.error({
-          action: "bot_response",
-          phase: "error",
-          error: err.message ?? "Unknown Error",
-        });
+        l.set({ error: err instanceof Error ? err.message : String(err) });
+        l.emit({ result: "error" });
       }
     });
 
@@ -68,15 +80,29 @@ function getBot(env: Env) {
   return bot;
 }
 
-export async function handleTelegramWebhook(request: Request, env: Env) {
-  // Verify webhook secret token if configured
+export async function handleTelegramWebhook(
+  request: Request,
+  env: Env,
+  log: RequestLogger,
+) {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   if (secret) {
     const header = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
     if (header !== secret) {
+      log.set({ action: "webhook", reason: "unauthorized" });
+      log.emit({ status: 401 });
       return new Response("Unauthorized", { status: 401 });
     }
   }
 
-  return webhookCallback(getBot(env), "cloudflare-mod")(request);
+  try {
+    const response = await webhookCallback(getBot(env), "cloudflare-mod")(request);
+    log.set({ action: "webhook" });
+    log.emit({ status: response.status });
+    return response;
+  } catch (err) {
+    log.set({ action: "webhook", error: err instanceof Error ? err.message : String(err) });
+    log.emit({ status: 500 });
+    throw err;
+  }
 }
