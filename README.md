@@ -101,7 +101,6 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 | Command | Description |
 |---|---|
 | `/start` | Greeting message |
-| `/setwebhook <url>` | Register Telegram webhook to worker URL |
 
 ## Architecture
 
