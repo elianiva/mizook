@@ -1,5 +1,5 @@
 import { routeAgentRequest } from "agents";
-import type { Env } from "./agent";
+import type { Env } from "./env";
 import { handleTelegramWebhook } from "./telegram";
 
 export { MizookAgent } from "./agent";
@@ -9,8 +9,15 @@ export default {
     const routed = await routeAgentRequest(request, env);
     if (routed) return routed;
 
-    if (new URL(request.url).pathname === "/telegram") {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/telegram") {
       return handleTelegramWebhook(request, env);
+    }
+
+    // Health check
+    if (url.pathname === "/health") {
+      return new Response("OK", { status: 200 });
     }
 
     return new Response("Not found", { status: 404 });

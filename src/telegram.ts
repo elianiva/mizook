@@ -1,6 +1,6 @@
 import { webhookCallback } from "grammy";
 import { getTelegramBot } from "./telegram-client";
-import type { Env } from "./agent";
+import type { Env } from "./env";
 import { log } from "evlog";
 
 let bot: ReturnType<typeof getTelegramBot> | undefined;
@@ -37,7 +37,39 @@ function getBot(env: Env) {
     log.info({ action: "bot_init", phase: "registering start command" });
     bot.command("start", async (ctx) => {
       log.info({ action: "bot_command", phase: "responding /start" });
-      await ctx.reply("Hello. Send me a message.");
+      await ctx.reply("Hello. I am Mizook. Send me a message and I will respond.");
+    });
+
+    bot.command("setwebhook", async (ctx) => {
+      log.info({ action: "bot_command", phase: "responding /setwebhook" });
+      const workerUrl = ctx.match.trim();
+      if (!workerUrl) {
+        await ctx.reply(
+          "Usage: /setwebhook https://your-worker.your-subdomain.workers.dev\n\n" +
+          "This registers the Telegram webhook URL. Make sure the worker is deployed first.",
+        );
+        return;
+      }
+      try {
+        const webhookUrl = `${workerUrl.replace(/\/+$/, "")}/telegram`;
+        const secret = env.TELEGRAM_WEBHOOK_SECRET;
+        const body: Record<string, string> = { url: webhookUrl };
+        if (secret) body.secret_token = secret;
+
+        const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = await res.json();
+        if (json.ok) {
+          await ctx.reply(`Webhook set to ${webhookUrl}`);
+        } else {
+          await ctx.reply(`Failed: ${JSON.stringify(json)}`);
+        }
+      } catch (err) {
+        await ctx.reply(`Error: ${err.message}`);
+      }
     });
 
     log.info({ action: "bot_init", phase: "registering message handler" });
@@ -69,5 +101,14 @@ function getBot(env: Env) {
 }
 
 export async function handleTelegramWebhook(request: Request, env: Env) {
+  // Verify webhook secret token if configured
+  const secret = env.TELEGRAM_WEBHOOK_SECRET;
+  if (secret) {
+    const header = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+    if (header !== secret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
   return webhookCallback(getBot(env), "cloudflare-mod")(request);
 }
