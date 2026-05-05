@@ -60,22 +60,10 @@ vp dev
 vp deploy
 
 # Set secrets in production
-echo <bot-token> | wrangler secret put BOT_TOKEN
-echo <api-key> | wrangler secret put OPENCODE_GO_API_KEY
-echo <user-id> | wrangler secret put TELEGRAM_ALLOWED_USER_IDS
-echo <secret> | wrangler secret put TELEGRAM_WEBHOOK_SECRET
-```
-
-### 5. Register webhook
-
-Send `/setwebhook https://your-worker.your-subdomain.workers.dev` to your bot on Telegram.
-
-Or do it manually:
-
-```bash
-curl -X POST https://api.telegram.org/bot<BOT_TOKEN>/setWebhook \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://your-worker.your-subdomain.workers.dev/telegram", "secret_token": "<TELEGRAM_WEBHOOK_SECRET>"}'
+wrangler secret put BOT_TOKEN
+wrangler secret put OPENCODE_GO_API_KEY
+wrangler secret put TELEGRAM_ALLOWED_USER_IDS
+wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
 ## Configuration
