@@ -1,19 +1,23 @@
 import { callable } from "agents";
 import { Think, type ChatResponseResult, type Session, type TurnContext } from "@cloudflare/think";
 import type { UIMessage } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getTelegramApi } from "./telegram-client";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { log } from "evlog";
 
 export interface Env {
   AI: Ai;
   BOT_TOKEN: string;
   MIZOOK_AGENT: DurableObjectNamespace<MizookAgent>;
-  MODEL_API_KEY: string;
+  OPENCODE_GO_API_KEY: string;
   TELEGRAM_ALLOWED_USER_IDS: string;
+  OPENCODE_GO_MODEL?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
 }
 
 type TelegramTurn = {
   chatId: number;
+  requestId?: string;
   replyToMessageId?: number;
   messageIds: number[];
   renderedChunks: string[];
@@ -22,6 +26,7 @@ type TelegramTurn = {
   flushTimer: ReturnType<typeof setTimeout> | null;
   flushInFlight: Promise<void> | null;
   flushRequested: boolean;
+  startTime: number;
 };
 
 const TELEGRAM_CHUNK_LIMIT = 3500;
@@ -46,7 +51,7 @@ function splitTelegramText(text: string): string[] {
   for (let i = 0; i < text.length; i += TELEGRAM_CHUNK_LIMIT) {
     chunks.push(text.slice(i, i + TELEGRAM_CHUNK_LIMIT));
   }
-  return chunks.length ? chunks : ["…"];
+  return chunks.length ? chunks : ["\u2026"];
 }
 
 function createTelegramTurn(input: { chatId: number; replyToMessageId?: number }): TelegramTurn {
@@ -60,6 +65,7 @@ function createTelegramTurn(input: { chatId: number; replyToMessageId?: number }
     flushTimer: null,
     flushInFlight: null,
     flushRequested: false,
+    startTime: Date.now(),
   };
 }
 
@@ -67,12 +73,29 @@ export class MizookAgent extends Think<Env> {
   private telegramTurn: TelegramTurn | null = null;
 
   getModel() {
-    // TODO: might worth migrating to CF ai gateway?
-    const openrouter = createOpenRouter({
-      apiKey: this.env.MODEL_API_KEY,
+    const opencode = createOpenAICompatible({
+      baseURL: "https://opencode.ai/zen/go/v1",
+      apiKey: this.env.OPENCODE_GO_API_KEY,
+      fetch: this.fetchWithTimeout(60_000),
     });
-    // TODO: dynamic model selection?
-    return openrouter.languageModel("moonshotai/kimi-k2.5");
+    return opencode.chatModel(this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash");
+  }
+
+  private fetchWithTimeout(timeout: number) {
+    return async (url: RequestInfo | URL, options?: RequestInit) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } catch (e) {
+        if ((e as Error).name === "AbortError") {
+          throw new Error(`Model request timed out after ${timeout}ms`);
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
   }
 
   getSystemPrompt() {
@@ -112,7 +135,7 @@ export class MizookAgent extends Think<Env> {
 
     const sent = await api.sendMessage(
       turn.chatId,
-      "Thinking…",
+      "Thinking\u2026",
       turn.replyToMessageId
         ? {
           reply_parameters: { message_id: turn.replyToMessageId },
@@ -121,7 +144,7 @@ export class MizookAgent extends Think<Env> {
     );
 
     turn.messageIds[0] = sent.message_id;
-    turn.renderedChunks[0] = "Thinking…";
+    turn.renderedChunks[0] = "Thinking\u2026";
     turn.lastEditAt = Date.now();
   }
 
@@ -144,6 +167,14 @@ export class MizookAgent extends Think<Env> {
 
     turn.buffer = extractText(result.message) || turn.buffer;
     await this.flushTelegramTurn(turn, true);
+
+    log.info({
+      action: "turn_complete",
+      requestId: result.requestId,
+      model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
+      latencyMs: Date.now() - turn.startTime,
+      status: result.status,
+    });
   }
 
   override async onChatError(error: unknown) {
@@ -163,6 +194,11 @@ export class MizookAgent extends Think<Env> {
       await api.sendMessage(turn.chatId, "Sorry, something went wrong.");
     }
 
+    log.error({
+      action: "turn_error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+
     return error;
   }
 
@@ -179,7 +215,7 @@ export class MizookAgent extends Think<Env> {
       if (!turn.flushTimer) {
         turn.flushTimer = setTimeout(() => {
           turn.flushTimer = null;
-          void this.flushTelegramTurn(turn, true).catch(() => { });
+          void this.flushTelegramTurn(turn, true).catch(() => {});
         }, wait);
       }
       return;
@@ -230,7 +266,6 @@ export class MizookAgent extends Think<Env> {
       }
 
       if (final) {
-        // keep the messageIds/renderedChunks for recovery/debugging
         turn.flushRequested = false;
       }
     };
@@ -240,7 +275,7 @@ export class MizookAgent extends Think<Env> {
       turn.lastEditAt = Date.now();
       const pending = turn.flushRequested;
       turn.flushRequested = false;
-      if (pending) void this.flushTelegramTurn(turn, true).catch(() => { });
+      if (pending) void this.flushTelegramTurn(turn, true).catch(() => {});
     });
 
     return turn.flushInFlight;
