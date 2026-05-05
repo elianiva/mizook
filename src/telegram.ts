@@ -57,7 +57,7 @@ function getBot(env: Env) {
 
       try {
         l.set({ phase: "routing_agent" });
-        const agentId = env.MIZOOK_AGENT.idFromString(String(ctx.chatId));
+        const agentId = env.MIZOOK_AGENT.idFromName(String(ctx.chatId));
         const agent = env.MIZOOK_AGENT.get(agentId);
 
         l.set({ phase: "submitting_to_agent" });
