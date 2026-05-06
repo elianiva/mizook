@@ -8,7 +8,7 @@ import { streamApi } from "@grammyjs/stream";
 import { getTelegramApi, getTelegramBot } from "./telegram-client";
 import { createScopedLogger } from "./logger";
 import { createCompactFunction } from "agents/experimental/memory/utils";
-import { AgentSearchProvider } from "agents/experimental/memory/session";
+import { AgentSearchProvider, AgentContextProvider } from "agents/experimental/memory/session";
 
 export interface Env {
   AI: Ai;
@@ -242,10 +242,19 @@ export class MizookAgent extends Think<Env> {
     await api.sendMessage(payload.chatId, `\u23f0 Reminder: ${payload.message}`);
   }
 
+  async onStart() {
+    const provider = new AgentContextProvider(this, "soul");
+    const stored = await provider.get();
+    if (stored === null) {
+      await provider.set(this.getSystemPrompt());
+    }
+  }
+
   @callable()
-  resetChat() {
+  async resetChat() {
     this.resetTurnState();
     this.clearMessages();
+    await this.session.refreshSystemPrompt();
   }
 
   @callable()
@@ -275,8 +284,12 @@ export class MizookAgent extends Think<Env> {
   }
 
   override async beforeTurn(_ctx: TurnContext) {
+    // Rebuild system prompt from current context blocks every turn
+    // so set_context writes to soul/memory are reflected immediately
+    const freshSystem = await this.session.refreshSystemPrompt();
+
     const turn = this.turnState;
-    if (!turn) return;
+    if (!turn) return { system: freshSystem };
 
     if (this.turnLog) {
       this.turnLog.set({ phase: "before_turn" });
@@ -294,6 +307,8 @@ export class MizookAgent extends Think<Env> {
     streamMessage(turn.chatId, Date.now(), controller.stream).catch((err) => {
       console.error("streamMessage failed:", err);
     });
+
+    return { system: freshSystem };
   }
 
   override async onChunk({ chunk }: { chunk: unknown }) {
