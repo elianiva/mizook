@@ -126,6 +126,7 @@ export class MizookAgent extends Think<Env> {
   getSystemPrompt() {
     return (
       "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.\n\n" +
+      "Format your responses using Telegram MarkdownV2 style: **bold**, *italic*, `code`, ```pre```, ~~strikethrough~~, and [inline URLs](https://example.com) where appropriate.\n\n" +
       "You have reminder capabilities. When the user asks to be reminded about something: " +
       "call set_reminder with a cron expression and the reminder message. " +
       "Use list_reminders to show active reminders and delete_reminder to cancel them."
@@ -288,9 +289,11 @@ export class MizookAgent extends Think<Env> {
     const bot = getTelegramBot(this.env.BOT_TOKEN);
     const { streamMessage } = streamApi(bot.api.raw);
 
-    streamMessage(turn.chatId, Date.now(), controller.stream).catch((err) => {
-      console.error("streamMessage failed:", err);
-    });
+    streamMessage(turn.chatId, Date.now(), controller.stream, { parse_mode: "MarkdownV2" }).catch(
+      (err) => {
+        console.error("streamMessage failed:", err);
+      },
+    );
   }
 
   override async onChunk({ chunk }: { chunk: unknown }) {
