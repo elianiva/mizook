@@ -76,6 +76,7 @@ export class MizookAgent extends Think<Env> {
   getModel() {
     const opencode = createOpenAICompatible({
       baseURL: "https://opencode.ai/zen/go/v1",
+      name: "Opencode Go",
       apiKey: this.env.OPENCODE_GO_API_KEY,
       fetch: this.fetchWithTimeout(60_000),
     });
@@ -238,7 +239,7 @@ export class MizookAgent extends Think<Env> {
       if (!turn.flushTimer) {
         turn.flushTimer = setTimeout(() => {
           turn.flushTimer = null;
-          void this.flushTelegramTurn(turn, true).catch(() => {});
+          void this.flushTelegramTurn(turn, true).catch(() => { });
         }, wait);
       }
       return;
@@ -298,9 +299,10 @@ export class MizookAgent extends Think<Env> {
       turn.lastEditAt = Date.now();
       const pending = turn.flushRequested;
       turn.flushRequested = false;
-      if (pending) void this.flushTelegramTurn(turn, true).catch(() => {});
+      if (pending) void this.flushTelegramTurn(turn, true).catch(() => { });
     });
 
     return turn.flushInFlight;
   }
 }
+
