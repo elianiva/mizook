@@ -369,7 +369,7 @@ export class MizookAgent extends Think<Env> {
           result: result.status,
         },
       });
-      this.turnLog.emit();
+      this.turnLog.emit({ message: "turn_complete" });
       this.turnLog = null;
     }
   }
@@ -395,7 +395,7 @@ export class MizookAgent extends Think<Env> {
           error: error instanceof Error ? error.message : String(error),
         },
       });
-      this.turnLog.emit();
+      this.turnLog.emit({ message: "turn_error" });
       this.turnLog = null;
     }
 
