@@ -1,7 +1,8 @@
-import { initWorkersLogger, createWorkersLogger } from "evlog/workers";
+import { initLogger } from "evlog";
+import { createWorkersLogger } from "evlog/workers";
 import { createLogger, log as globalLog } from "evlog";
 
-initWorkersLogger({ env: { service: "mizook" } });
+initLogger({ env: { service: "mizook" }, pretty: false });
 
 export { globalLog as log };
 
