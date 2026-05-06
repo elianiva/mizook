@@ -1,10 +1,11 @@
 import { callable } from "agents";
 import { Think, type ChatResponseResult, type Session, type TurnContext } from "@cloudflare/think";
-import type { UIMessage } from "ai";
+import type { ToolSet, UIMessage } from "ai";
+import { generateText, tool } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { z } from "zod";
 import { getTelegramApi } from "./telegram-client";
 import { createScopedLogger } from "./logger";
-import { generateText } from "ai";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { AgentSearchProvider } from "agents/experimental/memory/session";
 
@@ -34,6 +35,11 @@ type TelegramTurn = {
 
 const TELEGRAM_CHUNK_LIMIT = 3500;
 const TELEGRAM_FLUSH_INTERVAL_MS = 300;
+
+type ReminderPayload = {
+  chatId: number;
+  message: string;
+};
 
 function extractText(message: UIMessage): string {
   return message.parts
@@ -104,7 +110,12 @@ export class MizookAgent extends Think<Env> {
   }
 
   getSystemPrompt() {
-    return "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.";
+    return (
+      "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.\n\n" +
+      "You have reminder capabilities. When the user asks to be reminded about something: " +
+      "call set_reminder with a cron expression and the reminder message. " +
+      "Use list_reminders to show active reminders and delete_reminder to cancel them."
+    );
   }
 
   configureSession(session: Session) {
@@ -136,6 +147,82 @@ export class MizookAgent extends Think<Env> {
       )
       .compactAfter(100_000)
       .withCachedPrompt();
+  }
+
+  getTools(): ToolSet {
+    return {
+      set_reminder: tool({
+        description:
+          "Set a recurring reminder using a cron schedule. " +
+          "Use when the user asks to be reminded at regular intervals. " +
+          "Examples: 'every day at 7am' -> cron '0 7 * * *', " +
+          "'every Monday at 9am' -> cron '0 9 * * 1', " +
+          "'weekdays at 8am' -> cron '0 8 * * 1-5'",
+        inputSchema: z.object({
+          cron: z
+            .string()
+            .describe(
+              "Cron expression (minute hour day month weekday). " +
+                "Examples: '0 7 * * *' = daily at 7am, " +
+                "'0 9 * * 1' = Mondays at 9am, " +
+                "'0 8 * * 1-5' = weekdays at 8am",
+            ),
+          message: z.string().describe("The reminder message text"),
+        }),
+        execute: async ({ cron, message }) => {
+          const chatId = this.telegramTurn?.chatId;
+          if (!chatId) return "Error: No active chat session.";
+
+          const schedule = await this.schedule(cron, "sendReminder", {
+            chatId,
+            message,
+          } satisfies ReminderPayload);
+
+          return `Reminder set. ID: ${schedule.id}. I will remind you: "${message}"`;
+        },
+      }),
+
+      list_reminders: tool({
+        description: "List all active reminders",
+        inputSchema: z.object({}),
+        execute: async () => {
+          const all = await this.listSchedules();
+          const reminders = all.filter((s) => s.callback === "sendReminder");
+
+          if (reminders.length === 0) return "No active reminders.";
+
+          return reminders
+            .map((s) => {
+              const p = s.payload as ReminderPayload;
+              const next = new Date(s.time * 1000).toLocaleString();
+              const kind =
+                s.type === "cron" && "cron" in s
+                  ? `cron: ${(s as typeof s & { cron: string }).cron}`
+                  : s.type;
+              return `[${s.id.slice(0, 8)}…] ${p.message} — next: ${next} (${kind})`;
+            })
+            .join("\n");
+        },
+      }),
+
+      delete_reminder: tool({
+        description: "Cancel a reminder by its ID",
+        inputSchema: z.object({
+          scheduleId: z.string().describe("The schedule ID of the reminder to cancel"),
+        }),
+        execute: async ({ scheduleId }) => {
+          const cancelled = await this.cancelSchedule(scheduleId);
+          return cancelled
+            ? `Reminder ${scheduleId.slice(0, 8)}… cancelled.`
+            : `Reminder not found or already executed.`;
+        },
+      }),
+    };
+  }
+
+  async sendReminder(payload: ReminderPayload) {
+    const api = getTelegramApi(this.env.BOT_TOKEN);
+    await api.sendMessage(payload.chatId, `⏰ Reminder: ${payload.message}`);
   }
 
   @callable()
@@ -187,8 +274,8 @@ export class MizookAgent extends Think<Env> {
       "Thinking\u2026",
       turn.replyToMessageId
         ? {
-          reply_parameters: { message_id: turn.replyToMessageId },
-        }
+            reply_parameters: { message_id: turn.replyToMessageId },
+          }
         : undefined,
     );
 
@@ -275,7 +362,7 @@ export class MizookAgent extends Think<Env> {
       if (!turn.flushTimer) {
         turn.flushTimer = setTimeout(() => {
           turn.flushTimer = null;
-          void this.flushTelegramTurn(turn, true).catch(() => { });
+          void this.flushTelegramTurn(turn, true).catch(() => {});
         }, wait);
       }
       return;
@@ -310,8 +397,8 @@ export class MizookAgent extends Think<Env> {
             text,
             i === 0 && turn.replyToMessageId
               ? {
-                reply_parameters: { message_id: turn.replyToMessageId },
-              }
+                  reply_parameters: { message_id: turn.replyToMessageId },
+                }
               : undefined,
           );
           turn.messageIds[i] = sent.message_id;
@@ -335,7 +422,7 @@ export class MizookAgent extends Think<Env> {
       turn.lastEditAt = Date.now();
       const pending = turn.flushRequested;
       turn.flushRequested = false;
-      if (pending) void this.flushTelegramTurn(turn, true).catch(() => { });
+      if (pending) void this.flushTelegramTurn(turn, true).catch(() => {});
     });
 
     return turn.flushInFlight;
