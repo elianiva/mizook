@@ -48,6 +48,29 @@ function getBot(env: Env) {
       l.emit({ result: "ok" });
     });
 
+    bot.command("reset", async (ctx) => {
+      const l = createScopedLogger({
+        action: "command",
+        command: "/reset",
+        user_id: ctx.from?.id,
+        chat_id: ctx.chat.id,
+      });
+
+      try {
+        l.set({ phase: "routing_agent" });
+        const agent = await getAgentByName(env.MIZOOK_AGENT, String(ctx.chatId));
+
+        l.set({ phase: "resetting" });
+        await agent.resetChat();
+
+        await ctx.reply("Chat reset. Starting fresh.");
+        l.emit({ result: "ok" });
+      } catch (err) {
+        l.set({ error: err instanceof Error ? err.message : String(err) });
+        l.emit({ result: "error" });
+      }
+    });
+
     bot.on("message:text", async (ctx) => {
       const l = createScopedLogger({
         action: "message",

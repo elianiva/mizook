@@ -116,6 +116,13 @@ export class MizookAgent extends Think<Env> {
   }
 
   @callable()
+  resetChat() {
+    this.resetTurnState();
+    this.clearMessages();
+    this.session.reset?.();
+  }
+
+  @callable()
   async submitTelegramMessage(input: { chatId: number; messageId: number; text: string }) {
     this.telegramTurn = createTelegramTurn({
       chatId: input.chatId,
