@@ -11,5 +11,5 @@ export function createRequestLogger(request: Request, ctx: ExecutionContext) {
 }
 
 export function createScopedLogger(opts?: Record<string, unknown>) {
-  return createLogger(opts);
+  return createLogger({ detail: opts });
 }

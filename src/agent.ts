@@ -194,9 +194,9 @@ export class MizookAgent extends Think<Env> {
             .string()
             .describe(
               "Cron expression (minute hour day month weekday). " +
-                "Examples: '0 7 * * *' = daily at 7am, " +
-                "'0 9 * * 1' = Mondays at 9am, " +
-                "'0 8 * * 1-5' = weekdays at 8am",
+              "Examples: '0 7 * * *' = daily at 7am, " +
+              "'0 9 * * 1' = Mondays at 9am, " +
+              "'0 8 * * 1-5' = weekdays at 8am",
             ),
           message: z.string().describe("The reminder message text"),
         }),
@@ -304,7 +304,7 @@ export class MizookAgent extends Think<Env> {
     if (!turn) return { system: freshSystem };
 
     if (this.turnLog) {
-      this.turnLog.set({ phase: "before_turn" });
+      this.turnLog.set({ detail: { phase: "before_turn" } });
     }
 
     const tid = this.telegramThreadId(turn.chatId);
@@ -334,13 +334,13 @@ export class MizookAgent extends Think<Env> {
       if (sent === null) {
         sent = await tg.postMessage(tid, accumulated || "\u2026");
       } else if (now - lastEditTime >= updateInterval) {
-        tg.editMessage(tid, sent.id, accumulated).catch(() => {});
+        tg.editMessage(tid, sent.id, accumulated).catch(() => { });
         lastEditTime = now;
       }
     }
 
     if (sent) {
-      await tg.editMessage(tid, sent.id, accumulated).catch(() => {});
+      await tg.editMessage(tid, sent.id, accumulated).catch(() => { });
     }
   }
 
@@ -361,11 +361,13 @@ export class MizookAgent extends Think<Env> {
 
     if (this.turnLog) {
       this.turnLog.set({
-        phase: "complete",
-        requestId: result.requestId,
-        model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
-        latencyMs: turn ? Date.now() - turn.startTime : 0,
-        result: result.status,
+        detail: {
+          phase: "complete",
+          requestId: result.requestId,
+          model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
+          latencyMs: turn ? Date.now() - turn.startTime : 0,
+          result: result.status,
+        },
       });
       this.turnLog.emit();
       this.turnLog = null;
@@ -388,8 +390,10 @@ export class MizookAgent extends Think<Env> {
 
     if (this.turnLog) {
       this.turnLog.set({
-        phase: "error",
-        error: error instanceof Error ? error.message : String(error),
+        detail: {
+          phase: "error",
+          error: error instanceof Error ? error.message : String(error),
+        },
       });
       this.turnLog.emit();
       this.turnLog = null;

@@ -22,13 +22,13 @@ export default {
     }
 
     if (url.pathname === "/health") {
-      log.set({ action: "health_check" });
-      log.emit({ status: 200 });
+      log.set({ detail: { action: "health_check" } });
+      log.emit({ detail: { status: 200 } });
       return new Response("OK", { status: 200 });
     }
 
-    log.set({ action: "not_found", path: url.pathname });
-    log.emit({ status: 404 });
+    log.set({ detail: { action: "not_found", path: url.pathname } });
+    log.emit({ detail: { status: 404 } });
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
