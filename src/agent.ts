@@ -1,5 +1,11 @@
 import { callable } from "agents";
-import { Think, type ChatResponseResult, type Session, type TurnContext } from "@cloudflare/think";
+import {
+  Think,
+  type ChunkContext,
+  type ChatResponseResult,
+  type Session,
+  type TurnContext,
+} from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { generateText, tool } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -13,6 +19,7 @@ import type { ChatStateDO } from "chat-state-cloudflare-do";
 import { createScopedLogger } from "./logger";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { AgentSearchProvider, AgentContextProvider } from "agents/experimental/memory/session";
+import { ThreadImpl, type SerializedThread } from "chat";
 
 export interface Env {
   AI: Ai;
@@ -34,83 +41,26 @@ type ReminderPayload = {
   message: string;
 };
 
-type TurnState = {
-  platform: "telegram";
-  chatId: number;
-  replyToMessageId?: number;
-  startTime: number;
-} | {
-  platform: "discord";
-  threadId: string;
-  replyToMessageId?: string;
-  startTime: number;
-};
-
-function extractChunkDelta(chunk: unknown): string {
-  if (!chunk || typeof chunk !== "object") return "";
-  const part = chunk as { type?: string; delta?: string; textDelta?: string; text?: string };
-  if (part.type && part.type !== "text-delta") return "";
-  return part.delta ?? part.textDelta ?? part.text ?? "";
-}
-
-type StreamController = {
-  push: (text: string) => void;
-  end: () => void;
-  stream: AsyncIterable<string>;
-};
-
-function createStreamController(): StreamController {
-  let resolveNext: ((value: string | null) => void) | null = null;
-  const buffer: string[] = [];
-  let done = false;
-
-  return {
-    push(text: string) {
-      if (resolveNext) {
-        const r = resolveNext;
-        resolveNext = null;
-        r(text);
-      } else {
-        buffer.push(text);
-      }
-    },
-    end() {
-      done = true;
-      if (resolveNext) {
-        const r = resolveNext;
-        resolveNext = null;
-        r(null);
-      }
-    },
-    stream: {
-      [Symbol.asyncIterator]() {
-        return {
-          next: () => {
-            if (buffer.length > 0) {
-              return Promise.resolve({ value: buffer.shift()!, done: false });
-            }
-            if (done) return Promise.resolve({ value: undefined as unknown as string, done: true });
-            return new Promise<IteratorResult<string>>((res) => {
-              resolveNext = (value: string | null) => {
-                res(
-                  value === null
-                    ? { value: undefined as unknown as string, done: true }
-                    : { value, done: false },
-                );
-              };
-            });
-          },
-        };
-      },
-    },
+type TurnState =
+  | {
+    platform: "telegram";
+    chatId: number;
+    replyToMessageId?: number;
+    startTime: number;
+  }
+  | {
+    platform: "discord";
+    threadId: string;
+    replyToMessageId?: string;
+    startTime: number;
   };
-}
 
 export class MizookAgent extends Think<Env> {
   private turnState: TurnState | null = null;
-  private streamController: StreamController | null = null;
+  private streamWriter: WritableStreamDefaultWriter<string> | null = null;
+  private pendingStream: Promise<unknown> | null = null;
+  private serializedThread: SerializedThread | null = null;
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
-  private pendingStream: Promise<void> | null = null;
   private _telegram: TelegramAdapter | null = null;
   private _discord: DiscordAdapter | null = null;
 
@@ -228,7 +178,8 @@ export class MizookAgent extends Think<Env> {
         }),
         execute: async ({ cron, message }) => {
           const turn = this.turnState;
-          if (!turn || turn.platform !== "telegram") return "Reminders are only available in private chat.";
+          if (!turn || turn.platform !== "telegram")
+            return "Reminders are only available in private chat.";
 
           const schedule = await this.schedule(cron, "sendReminder", {
             chatId: turn.chatId,
@@ -298,7 +249,13 @@ export class MizookAgent extends Think<Env> {
   }
 
   @callable()
-  async submitTelegramMessage(input: { chatId: number; messageId: number; text: string }) {
+  async submitTelegramMessage(input: {
+    chatId: number;
+    messageId: number;
+    text: string;
+    thread: SerializedThread;
+  }) {
+    this.serializedThread = input.thread;
     this.turnState = {
       platform: "telegram",
       chatId: input.chatId,
@@ -326,7 +283,13 @@ export class MizookAgent extends Think<Env> {
   }
 
   @callable()
-  async submitDiscordMessage(input: { threadId: string; messageId: string; text: string }) {
+  async submitDiscordMessage(input: {
+    threadId: string;
+    messageId: string;
+    text: string;
+    thread: SerializedThread;
+  }) {
+    this.serializedThread = input.thread;
     this.turnState = {
       platform: "discord",
       threadId: input.threadId,
@@ -363,84 +326,33 @@ export class MizookAgent extends Think<Env> {
       this.turnLog.set({ detail: { phase: "before_turn" } });
     }
 
-    const controller = createStreamController();
-    this.streamController = controller;
+    if (!this.serializedThread) return { system: freshSystem };
 
-    if (turn.platform === "telegram") {
-      const tid = this.telegramThreadId(turn.chatId);
-      await this.getTelegram().startTyping(tid);
-      this.pendingStream = this.streamToTelegram(tid, controller.stream).catch((err) => {
-        console.error("streamToTelegram failed:", err);
-      });
-    } else {
-      await this.getDiscord().startTyping(turn.threadId);
-      this.pendingStream = this.streamToDiscord(turn.threadId, controller.stream).catch((err) => {
-        console.error("streamToDiscord failed:", err);
-      });
-    }
+    const { readable, writable } = new TransformStream<string, string>();
+    this.streamWriter = writable.getWriter();
+
+    const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();
+    const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
+
+    await thread.startTyping();
+    this.pendingStream = thread.post(readable).catch((err) => {
+      console.error("stream failed:", err);
+    });
 
     return { system: freshSystem };
   }
 
-  private async streamToTelegram(tid: string, stream: AsyncIterable<string>): Promise<void> {
-    const tg = this.getTelegram();
-    let sent: Awaited<ReturnType<typeof tg.postMessage>> | null = null;
-    let accumulated = "";
-    let lastEditTime = 0;
-    const updateInterval = 500;
-
-    for await (const chunk of stream) {
-      accumulated += chunk;
-      const now = Date.now();
-
-      if (sent === null) {
-        sent = await tg.postMessage(tid, accumulated || "\u2026");
-      } else if (now - lastEditTime >= updateInterval) {
-        tg.editMessage(tid, sent.id, accumulated).catch(() => { });
-        lastEditTime = now;
-      }
-    }
-
-    if (sent) {
-      await tg.editMessage(tid, sent.id, accumulated).catch(() => { });
-    }
-  }
-
-  private async streamToDiscord(threadId: string, stream: AsyncIterable<string>): Promise<void> {
-    const dc = this.getDiscord();
-    let sent: Awaited<ReturnType<typeof dc.postMessage>> | null = null;
-    let accumulated = "";
-    let lastEditTime = 0;
-    const updateInterval = 500;
-
-    for await (const chunk of stream) {
-      accumulated += chunk;
-      const now = Date.now();
-
-      if (sent === null) {
-        sent = await dc.postMessage(threadId, accumulated || "\u2026");
-      } else if (now - lastEditTime >= updateInterval) {
-        dc.editMessage(threadId, sent.id, accumulated).catch(() => { });
-        lastEditTime = now;
-      }
-    }
-
-    if (sent) {
-      await dc.editMessage(threadId, sent.id, accumulated).catch(() => { });
-    }
-  }
-
-  override async onChunk({ chunk }: { chunk: unknown }) {
-    const delta = extractChunkDelta(chunk);
-    if (!delta) return;
-    this.streamController?.push(delta);
+  override async onChunk({ chunk }: ChunkContext) {
+    if (chunk.type !== "text-delta" || !chunk.text) return;
+    void this.streamWriter?.write(chunk.text);
   }
 
   override async onChatResponse(result: ChatResponseResult) {
-    this.streamController?.end();
-    this.streamController = null;
+    await this.streamWriter?.close();
     await this.pendingStream;
+    this.streamWriter = null;
     this.pendingStream = null;
+    this.serializedThread = null;
 
     const turn = this.turnState;
     this.turnState = null;
@@ -462,22 +374,21 @@ export class MizookAgent extends Think<Env> {
   }
 
   override async onChatError(error: unknown) {
-    this.streamController?.end();
-    this.streamController = null;
+    await this.streamWriter?.close();
     await this.pendingStream;
+    this.streamWriter = null;
     this.pendingStream = null;
 
     const turn = this.turnState;
     this.turnState = null;
 
-    if (turn) {
-      if (turn.platform === "telegram") {
-        const tid = this.telegramThreadId(turn.chatId);
-        await this.getTelegram().postMessage(tid, "Sorry, something went wrong.");
-      } else {
-        await this.getDiscord().postMessage(turn.threadId, "Sorry, something went wrong.");
-      }
+    if (turn && this.serializedThread) {
+      const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();
+      const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
+      await thread.post("Sorry, something went wrong.");
     }
+
+    this.serializedThread = null;
 
     if (this.turnLog) {
       this.turnLog.set({

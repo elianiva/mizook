@@ -128,6 +128,7 @@ export function createBot(env: Env, state: StateAdapter) {
       chatId: Number(chatId),
       messageId: Number(message.id),
       text: message.text,
+      thread: thread.toJSON(),
     });
   }
 
@@ -151,6 +152,7 @@ export function createBot(env: Env, state: StateAdapter) {
       threadId: thread.id,
       messageId: String(message.id),
       text: message.text,
+      thread: thread.toJSON(),
     });
   }
 
