@@ -105,21 +105,26 @@ export class MizookAgent extends Think<Env> {
   }
 
   configureSession(session: Session) {
-    return (
-      session
-        // TODO: dynamic soul with D1
-        .withContext("soul", {
-          provider: { get: async () => "You're a helpful assistant." },
-        })
-        .withCachedPrompt()
-    );
+    return session
+      .withContext("soul", {
+        description:
+          "Your identity, personality, and core instructions. " +
+          "Write to this with set_context to change who you are.",
+        maxTokens: 1000,
+      })
+      .withContext("memory", {
+        description:
+          "Key facts, preferences, and context learned from the user. " +
+          "Proactively update this as you learn new information.",
+        maxTokens: 2000,
+      })
+      .withCachedPrompt();
   }
 
   @callable()
   resetChat() {
     this.resetTurnState();
     this.clearMessages();
-    this.session.reset?.();
   }
 
   @callable()
