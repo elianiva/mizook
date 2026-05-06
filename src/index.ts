@@ -18,7 +18,7 @@ export default {
     if (url.pathname === "/telegram") {
       const state = createCloudflareState({ namespace: env.CHAT_STATE });
       const bot = createBot(env, state);
-      return bot.webhooks.telegram(request);
+      return bot.webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) });
     }
 
     if (url.pathname === "/health") {

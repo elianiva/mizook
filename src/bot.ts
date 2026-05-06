@@ -43,6 +43,13 @@ export function createBot(env: Env, state: StateAdapter) {
     });
   };
 
+  const handleReset = async (thread: Thread) => {
+    const { chatId } = telegram.decodeThreadId(thread.id);
+    const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
+    await agent.resetChat();
+    await thread.post("Chat reset. Starting fresh.");
+  };
+
   bot.onDirectMessage(async (thread, message) => {
     const userId = Number(message.author.userId);
     if (!allowedUserIds.has(userId)) {
@@ -52,8 +59,14 @@ export function createBot(env: Env, state: StateAdapter) {
 
     await thread.subscribe();
 
-    if (message.text.trim() === "/start") {
+    const text = message.text.trim();
+    if (text === "/start") {
       await thread.post("Hello. I am Mizook. Send me a message and I will respond.");
+      return;
+    }
+
+    if (text === "/reset") {
+      await handleReset(thread);
       return;
     }
 
@@ -73,10 +86,7 @@ export function createBot(env: Env, state: StateAdapter) {
 
   bot.onSubscribedMessage(async (thread, message) => {
     if (message.text.trim() === "/reset") {
-      const { chatId } = telegram.decodeThreadId(thread.id);
-      const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
-      await agent.resetChat();
-      await thread.post("Chat reset. Starting fresh.");
+      await handleReset(thread);
       return;
     }
 
