@@ -223,7 +223,9 @@ export class MizookAgent extends Think<Env> {
 
   async sendReminder(payload: ReminderPayload) {
     const api = getTelegramApi(this.env.BOT_TOKEN);
-    await api.sendMessage(payload.chatId, `⏰ Reminder: ${payload.message}`, { parse_mode: "MarkdownV2" });
+    await api.sendMessage(payload.chatId, `⏰ Reminder: ${payload.message}`, {
+      parse_mode: "MarkdownV2",
+    });
   }
 
   @callable()
@@ -393,14 +395,12 @@ export class MizookAgent extends Think<Env> {
         const previous = turn.renderedChunks[i];
 
         if (existingId == null) {
-          const sent = await api.sendMessage(
-            turn.chatId,
-            text,
-            {
-              parse_mode: "MarkdownV2",
-              ...(i === 0 && turn.replyToMessageId ? { reply_parameters: { message_id: turn.replyToMessageId } } : {}),
-            },
-          );
+          const sent = await api.sendMessage(turn.chatId, text, {
+            parse_mode: "MarkdownV2",
+            ...(i === 0 && turn.replyToMessageId
+              ? { reply_parameters: { message_id: turn.replyToMessageId } }
+              : {}),
+          });
           turn.messageIds[i] = sent.message_id;
           turn.renderedChunks[i] = text;
           continue;

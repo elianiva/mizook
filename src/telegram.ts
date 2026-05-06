@@ -1,11 +1,13 @@
-import { webhookCallback } from "grammy";
+import { webhookCallback, Context } from "grammy";
 import { getAgentByName } from "agents";
 import { getTelegramBot } from "./telegram-client";
 import type { Env } from "./env";
 import type { RequestLogger } from "evlog";
 import { createScopedLogger } from "./logger";
+import { CommandGroup } from "@grammyjs/commands";
 
 let bot: ReturnType<typeof getTelegramBot> | undefined;
+let commands: CommandGroup<Context> | undefined;
 let initialized = false;
 
 function parseAllowedUserIds(value: string): Set<number> {
@@ -20,7 +22,7 @@ function parseAllowedUserIds(value: string): Set<number> {
   return ids;
 }
 
-function getBot(env: Env) {
+async function getBot(env: Env) {
   bot ??= getTelegramBot(env.BOT_TOKEN);
 
   if (!initialized) {
@@ -37,7 +39,9 @@ function getBot(env: Env) {
       await next();
     });
 
-    bot.command("start", async (ctx) => {
+    commands = new CommandGroup();
+
+    commands.command("start", "Initialize chat", async (ctx) => {
       const l = createScopedLogger({
         action: "command",
         command: "/start",
@@ -48,7 +52,7 @@ function getBot(env: Env) {
       l.emit({ result: "ok" });
     });
 
-    bot.command("reset", async (ctx) => {
+    commands.command("reset", "Reset chat history", async (ctx) => {
       const l = createScopedLogger({
         action: "command",
         command: "/reset",
@@ -70,6 +74,8 @@ function getBot(env: Env) {
         l.emit({ result: "error" });
       }
     });
+
+    bot.use(commands);
 
     bot.on("message:text", async (ctx) => {
       const l = createScopedLogger({
@@ -97,6 +103,8 @@ function getBot(env: Env) {
       }
     });
 
+    await commands.setCommands(bot);
+
     initialized = true;
   }
 
@@ -115,7 +123,7 @@ export async function handleTelegramWebhook(request: Request, env: Env, log: Req
   }
 
   try {
-    const response = await webhookCallback(getBot(env), "cloudflare-mod")(request);
+    const response = await webhookCallback(await getBot(env), "cloudflare-mod")(request);
     log.set({ action: "webhook" });
     log.emit({ status: response.status });
     return response;
