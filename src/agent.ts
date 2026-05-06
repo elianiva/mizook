@@ -4,6 +4,9 @@ import type { UIMessage } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getTelegramApi } from "./telegram-client";
 import { createScopedLogger } from "./logger";
+import { generateText } from "ai";
+import { createCompactFunction } from "agents/experimental/memory/utils";
+import { AgentSearchProvider } from "agents/experimental/memory/session";
 
 export interface Env {
   AI: Ai;
@@ -118,6 +121,20 @@ export class MizookAgent extends Think<Env> {
           "Proactively update this as you learn new information.",
         maxTokens: 2000,
       })
+      .withContext("history", {
+        provider: new AgentSearchProvider(this),
+        description: "Full-text search across your conversation history with this assistant.",
+      })
+      .onCompaction(
+        createCompactFunction({
+          summarize: (prompt) =>
+            generateText({
+              model: this.getModel(),
+              prompt,
+            }).then((r) => r.text),
+        }),
+      )
+      .compactAfter(100_000)
       .withCachedPrompt();
   }
 
