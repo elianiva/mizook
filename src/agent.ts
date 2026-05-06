@@ -1,10 +1,11 @@
 import { callable } from "agents";
 import { Think, type ChatResponseResult, type Session, type TurnContext } from "@cloudflare/think";
-import type { ToolSet, UIMessage } from "ai";
+import type { ToolSet } from "ai";
 import { generateText, tool } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
-import { getTelegramApi } from "./telegram-client";
+import { streamApi } from "@grammyjs/stream";
+import { getTelegramApi, getTelegramBot } from "./telegram-client";
 import { createScopedLogger } from "./logger";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { AgentSearchProvider } from "agents/experimental/memory/session";
@@ -19,34 +20,16 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
 }
 
-type TelegramTurn = {
-  chatId: number;
-  requestId?: string;
-  replyToMessageId?: number;
-  messageIds: number[];
-  renderedChunks: string[];
-  buffer: string;
-  lastEditAt: number;
-  flushTimer: ReturnType<typeof setTimeout> | null;
-  flushInFlight: Promise<void> | null;
-  flushRequested: boolean;
-  startTime: number;
-};
-
-const TELEGRAM_CHUNK_LIMIT = 3500;
-const TELEGRAM_FLUSH_INTERVAL_MS = 300;
-
 type ReminderPayload = {
   chatId: number;
   message: string;
 };
 
-function extractText(message: UIMessage): string {
-  return message.parts
-    .map((part) => (part.type === "text" ? part.text : ""))
-    .join("")
-    .trim();
-}
+type TurnState = {
+  chatId: number;
+  replyToMessageId?: number;
+  startTime: number;
+};
 
 function extractChunkDelta(chunk: unknown): string {
   if (!chunk || typeof chunk !== "object") return "";
@@ -55,31 +38,62 @@ function extractChunkDelta(chunk: unknown): string {
   return part.delta ?? part.textDelta ?? part.text ?? "";
 }
 
-function splitTelegramText(text: string): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += TELEGRAM_CHUNK_LIMIT) {
-    chunks.push(text.slice(i, i + TELEGRAM_CHUNK_LIMIT));
-  }
-  return chunks.length ? chunks : ["\u2026"];
-}
+type StreamController = {
+  push: (text: string) => void;
+  end: () => void;
+  stream: AsyncIterable<string>;
+};
 
-function createTelegramTurn(input: { chatId: number; replyToMessageId?: number }): TelegramTurn {
+function createStreamController(): StreamController {
+  let resolveNext: ((value: string | null) => void) | null = null;
+  const buffer: string[] = [];
+  let done = false;
+
   return {
-    chatId: input.chatId,
-    replyToMessageId: input.replyToMessageId,
-    messageIds: [],
-    renderedChunks: [],
-    buffer: "",
-    lastEditAt: 0,
-    flushTimer: null,
-    flushInFlight: null,
-    flushRequested: false,
-    startTime: Date.now(),
+    push(text: string) {
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r(text);
+      } else {
+        buffer.push(text);
+      }
+    },
+    end() {
+      done = true;
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r(null);
+      }
+    },
+    stream: {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => {
+            if (buffer.length > 0) {
+              return Promise.resolve({ value: buffer.shift()!, done: false });
+            }
+            if (done) return Promise.resolve({ value: undefined as unknown as string, done: true });
+            return new Promise<IteratorResult<string>>((res) => {
+              resolveNext = (value: string | null) => {
+                res(
+                  value === null
+                    ? { value: undefined as unknown as string, done: true }
+                    : { value, done: false },
+                );
+              };
+            });
+          },
+        };
+      },
+    },
   };
 }
 
 export class MizookAgent extends Think<Env> {
-  private telegramTurn: TelegramTurn | null = null;
+  private turnState: TurnState | null = null;
+  private streamController: StreamController | null = null;
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
 
   getModel() {
@@ -112,7 +126,6 @@ export class MizookAgent extends Think<Env> {
   getSystemPrompt() {
     return (
       "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.\n\n" +
-      "Format your responses using Telegram MarkdownV2 style: **bold**, *italic*, `code`, ```pre```, ~~strikethrough~~, and [inline URLs](https://example.com) where appropriate.\n\n" +
       "You have reminder capabilities. When the user asks to be reminded about something: " +
       "call set_reminder with a cron expression and the reminder message. " +
       "Use list_reminders to show active reminders and delete_reminder to cancel them."
@@ -171,7 +184,7 @@ export class MizookAgent extends Think<Env> {
           message: z.string().describe("The reminder message text"),
         }),
         execute: async ({ cron, message }) => {
-          const chatId = this.telegramTurn?.chatId;
+          const chatId = this.turnState?.chatId;
           if (!chatId) return "Error: No active chat session.";
 
           const schedule = await this.schedule(cron, "sendReminder", {
@@ -223,9 +236,7 @@ export class MizookAgent extends Think<Env> {
 
   async sendReminder(payload: ReminderPayload) {
     const api = getTelegramApi(this.env.BOT_TOKEN);
-    await api.sendMessage(payload.chatId, `⏰ Reminder: ${payload.message}`, {
-      parse_mode: "MarkdownV2",
-    });
+    await api.sendMessage(payload.chatId, `\u23f0 Reminder: ${payload.message}`);
   }
 
   @callable()
@@ -236,10 +247,11 @@ export class MizookAgent extends Think<Env> {
 
   @callable()
   async submitTelegramMessage(input: { chatId: number; messageId: number; text: string }) {
-    this.telegramTurn = createTelegramTurn({
+    this.turnState = {
       chatId: input.chatId,
       replyToMessageId: input.messageId,
-    });
+      startTime: Date.now(),
+    };
 
     this.turnLog = createScopedLogger({
       action: "turn",
@@ -260,7 +272,7 @@ export class MizookAgent extends Think<Env> {
   }
 
   override async beforeTurn(_ctx: TurnContext) {
-    const turn = this.telegramTurn;
+    const turn = this.turnState;
     if (!turn) return;
 
     if (this.turnLog) {
@@ -270,52 +282,36 @@ export class MizookAgent extends Think<Env> {
     const api = getTelegramApi(this.env.BOT_TOKEN);
     await api.sendChatAction(turn.chatId, "typing");
 
-    if (turn.messageIds[0] != null) return;
+    const controller = createStreamController();
+    this.streamController = controller;
 
-    const sent = await api.sendMessage(
-      turn.chatId,
-      "Thinking\u2026",
-      turn.replyToMessageId
-        ? {
-            reply_parameters: { message_id: turn.replyToMessageId },
-          }
-        : undefined,
-    );
+    const bot = getTelegramBot(this.env.BOT_TOKEN);
+    const { streamMessage } = streamApi(bot.api.raw);
 
-    turn.messageIds[0] = sent.message_id;
-    turn.renderedChunks[0] = "Thinking\u2026";
-    turn.lastEditAt = Date.now();
+    streamMessage(turn.chatId, Date.now(), controller.stream).catch((err) => {
+      console.error("streamMessage failed:", err);
+    });
   }
 
   override async onChunk({ chunk }: { chunk: unknown }) {
-    const turn = this.telegramTurn;
-    if (!turn) return;
-
     const delta = extractChunkDelta(chunk);
     if (!delta) return;
-
-    turn.buffer += delta;
-    await this.scheduleTelegramFlush(turn);
+    this.streamController?.push(delta);
   }
 
   override async onChatResponse(result: ChatResponseResult) {
-    const turn = this.telegramTurn;
-    this.telegramTurn = null;
+    this.streamController?.end();
+    this.streamController = null;
 
-    if (!turn || result.status !== "completed") {
-      this.turnLog = null;
-      return;
-    }
-
-    turn.buffer = extractText(result.message) || turn.buffer;
-    await this.flushTelegramTurn(turn, true);
+    const turn = this.turnState;
+    this.turnState = null;
 
     if (this.turnLog) {
       this.turnLog.set({
         phase: "complete",
         requestId: result.requestId,
         model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
-        latencyMs: Date.now() - turn.startTime,
+        latencyMs: turn ? Date.now() - turn.startTime : 0,
         result: result.status,
       });
       this.turnLog.emit();
@@ -324,19 +320,14 @@ export class MizookAgent extends Think<Env> {
   }
 
   override async onChatError(error: unknown) {
-    const turn = this.telegramTurn;
-    this.telegramTurn = null;
+    this.streamController?.end();
+    this.streamController = null;
+
+    const turn = this.turnState;
+    this.turnState = null;
 
     if (turn) {
       const api = getTelegramApi(this.env.BOT_TOKEN);
-      const hasRendered = turn.renderedChunks.some(Boolean);
-      if (hasRendered) {
-        try {
-          await this.flushTelegramTurn(turn, true);
-        } catch {
-          // ignore partial flush failures
-        }
-      }
       await api.sendMessage(turn.chatId, "Sorry, something went wrong.");
     }
 
@@ -350,81 +341,5 @@ export class MizookAgent extends Think<Env> {
     }
 
     return error;
-  }
-
-  private async scheduleTelegramFlush(turn: TelegramTurn) {
-    if (turn.flushInFlight) {
-      turn.flushRequested = true;
-      return turn.flushInFlight;
-    }
-
-    const now = Date.now();
-    const wait = TELEGRAM_FLUSH_INTERVAL_MS - (now - turn.lastEditAt);
-    if (wait > 0) {
-      turn.flushRequested = true;
-      if (!turn.flushTimer) {
-        turn.flushTimer = setTimeout(() => {
-          turn.flushTimer = null;
-          void this.flushTelegramTurn(turn, true).catch(() => {});
-        }, wait);
-      }
-      return;
-    }
-
-    return this.flushTelegramTurn(turn, false);
-  }
-
-  private async flushTelegramTurn(turn: TelegramTurn, final: boolean) {
-    if (turn.flushInFlight) {
-      turn.flushRequested = true;
-      return turn.flushInFlight;
-    }
-
-    if (turn.flushTimer) {
-      clearTimeout(turn.flushTimer);
-      turn.flushTimer = null;
-    }
-
-    const run = async () => {
-      const api = getTelegramApi(this.env.BOT_TOKEN);
-      const desired = splitTelegramText(turn.buffer);
-
-      for (let i = 0; i < desired.length; i++) {
-        const text = desired[i];
-        const existingId = turn.messageIds[i];
-        const previous = turn.renderedChunks[i];
-
-        if (existingId == null) {
-          const sent = await api.sendMessage(turn.chatId, text, {
-            parse_mode: "MarkdownV2",
-            ...(i === 0 && turn.replyToMessageId
-              ? { reply_parameters: { message_id: turn.replyToMessageId } }
-              : {}),
-          });
-          turn.messageIds[i] = sent.message_id;
-          turn.renderedChunks[i] = text;
-          continue;
-        }
-
-        if (previous !== text) {
-          await api.editMessageText(turn.chatId, existingId, text, { parse_mode: "MarkdownV2" });
-          turn.renderedChunks[i] = text;
-        }
-      }
-
-      if (final) {
-        turn.flushRequested = false;
-      }
-    };
-
-    turn.flushInFlight = run().finally(() => {
-      turn.flushInFlight = null;
-      turn.lastEditAt = Date.now();
-      const pending = turn.flushRequested;
-      turn.flushRequested = false;
-      if (pending) void this.flushTelegramTurn(turn, true).catch(() => {});
-    });
-
-    return turn.flushInFlight;
   }
 }
