@@ -1,4 +1,5 @@
 import { webhookCallback } from "grammy";
+import { getAgentByName } from "agents";
 import { getTelegramBot } from "./telegram-client";
 import type { Env } from "./env";
 import type { RequestLogger } from "evlog";
@@ -57,8 +58,7 @@ function getBot(env: Env) {
 
       try {
         l.set({ phase: "routing_agent" });
-        const agentId = env.MIZOOK_AGENT.idFromName(String(ctx.chatId));
-        const agent = env.MIZOOK_AGENT.get(agentId);
+        const agent = await getAgentByName(env.MIZOOK_AGENT, String(ctx.chatId));
 
         l.set({ phase: "submitting_to_agent" });
         await agent.submitTelegramMessage({
@@ -80,11 +80,7 @@ function getBot(env: Env) {
   return bot;
 }
 
-export async function handleTelegramWebhook(
-  request: Request,
-  env: Env,
-  log: RequestLogger,
-) {
+export async function handleTelegramWebhook(request: Request, env: Env, log: RequestLogger) {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   if (secret) {
     const header = request.headers.get("X-Telegram-Bot-Api-Secret-Token");

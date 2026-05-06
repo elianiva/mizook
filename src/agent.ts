@@ -105,7 +105,14 @@ export class MizookAgent extends Think<Env> {
   }
 
   configureSession(session: Session) {
-    return session.withCachedPrompt();
+    return (
+      session
+        // TODO: dynamic soul with D1
+        .withContext("soul", {
+          provider: { get: async () => "You're a helpful assistant." },
+        })
+        .withCachedPrompt()
+    );
   }
 
   @callable()
@@ -305,4 +312,3 @@ export class MizookAgent extends Think<Env> {
     return turn.flushInFlight;
   }
 }
-

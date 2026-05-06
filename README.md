@@ -68,13 +68,13 @@ wrangler secret put TELEGRAM_WEBHOOK_SECRET
 
 ## Configuration
 
-| Variable | Required | Description |
-|---|---|---|
-| `BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
-| `OPENCODE_GO_API_KEY` | Yes | OpenCode Go API key |
-| `TELEGRAM_ALLOWED_USER_IDS` | Yes | Comma-separated Telegram user IDs allowed to use the bot |
-| `OPENCODE_GO_MODEL` | No | Model ID (default: `deepseek-v4-flash`) |
-| `TELEGRAM_WEBHOOK_SECRET` | No | Secret token for webhook verification |
+| Variable                    | Required | Description                                              |
+| --------------------------- | -------- | -------------------------------------------------------- |
+| `BOT_TOKEN`                 | Yes      | Telegram bot token from @BotFather                       |
+| `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                      |
+| `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot |
+| `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                  |
+| `TELEGRAM_WEBHOOK_SECRET`   | No       | Secret token for webhook verification                    |
 
 ## Available models
 
@@ -86,8 +86,8 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 
 ## Commands
 
-| Command | Description |
-|---|---|
+| Command  | Description      |
+| -------- | ---------------- |
 | `/start` | Greeting message |
 
 ## Architecture
