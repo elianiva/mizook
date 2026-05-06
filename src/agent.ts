@@ -112,6 +112,7 @@ export class MizookAgent extends Think<Env> {
   getSystemPrompt() {
     return (
       "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.\n\n" +
+      "Format your responses using Telegram MarkdownV2 style: **bold**, *italic*, `code`, ```pre```, ~~strikethrough~~, and [inline URLs](https://example.com) where appropriate.\n\n" +
       "You have reminder capabilities. When the user asks to be reminded about something: " +
       "call set_reminder with a cron expression and the reminder message. " +
       "Use list_reminders to show active reminders and delete_reminder to cancel them."
@@ -222,7 +223,7 @@ export class MizookAgent extends Think<Env> {
 
   async sendReminder(payload: ReminderPayload) {
     const api = getTelegramApi(this.env.BOT_TOKEN);
-    await api.sendMessage(payload.chatId, `⏰ Reminder: ${payload.message}`);
+    await api.sendMessage(payload.chatId, `⏰ Reminder: ${payload.message}`, { parse_mode: "MarkdownV2" });
   }
 
   @callable()
@@ -395,11 +396,10 @@ export class MizookAgent extends Think<Env> {
           const sent = await api.sendMessage(
             turn.chatId,
             text,
-            i === 0 && turn.replyToMessageId
-              ? {
-                  reply_parameters: { message_id: turn.replyToMessageId },
-                }
-              : undefined,
+            {
+              parse_mode: "MarkdownV2",
+              ...(i === 0 && turn.replyToMessageId ? { reply_parameters: { message_id: turn.replyToMessageId } } : {}),
+            },
           );
           turn.messageIds[i] = sent.message_id;
           turn.renderedChunks[i] = text;
@@ -407,7 +407,7 @@ export class MizookAgent extends Think<Env> {
         }
 
         if (previous !== text) {
-          await api.editMessageText(turn.chatId, existingId, text);
+          await api.editMessageText(turn.chatId, existingId, text, { parse_mode: "MarkdownV2" });
           turn.renderedChunks[i] = text;
         }
       }
