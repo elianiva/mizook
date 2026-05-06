@@ -1,9 +1,10 @@
 import { Chat } from "chat";
+import type { StateAdapter } from "chat";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
-import { createMemoryState } from "@chat-adapter/state-memory";
 import { getAgentByName } from "agents";
 import type { Env } from "./env";
+import type { MizookAgent } from "./agent";
 
 function parseAllowedUserIds(value: string): Set<number> {
   const ids = new Set<number>();
@@ -15,7 +16,7 @@ function parseAllowedUserIds(value: string): Set<number> {
   return ids;
 }
 
-export function createBot(env: Env) {
+export function createBot(env: Env, state: StateAdapter) {
   const allowedUserIds = parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS);
 
   const bot = new Chat({
@@ -26,7 +27,7 @@ export function createBot(env: Env) {
         secretToken: env.TELEGRAM_WEBHOOK_SECRET,
       }),
     },
-    state: createMemoryState(),
+    state,
     dedupeTtlMs: 600_000,
   });
 
@@ -48,7 +49,7 @@ export function createBot(env: Env) {
       return;
     }
 
-    const agent = await getAgentByName(env.MIZOOK_AGENT, chatId);
+    const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
     await agent.submitTelegramMessage({
       chatId: Number(chatId),
       messageId: Number(message.id),
@@ -60,13 +61,13 @@ export function createBot(env: Env) {
     const { chatId } = telegram.decodeThreadId(thread.id);
 
     if (message.text.trim() === "/reset") {
-      const agent = await getAgentByName(env.MIZOOK_AGENT, chatId);
+      const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
       await agent.resetChat();
       await thread.post("Chat reset. Starting fresh.");
       return;
     }
 
-    const agent = await getAgentByName(env.MIZOOK_AGENT, chatId);
+    const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
     await agent.submitTelegramMessage({
       chatId: Number(chatId),
       messageId: Number(message.id),

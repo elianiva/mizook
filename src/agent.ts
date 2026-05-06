@@ -6,6 +6,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
+import type { ChatStateDO } from "chat-state-cloudflare-do";
 import { createScopedLogger } from "./logger";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { AgentSearchProvider, AgentContextProvider } from "agents/experimental/memory/session";
@@ -14,6 +15,7 @@ export interface Env {
   AI: Ai;
   BOT_TOKEN: string;
   MIZOOK_AGENT: DurableObjectNamespace<MizookAgent>;
+  CHAT_STATE: DurableObjectNamespace<ChatStateDO>;
   OPENCODE_GO_API_KEY: string;
   TELEGRAM_ALLOWED_USER_IDS: string;
   OPENCODE_GO_MODEL?: string;

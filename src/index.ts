@@ -2,8 +2,10 @@ import { routeAgentRequest } from "agents";
 import type { Env } from "./env";
 import { createRequestLogger } from "./logger";
 import { createBot } from "./bot";
+import { createCloudflareState } from "chat-state-cloudflare-do";
 
 export { MizookAgent } from "./agent";
+export { ChatStateDO } from "chat-state-cloudflare-do";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -14,7 +16,8 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/telegram") {
-      const bot = createBot(env);
+      const state = createCloudflareState({ namespace: env.CHAT_STATE });
+      const bot = createBot(env, state);
       return bot.webhooks.telegram(request);
     }
 

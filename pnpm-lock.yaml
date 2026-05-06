@@ -39,6 +39,9 @@ importers:
       chat:
         specifier: ^4.27.0
         version: 4.27.0
+      chat-state-cloudflare-do:
+        specifier: ^0.2.0
+        version: 0.2.0(chat@4.27.0)
       evlog:
         specifier: ^2.16.0
         version: 2.16.0(@voidzero-dev/vite-plus-core@0.1.18(esbuild@0.27.3)(typescript@6.0.3))(ai@6.0.175(zod@4.4.3))(express@5.2.1)(hono@4.12.16)(react@19.2.5)
@@ -1453,6 +1456,11 @@ packages:
 
   character-entities@2.0.2:
     resolution: {integrity: sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==}
+
+  chat-state-cloudflare-do@0.2.0:
+    resolution: {integrity: sha512-ZBOwJXcj5p0fduzRwgVeiH/I7/QFyXFt2ObffSvdMg492j8ulLa+1dzOaiMJlE8isIfxgY9sJkC3b5hNlvURSA==}
+    peerDependencies:
+      chat: ^4.26.0
 
   chat@4.27.0:
     resolution: {integrity: sha512-PrL4k263DSIlckhX8eHLT84RdTSznOBxCCfaDc5JVJtWaS0lJkCNctm/g3gIrI41AcDHcpc/3WDoUHVrbh0W4w==}
@@ -3559,6 +3567,10 @@ snapshots:
   ccount@2.0.1: {}
 
   character-entities@2.0.2: {}
+
+  chat-state-cloudflare-do@0.2.0(chat@4.27.0):
+    dependencies:
+      chat: 4.27.0
 
   chat@4.27.0:
     dependencies:

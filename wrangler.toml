@@ -10,9 +10,17 @@ binding = "AI"
 class_name = "MizookAgent"
 name = "MIZOOK_AGENT"
 
+[[durable_objects.bindings]]
+class_name = "ChatStateDO"
+name = "CHAT_STATE"
+
 [[migrations]]
 new_sqlite_classes = ["MizookAgent"]
 tag = "v1"
+
+[[migrations]]
+new_sqlite_classes = ["ChatStateDO"]
+tag = "v2"
 
 [observability.logs]
 enabled = true
