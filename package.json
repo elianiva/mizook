@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.46",
+    "@chat-adapter/discord": "^4.27.0",
     "@chat-adapter/state-memory": "^4.27.0",
     "@chat-adapter/telegram": "^4.27.0",
     "@cloudflare/think": "^0.5.3",
@@ -18,6 +19,7 @@
     "ai": "^6.0.175",
     "chat": "^4.27.0",
     "chat-state-cloudflare-do": "^0.2.0",
+    "discord-gateway-cloudflare-do": "^0.1.2",
     "evlog": "^2.16.0",
     "workers-ai-provider": "^3.1.13",
     "zod": "^4.4.3"

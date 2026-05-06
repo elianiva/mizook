@@ -3,9 +3,11 @@ import type { Env } from "./env";
 import { createRequestLogger } from "./logger";
 import { createBot } from "./bot";
 import { createCloudflareState } from "chat-state-cloudflare-do";
+import { DiscordGatewayDO, getGatewayStub } from "discord-gateway-cloudflare-do";
 
 export { MizookAgent } from "./agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
+export { DiscordGatewayDO };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -19,6 +21,32 @@ export default {
       const state = createCloudflareState({ namespace: env.CHAT_STATE });
       const bot = createBot(env, state);
       return bot.webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) });
+    }
+
+    if (url.pathname === "/webhooks/discord") {
+      const state = createCloudflareState({ namespace: env.CHAT_STATE });
+      const bot = createBot(env, state);
+      return bot.webhooks.discord(request, { waitUntil: (p) => ctx.waitUntil(p) });
+    }
+
+    if (url.pathname === "/discord/connect" && request.method === "POST") {
+      const gateway = getGatewayStub({ namespace: env.DISCORD_GATEWAY }) as any;
+      return Response.json(
+        await gateway.connect({
+          botToken: env.DISCORD_BOT_TOKEN,
+          webhookUrl: `${url.origin}/webhooks/discord`,
+        }),
+      );
+    }
+
+    if (url.pathname === "/discord/status") {
+      const gateway = getGatewayStub({ namespace: env.DISCORD_GATEWAY }) as any;
+      return Response.json(await gateway.status());
+    }
+
+    if (url.pathname === "/discord/disconnect" && request.method === "POST") {
+      const gateway = getGatewayStub({ namespace: env.DISCORD_GATEWAY }) as any;
+      return Response.json(await gateway.disconnect());
     }
 
     if (url.pathname === "/health") {

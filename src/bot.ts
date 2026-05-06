@@ -2,6 +2,7 @@ import { Chat } from "chat";
 import type { StateAdapter } from "chat";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
+import { createDiscordAdapter } from "@chat-adapter/discord";
 import { getAgentByName } from "agents";
 import type { Env } from "./env";
 import type { Thread, Message } from "chat";
@@ -25,6 +26,11 @@ export function createBot(env: Env, state: StateAdapter) {
     adapters: {
       telegram: createTelegramAdapter({
         botToken: env.BOT_TOKEN,
+      }),
+      discord: createDiscordAdapter({
+        botToken: env.DISCORD_BOT_TOKEN,
+        publicKey: env.DISCORD_PUBLIC_KEY,
+        applicationId: env.DISCORD_APPLICATION_ID,
       }),
     },
     state,
@@ -91,6 +97,33 @@ export function createBot(env: Env, state: StateAdapter) {
     }
 
     await handleMessage(thread, message);
+  });
+
+  // Discord: respond only on mention and in subscribed threads
+  bot.onNewMention(async (thread, message) => {
+    await thread.subscribe();
+    const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, `discord:${thread.id}`);
+    await agent.submitDiscordMessage({
+      threadId: thread.id,
+      messageId: String(message.id),
+      text: message.text,
+    });
+  });
+
+  bot.onSubscribedMessage(async (thread, message) => {
+    if (message.text.trim() === "/reset") {
+      const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, `discord:${thread.id}`);
+      await agent.resetChat();
+      await thread.post("Chat reset. Starting fresh.");
+      return;
+    }
+
+    const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, `discord:${thread.id}`);
+    await agent.submitDiscordMessage({
+      threadId: thread.id,
+      messageId: String(message.id),
+      text: message.text,
+    });
   });
 
   return bot;

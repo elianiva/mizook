@@ -6,6 +6,9 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
+import { createDiscordAdapter } from "@chat-adapter/discord";
+import type { DiscordAdapter } from "@chat-adapter/discord";
+import type { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
 import type { ChatStateDO } from "chat-state-cloudflare-do";
 import { createScopedLogger } from "./logger";
 import { createCompactFunction } from "agents/experimental/memory/utils";
@@ -19,6 +22,11 @@ export interface Env {
   OPENCODE_GO_API_KEY: string;
   TELEGRAM_ALLOWED_USER_IDS: string;
   OPENCODE_GO_MODEL?: string;
+  DISCORD_BOT_TOKEN: string;
+  DISCORD_PUBLIC_KEY: string;
+  DISCORD_APPLICATION_ID: string;
+  DISCORD_GATEWAY_SECRET: string;
+  DISCORD_GATEWAY: DurableObjectNamespace<DiscordGatewayDO>;
 }
 
 type ReminderPayload = {
@@ -27,8 +35,14 @@ type ReminderPayload = {
 };
 
 type TurnState = {
+  platform: "telegram";
   chatId: number;
   replyToMessageId?: number;
+  startTime: number;
+} | {
+  platform: "discord";
+  threadId: string;
+  replyToMessageId?: string;
   startTime: number;
 };
 
@@ -98,12 +112,24 @@ export class MizookAgent extends Think<Env> {
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
   private pendingStream: Promise<void> | null = null;
   private _telegram: TelegramAdapter | null = null;
+  private _discord: DiscordAdapter | null = null;
 
   private getTelegram(): TelegramAdapter {
     if (!this._telegram) {
       this._telegram = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
     }
     return this._telegram;
+  }
+
+  private getDiscord(): DiscordAdapter {
+    if (!this._discord) {
+      this._discord = createDiscordAdapter({
+        botToken: this.env.DISCORD_BOT_TOKEN,
+        publicKey: this.env.DISCORD_PUBLIC_KEY,
+        applicationId: this.env.DISCORD_APPLICATION_ID,
+      });
+    }
+    return this._discord;
   }
 
   private telegramThreadId(chatId: number): string {
@@ -139,7 +165,7 @@ export class MizookAgent extends Think<Env> {
 
   getSystemPrompt() {
     return (
-      "You are Mizook, a helpful Telegram assistant. Keep replies concise unless the user asks for detail.\n\n" +
+      "You are Mizook, a helpful assistant. Keep replies concise unless the user asks for detail.\n\n" +
       "Write like a real person, not a bot. No markdown, no formatting syntax, no asterisks for bold. " +
       "If you need structure, use natural text: line breaks, indentation, or simple dashes. " +
       "The goal is to feel like chatting with a knowledgeable friend, not reading a document.\n\n" +
@@ -201,11 +227,11 @@ export class MizookAgent extends Think<Env> {
           message: z.string().describe("The reminder message text"),
         }),
         execute: async ({ cron, message }) => {
-          const chatId = this.turnState?.chatId;
-          if (!chatId) return "Error: No active chat session.";
+          const turn = this.turnState;
+          if (!turn || turn.platform !== "telegram") return "Reminders are only available in private chat.";
 
           const schedule = await this.schedule(cron, "sendReminder", {
-            chatId,
+            chatId: turn.chatId,
             message,
           } satisfies ReminderPayload);
 
@@ -274,6 +300,7 @@ export class MizookAgent extends Think<Env> {
   @callable()
   async submitTelegramMessage(input: { chatId: number; messageId: number; text: string }) {
     this.turnState = {
+      platform: "telegram",
       chatId: input.chatId,
       replyToMessageId: input.messageId,
       startTime: Date.now(),
@@ -283,6 +310,35 @@ export class MizookAgent extends Think<Env> {
       action: "turn",
       chat_id: input.chatId,
       message_id: input.messageId,
+      platform: "telegram",
+      phase: "submitted",
+    });
+
+    await this.saveMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        parts: [{ type: "text", text: input.text }],
+        createdAt: new Date(),
+      },
+    ]);
+  }
+
+  @callable()
+  async submitDiscordMessage(input: { threadId: string; messageId: string; text: string }) {
+    this.turnState = {
+      platform: "discord",
+      threadId: input.threadId,
+      replyToMessageId: input.messageId,
+      startTime: Date.now(),
+    };
+
+    this.turnLog = createScopedLogger({
+      action: "turn",
+      thread_id: input.threadId,
+      message_id: input.messageId,
+      platform: "discord",
       phase: "submitted",
     });
 
@@ -307,15 +363,21 @@ export class MizookAgent extends Think<Env> {
       this.turnLog.set({ detail: { phase: "before_turn" } });
     }
 
-    const tid = this.telegramThreadId(turn.chatId);
-    await this.getTelegram().startTyping(tid);
-
     const controller = createStreamController();
     this.streamController = controller;
 
-    this.pendingStream = this.streamToTelegram(tid, controller.stream).catch((err) => {
-      console.error("streamToTelegram failed:", err);
-    });
+    if (turn.platform === "telegram") {
+      const tid = this.telegramThreadId(turn.chatId);
+      await this.getTelegram().startTyping(tid);
+      this.pendingStream = this.streamToTelegram(tid, controller.stream).catch((err) => {
+        console.error("streamToTelegram failed:", err);
+      });
+    } else {
+      await this.getDiscord().startTyping(turn.threadId);
+      this.pendingStream = this.streamToDiscord(turn.threadId, controller.stream).catch((err) => {
+        console.error("streamToDiscord failed:", err);
+      });
+    }
 
     return { system: freshSystem };
   }
@@ -344,6 +406,30 @@ export class MizookAgent extends Think<Env> {
     }
   }
 
+  private async streamToDiscord(threadId: string, stream: AsyncIterable<string>): Promise<void> {
+    const dc = this.getDiscord();
+    let sent: Awaited<ReturnType<typeof dc.postMessage>> | null = null;
+    let accumulated = "";
+    let lastEditTime = 0;
+    const updateInterval = 500;
+
+    for await (const chunk of stream) {
+      accumulated += chunk;
+      const now = Date.now();
+
+      if (sent === null) {
+        sent = await dc.postMessage(threadId, accumulated || "\u2026");
+      } else if (now - lastEditTime >= updateInterval) {
+        dc.editMessage(threadId, sent.id, accumulated).catch(() => { });
+        lastEditTime = now;
+      }
+    }
+
+    if (sent) {
+      await dc.editMessage(threadId, sent.id, accumulated).catch(() => { });
+    }
+  }
+
   override async onChunk({ chunk }: { chunk: unknown }) {
     const delta = extractChunkDelta(chunk);
     if (!delta) return;
@@ -367,6 +453,7 @@ export class MizookAgent extends Think<Env> {
           model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
           latencyMs: turn ? Date.now() - turn.startTime : 0,
           result: result.status,
+          platform: turn?.platform,
         },
       });
       this.turnLog.emit({ message: "turn_complete" });
@@ -384,8 +471,12 @@ export class MizookAgent extends Think<Env> {
     this.turnState = null;
 
     if (turn) {
-      const tid = this.telegramThreadId(turn.chatId);
-      await this.getTelegram().postMessage(tid, "Sorry, something went wrong.");
+      if (turn.platform === "telegram") {
+        const tid = this.telegramThreadId(turn.chatId);
+        await this.getTelegram().postMessage(tid, "Sorry, something went wrong.");
+      } else {
+        await this.getDiscord().postMessage(turn.threadId, "Sorry, something went wrong.");
+      }
     }
 
     if (this.turnLog) {
@@ -393,6 +484,7 @@ export class MizookAgent extends Think<Env> {
         detail: {
           phase: "error",
           error: error instanceof Error ? error.message : String(error),
+          platform: turn?.platform,
         },
       });
       this.turnLog.emit({ message: "turn_error" });
