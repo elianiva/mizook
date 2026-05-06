@@ -4,8 +4,8 @@ import type { ToolSet } from "ai";
 import { generateText, tool } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
-import { streamApi } from "@grammyjs/stream";
-import { getTelegramApi, getTelegramBot } from "./telegram-client";
+import { createTelegramAdapter } from "@chat-adapter/telegram";
+import type { TelegramAdapter } from "@chat-adapter/telegram";
 import { createScopedLogger } from "./logger";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { AgentSearchProvider, AgentContextProvider } from "agents/experimental/memory/session";
@@ -95,6 +95,19 @@ export class MizookAgent extends Think<Env> {
   private turnState: TurnState | null = null;
   private streamController: StreamController | null = null;
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
+  private pendingStream: Promise<void> | null = null;
+  private _telegram: TelegramAdapter | null = null;
+
+  private getTelegram(): TelegramAdapter {
+    if (!this._telegram) {
+      this._telegram = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
+    }
+    return this._telegram;
+  }
+
+  private telegramThreadId(chatId: number): string {
+    return this.getTelegram().encodeThreadId({ chatId: String(chatId) });
+  }
 
   getModel() {
     const opencode = createOpenAICompatible({
@@ -238,8 +251,8 @@ export class MizookAgent extends Think<Env> {
   }
 
   async sendReminder(payload: ReminderPayload) {
-    const api = getTelegramApi(this.env.BOT_TOKEN);
-    await api.sendMessage(payload.chatId, `\u23f0 Reminder: ${payload.message}`);
+    const tid = this.telegramThreadId(payload.chatId);
+    await this.getTelegram().postMessage(tid, `\u23f0 Reminder: ${payload.message}`);
   }
 
   async onStart() {
@@ -284,8 +297,6 @@ export class MizookAgent extends Think<Env> {
   }
 
   override async beforeTurn(_ctx: TurnContext) {
-    // Rebuild system prompt from current context blocks every turn
-    // so set_context writes to soul/memory are reflected immediately
     const freshSystem = await this.session.refreshSystemPrompt();
 
     const turn = this.turnState;
@@ -295,20 +306,41 @@ export class MizookAgent extends Think<Env> {
       this.turnLog.set({ phase: "before_turn" });
     }
 
-    const api = getTelegramApi(this.env.BOT_TOKEN);
-    await api.sendChatAction(turn.chatId, "typing");
+    const tid = this.telegramThreadId(turn.chatId);
+    await this.getTelegram().startTyping(tid);
 
     const controller = createStreamController();
     this.streamController = controller;
 
-    const bot = getTelegramBot(this.env.BOT_TOKEN);
-    const { streamMessage } = streamApi(bot.api.raw);
-
-    streamMessage(turn.chatId, Date.now(), controller.stream).catch((err) => {
-      console.error("streamMessage failed:", err);
+    this.pendingStream = this.streamToTelegram(tid, controller.stream).catch((err) => {
+      console.error("streamToTelegram failed:", err);
     });
 
     return { system: freshSystem };
+  }
+
+  private async streamToTelegram(tid: string, stream: AsyncIterable<string>): Promise<void> {
+    const tg = this.getTelegram();
+    let sent: Awaited<ReturnType<typeof tg.postMessage>> | null = null;
+    let accumulated = "";
+    let lastEditTime = 0;
+    const updateInterval = 500;
+
+    for await (const chunk of stream) {
+      accumulated += chunk;
+      const now = Date.now();
+
+      if (sent === null) {
+        sent = await tg.postMessage(tid, accumulated || "\u2026");
+      } else if (now - lastEditTime >= updateInterval) {
+        tg.editMessage(tid, sent.id, accumulated).catch(() => {});
+        lastEditTime = now;
+      }
+    }
+
+    if (sent) {
+      await tg.editMessage(tid, sent.id, accumulated).catch(() => {});
+    }
   }
 
   override async onChunk({ chunk }: { chunk: unknown }) {
@@ -320,6 +352,8 @@ export class MizookAgent extends Think<Env> {
   override async onChatResponse(result: ChatResponseResult) {
     this.streamController?.end();
     this.streamController = null;
+    await this.pendingStream;
+    this.pendingStream = null;
 
     const turn = this.turnState;
     this.turnState = null;
@@ -340,13 +374,15 @@ export class MizookAgent extends Think<Env> {
   override async onChatError(error: unknown) {
     this.streamController?.end();
     this.streamController = null;
+    await this.pendingStream;
+    this.pendingStream = null;
 
     const turn = this.turnState;
     this.turnState = null;
 
     if (turn) {
-      const api = getTelegramApi(this.env.BOT_TOKEN);
-      await api.sendMessage(turn.chatId, "Sorry, something went wrong.");
+      const tid = this.telegramThreadId(turn.chatId);
+      await this.getTelegram().postMessage(tid, "Sorry, something went wrong.");
     }
 
     if (this.turnLog) {

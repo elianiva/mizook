@@ -1,7 +1,7 @@
 import { routeAgentRequest } from "agents";
 import type { Env } from "./env";
-import { handleTelegramWebhook } from "./telegram";
 import { createRequestLogger } from "./logger";
+import { createBot } from "./bot";
 
 export { MizookAgent } from "./agent";
 
@@ -14,7 +14,8 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/telegram") {
-      return handleTelegramWebhook(request, env, log);
+      const bot = createBot(env);
+      return bot.webhooks.telegram(request);
     }
 
     if (url.pathname === "/health") {

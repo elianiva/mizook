@@ -1,6 +1,6 @@
 # Mizook
 
-Telegram personal assistant running on Cloudflare Workers, powered by Durable Objects and [OpenCode Go](https://opencode.ai/go) for AI.
+Telegram personal assistant running on Cloudflare Workers, powered by Durable Objects, [Chat SDK](https://chat-sdk.dev), and [OpenCode Go](https://opencode.ai/go) for AI.
 
 ## Prerequisites
 
@@ -93,11 +93,12 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 ## Architecture
 
 ```
-Telegram → Webhook → Cloudflare Worker → Durable Object (per chat)
-                                              ↓
-                                    OpenCode Go API (AI)
+Telegram → Webhook → Chat SDK → Cloudflare Worker → Durable Object (per chat)
+                                                            ↓
+                                                  OpenCode Go API (AI)
 ```
 
-- Each Telegram chat gets its own Durable Object for isolated state
-- Messages stream from the model to Telegram via inline edits
-- Webhook secret verification ensures only Telegram can call the endpoint
+- [Chat SDK](https://chat-sdk.dev) replaces grammy for Telegram webhook handling and event routing
+- Each Telegram chat gets its own Durable Object for isolated AI conversation state
+- Messages stream from the model to Telegram via post+edit (500ms throttle)
+- Webhook secret verification is handled by the Telegram adapter
