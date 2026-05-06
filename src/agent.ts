@@ -51,7 +51,7 @@ function extractText(message: UIMessage): string {
 function extractChunkDelta(chunk: unknown): string {
   if (!chunk || typeof chunk !== "object") return "";
   const part = chunk as { type?: string; delta?: string; textDelta?: string; text?: string };
-  if (part.type !== "text-delta") return "";
+  if (part.type && part.type !== "text-delta") return "";
   return part.delta ?? part.textDelta ?? part.text ?? "";
 }
 
