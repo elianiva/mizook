@@ -32,13 +32,6 @@ wrangler secret put OPENCODE_GO_API_KEY
 wrangler secret put TELEGRAM_ALLOWED_USER_IDS
 ```
 
-Optional secrets:
-
-```bash
-# Secret token to verify Telegram webhook requests (recommended)
-wrangler secret put TELEGRAM_WEBHOOK_SECRET
-```
-
 ### 3. Local development
 
 ```bash
@@ -47,7 +40,6 @@ cat > .dev.vars <<EOF
 BOT_TOKEN=<your-bot-token>
 OPENCODE_GO_API_KEY=<your-opencode-go-key>
 TELEGRAM_ALLOWED_USER_IDS=<your-telegram-id>
-TELEGRAM_WEBHOOK_SECRET=<random-secret>
 EOF
 
 # Start dev server
@@ -63,7 +55,6 @@ vp deploy
 wrangler secret put BOT_TOKEN
 wrangler secret put OPENCODE_GO_API_KEY
 wrangler secret put TELEGRAM_ALLOWED_USER_IDS
-wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
 ## Configuration
@@ -74,7 +65,6 @@ wrangler secret put TELEGRAM_WEBHOOK_SECRET
 | `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                      |
 | `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot |
 | `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                  |
-| `TELEGRAM_WEBHOOK_SECRET`   | No       | Secret token for webhook verification                    |
 
 ## Available models
 

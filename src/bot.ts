@@ -24,7 +24,6 @@ export function createBot(env: Env, state: StateAdapter) {
     adapters: {
       telegram: createTelegramAdapter({
         botToken: env.BOT_TOKEN,
-        secretToken: env.TELEGRAM_WEBHOOK_SECRET,
       }),
     },
     state,

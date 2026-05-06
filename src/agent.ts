@@ -19,7 +19,6 @@ export interface Env {
   OPENCODE_GO_API_KEY: string;
   TELEGRAM_ALLOWED_USER_IDS: string;
   OPENCODE_GO_MODEL?: string;
-  TELEGRAM_WEBHOOK_SECRET?: string;
 }
 
 type ReminderPayload = {
