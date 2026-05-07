@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 import type { MizookAgent } from "../agent/mizook-agent";
@@ -29,11 +30,11 @@ export function createReminderTools(agent: MizookAgent) {
       }),
       execute: async ({ cron, message }) => {
         const turn = agent.getTurnState();
-        if (!turn || turn.platform !== "telegram")
+        if (Option.isNone(turn) || turn.value.platform !== "telegram")
           return "Reminders are only available in private chat.";
 
         const schedule = await agent.schedule(cron, "sendReminder", {
-          chatId: turn.chatId,
+          chatId: turn.value.chatId,
           message,
         } satisfies ReminderPayload);
 
