@@ -9,6 +9,7 @@ import type { Env } from "../env";
 import type { MizookAgent } from "../agent/mizook-agent";
 import { dmResponses } from "../constants/dm-responses";
 import { AgentLookupError, AgentRpcError } from "../lib/errors";
+import { createScopedLogger } from "../logger";
 
 export function createBot(env: Env, state: StateAdapter) {
   const allowedUserIds = new Set(
@@ -32,18 +33,27 @@ export function createBot(env: Env, state: StateAdapter) {
     dedupeTtlMs: 600_000,
   });
 
-  bot.onDirectMessage((thread, message) =>
-    Effect.gen(function* () {
+  bot.onDirectMessage((thread, message) => {
+    const log = createScopedLogger({
+      action: "on_direct_message",
+      platform: thread.id.startsWith("discord:") ? "discord" : "telegram",
+      thread_id: thread.id,
+      user_id: message.author.userId,
+    });
+
+    return Effect.gen(function* () {
       if (thread.id.startsWith("discord:")) {
         const index = yield* Random.nextIntBetween(0, dmResponses.length);
         const msg = dmResponses[index];
         yield* Effect.tryPromise(() => thread.post(msg));
+        log.set({ detail: { dm_response: true } });
         return;
       }
 
       const userId = Number(message.author.userId);
       if (!allowedUserIds.has(userId)) {
         yield* Effect.tryPromise(() => thread.post("Access denied."));
+        log.set({ detail: { access_denied: true } });
         return;
       }
 
@@ -54,61 +64,94 @@ export function createBot(env: Env, state: StateAdapter) {
         yield* Effect.tryPromise(() =>
           thread.post("Hello. I am Mizook. Send me a message and I will respond."),
         );
+        log.set({ detail: { command: "start" } });
         return;
       }
 
       if (text === "/reset") {
-        yield* handleReset(thread, telegram, env);
+        yield* handleReset(thread, telegram, env, log);
+        log.set({ detail: { command: "reset" } });
         return;
       }
 
-      yield* handleTelegramTurn(thread, message, telegram, env);
+      yield* handleTelegramTurn(thread, message, telegram, env, log);
     }).pipe(
-      Effect.catch((error) => Effect.logError("DM handler error", error)),
+      Effect.tap(() => Effect.sync(() => log.emit({ message: "dm_handler_done" }))),
+      Effect.catch((error) => {
+        log.set({ detail: { error: error instanceof Error ? error.message : String(error) } });
+        log.emit({ message: "dm_handler_error" });
+        return Effect.logError("DM handler error", error);
+      }),
       Effect.runPromise,
-    ),
-  );
+    );
+  });
 
-  bot.onNewMention((thread, message) =>
-    Effect.gen(function* () {
+  bot.onNewMention((thread, message) => {
+    const log = createScopedLogger({
+      action: "on_mention",
+      platform: thread.id.startsWith("discord:") ? "discord" : "telegram",
+      thread_id: thread.id,
+      user_id: message.author.userId,
+    });
+
+    return Effect.gen(function* () {
       if (thread.id.startsWith("discord:")) {
         yield* Effect.tryPromise(() => thread.subscribe());
-        yield* handleDiscordTurn(thread, message, env);
+        yield* handleDiscordTurn(thread, message, env, log);
         return;
       }
 
       const userId = Number(message.author.userId);
       if (!allowedUserIds.has(userId)) {
         yield* Effect.tryPromise(() => thread.post("Access denied."));
+        log.set({ detail: { access_denied: true } });
         return;
       }
 
       yield* Effect.tryPromise(() => thread.subscribe());
-      yield* handleTelegramTurn(thread, message, telegram, env);
+      yield* handleTelegramTurn(thread, message, telegram, env, log);
     }).pipe(
-      Effect.catch((error) => Effect.logError("mention handler error", error)),
+      Effect.tap(() => Effect.sync(() => log.emit({ message: "mention_handler_done" }))),
+      Effect.catch((error) => {
+        log.set({ detail: { error: error instanceof Error ? error.message : String(error) } });
+        log.emit({ message: "mention_handler_error" });
+        return Effect.logError("mention handler error", error);
+      }),
       Effect.runPromise,
-    ),
-  );
+    );
+  });
 
-  bot.onSubscribedMessage((thread, message) =>
-    Effect.gen(function* () {
+  bot.onSubscribedMessage((thread, message) => {
+    const log = createScopedLogger({
+      action: "on_subscribed_message",
+      platform: thread.id.startsWith("discord:") ? "discord" : "telegram",
+      thread_id: thread.id,
+      user_id: message.author.userId,
+    });
+
+    return Effect.gen(function* () {
       if (thread.id.startsWith("discord:")) {
-        yield* handleDiscordTurn(thread, message, env);
+        yield* handleDiscordTurn(thread, message, env, log);
         return;
       }
 
       if (message.text.trim() === "/reset") {
-        yield* handleReset(thread, telegram, env);
+        yield* handleReset(thread, telegram, env, log);
+        log.set({ detail: { command: "reset" } });
         return;
       }
 
-      yield* handleTelegramTurn(thread, message, telegram, env);
+      yield* handleTelegramTurn(thread, message, telegram, env, log);
     }).pipe(
-      Effect.catch((error) => Effect.logError("subscribed message handler error", error)),
+      Effect.tap(() => Effect.sync(() => log.emit({ message: "subscribed_handler_done" }))),
+      Effect.catch((error) => {
+        log.set({ detail: { error: error instanceof Error ? error.message : String(error) } });
+        log.emit({ message: "subscribed_handler_error" });
+        return Effect.logError("subscribed message handler error", error);
+      }),
       Effect.runPromise,
-    ),
-  );
+    );
+  });
 
   return bot;
 }
@@ -118,6 +161,7 @@ const handleTelegramTurn = Effect.fnUntraced(function* (
   message: import("chat").Message,
   telegram: TelegramAdapter,
   env: Env,
+  log: ReturnType<typeof createScopedLogger>,
 ) {
   const { chatId } = telegram.decodeThreadId(thread.id);
   const agent = yield* Effect.tryPromise({
@@ -134,12 +178,14 @@ const handleTelegramTurn = Effect.fnUntraced(function* (
       }),
     catch: (cause) => new AgentRpcError({ cause }),
   });
+  log.set({ detail: { turn_submitted: true, platform: "telegram", chat_id: Number(chatId) } });
 });
 
 const handleDiscordTurn = Effect.fnUntraced(function* (
   thread: import("chat").Thread,
   message: import("chat").Message,
   env: Env,
+  log: ReturnType<typeof createScopedLogger>,
 ) {
   if (message.text.trim() === "/reset") {
     const agent = yield* Effect.tryPromise({
@@ -148,6 +194,7 @@ const handleDiscordTurn = Effect.fnUntraced(function* (
     });
     yield* Effect.tryPromise(() => agent.resetChat());
     yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
+    log.set({ detail: { command: "reset" } });
     return;
   }
 
@@ -165,12 +212,14 @@ const handleDiscordTurn = Effect.fnUntraced(function* (
       }),
     catch: (cause) => new AgentRpcError({ cause }),
   });
+  log.set({ detail: { turn_submitted: true, platform: "discord", thread_id: thread.id } });
 });
 
 const handleReset = Effect.fnUntraced(function* (
   thread: import("chat").Thread,
   telegram: TelegramAdapter,
   env: Env,
+  log: ReturnType<typeof createScopedLogger>,
 ) {
   const { chatId } = telegram.decodeThreadId(thread.id);
   const agent = yield* Effect.tryPromise({
@@ -179,4 +228,5 @@ const handleReset = Effect.fnUntraced(function* (
   });
   yield* Effect.tryPromise(() => agent.resetChat());
   yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
+  log.set({ detail: { reset: true } });
 });
