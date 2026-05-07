@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import { AgentSearchProvider } from "agents/experimental/memory/session";
 import { generateText } from "ai";
@@ -27,10 +28,10 @@ export function configureSession(session: Session, agent: MizookAgent, env: Env)
     .onCompaction(
       createCompactFunction({
         summarize: (prompt) =>
-          generateText({
-            model: createModel(env),
-            prompt,
-          }).then((r) => r.text),
+          Effect.tryPromise(() => generateText({ model: createModel(env), prompt })).pipe(
+            Effect.map((r) => r.text),
+            Effect.runPromise,
+          ),
       }),
     )
     .compactAfter(100_000)
