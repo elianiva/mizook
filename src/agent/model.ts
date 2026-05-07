@@ -18,23 +18,23 @@ export function createModel(env: Env) {
     fetch: (url, options) => {
       const log = createScopedLogger({ action: "model_request" });
       return Effect.tryPromise({
-          try: (signal) => fetch(url, { ...options, signal }) as Promise<Response>,
-          catch: (cause) => {
-            log.set({ detail: { error: cause instanceof Error ? cause.message : String(cause) } });
-            return new ModelRequestError({ cause });
-          },
-        }).pipe(
-          Effect.timeout(60_000),
-          Effect.catchTag("TimeoutError", () => {
-            log.set({ detail: { error: "timeout", timeoutMs: 60_000 } });
-            return Effect.fail(new ModelTimeoutError({ timeoutMs: 60_000 }));
-          }),
-          Effect.tap((response) =>
-            Effect.sync(() => log.set({ detail: { status: response.status } })),
-          ),
-          Effect.ensuring(Effect.sync(() => log.emit({ message: "model_request_done" }))),
-          Effect.runPromise,
-        );
+        try: (signal) => fetch(url, { ...options, signal }) as Promise<Response>,
+        catch: (cause) => {
+          log.set({ detail: { error: cause instanceof Error ? cause.message : String(cause) } });
+          return new ModelRequestError({ cause });
+        },
+      }).pipe(
+        Effect.timeout(60_000),
+        Effect.catchTag("TimeoutError", () => {
+          log.set({ detail: { error: "timeout", timeoutMs: 60_000 } });
+          return Effect.fail(new ModelTimeoutError({ timeoutMs: 60_000 }));
+        }),
+        Effect.tap((response) =>
+          Effect.sync(() => log.set({ detail: { status: response.status } })),
+        ),
+        Effect.ensuring(Effect.sync(() => log.emit({ message: "model_request_done" }))),
+        Effect.runPromise,
+      );
     },
   });
   return opencode.chatModel(env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL);

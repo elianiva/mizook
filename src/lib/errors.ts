@@ -15,3 +15,8 @@ export class AgentLookupError extends Data.TaggedError("AgentLookupError")<{
 export class AgentRpcError extends Data.TaggedError("AgentRpcError")<{
   readonly cause: unknown;
 }> {}
+
+export class GatewayError extends Data.TaggedError("GatewayError")<{
+  readonly cause: unknown;
+  readonly action: string;
+}> {}

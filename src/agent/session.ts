@@ -29,15 +29,18 @@ export function configureSession(session: Session, agent: MizookAgent, env: Env)
     .onCompaction(
       createCompactFunction({
         summarize: (prompt) => {
-          const log = createScopedLogger({ action: "compaction_summarize", prompt_length: prompt.length });
+          const log = createScopedLogger({
+            action: "compaction_summarize",
+            prompt_length: prompt.length,
+          });
           return Effect.tryPromise(() => generateText({ model: createModel(env), prompt })).pipe(
-              Effect.map((r) => r.text),
-              Effect.tap((text) =>
-                Effect.sync(() => log.set({ detail: { summary_length: text.length } })),
-              ),
-              Effect.ensuring(Effect.sync(() => log.emit({ message: "compaction_done" }))),
-              Effect.runPromise,
-            );
+            Effect.map((r) => r.text),
+            Effect.tap((text) =>
+              Effect.sync(() => log.set({ detail: { summary_length: text.length } })),
+            ),
+            Effect.ensuring(Effect.sync(() => log.emit({ message: "compaction_done" }))),
+            Effect.runPromise,
+          );
         },
       }),
     )
