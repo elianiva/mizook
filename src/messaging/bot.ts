@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Random, Schema } from "effect";
 import { getAgentByName } from "agents";
 import { Chat } from "chat";
 import type { StateAdapter } from "chat";
@@ -10,18 +10,12 @@ import type { MizookAgent } from "../agent/mizook-agent";
 import { dmResponses } from "../constants/dm-responses";
 import { AgentLookupError, AgentRpcError } from "../lib/errors";
 
-function parseAllowedUserIds(value: string): Set<number> {
-  const ids = new Set<number>();
-  for (const token of value.split(/[\s,]+/)) {
-    if (!token) continue;
-    const id = Number(token);
-    if (Number.isSafeInteger(id)) ids.add(id);
-  }
-  return ids;
-}
-
 export function createBot(env: Env, state: StateAdapter) {
-  const allowedUserIds = parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS);
+  const allowedUserIds = new Set(
+    Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
+      env.TELEGRAM_ALLOWED_USER_IDS.split(/[\s,]+/).filter(Boolean),
+    ).filter(Number.isSafeInteger),
+  );
   const telegram = createTelegramAdapter({ botToken: env.BOT_TOKEN }) as TelegramAdapter;
 
   const bot = new Chat({
@@ -41,7 +35,8 @@ export function createBot(env: Env, state: StateAdapter) {
   bot.onDirectMessage((thread, message) =>
     Effect.gen(function* () {
       if (thread.id.startsWith("discord:")) {
-        const msg = dmResponses[Math.floor(Math.random() * dmResponses.length)];
+        const index = yield* Random.nextIntBetween(0, dmResponses.length);
+        const msg = dmResponses[index];
         yield* Effect.tryPromise(() => thread.post(msg));
         return;
       }
@@ -69,7 +64,7 @@ export function createBot(env: Env, state: StateAdapter) {
 
       yield* handleTelegramTurn(thread, message, telegram, env);
     }).pipe(
-      Effect.catch((error) => Effect.sync(() => console.error("DM handler error:", error))),
+      Effect.catch((error) => Effect.logError("DM handler error", error)),
       Effect.runPromise,
     ),
   );
@@ -91,7 +86,7 @@ export function createBot(env: Env, state: StateAdapter) {
       yield* Effect.tryPromise(() => thread.subscribe());
       yield* handleTelegramTurn(thread, message, telegram, env);
     }).pipe(
-      Effect.catch((error) => Effect.sync(() => console.error("mention handler error:", error))),
+      Effect.catch((error) => Effect.logError("mention handler error", error)),
       Effect.runPromise,
     ),
   );
@@ -110,9 +105,7 @@ export function createBot(env: Env, state: StateAdapter) {
 
       yield* handleTelegramTurn(thread, message, telegram, env);
     }).pipe(
-      Effect.catch((error) =>
-        Effect.sync(() => console.error("subscribed message handler error:", error)),
-      ),
+      Effect.catch((error) => Effect.logError("subscribed message handler error", error)),
       Effect.runPromise,
     ),
   );
