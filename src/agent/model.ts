@@ -1,7 +1,13 @@
-import { Effect } from "effect";
+import { Config, Effect } from "effect";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { Env } from "../env";
 import { ModelTimeoutError, ModelRequestError } from "../lib/errors";
+
+export const modelConfig = Config.string("OPENCODE_GO_MODEL").pipe(
+  Config.withDefault("deepseek-v4-flash"),
+);
+
+export const DEFAULT_MODEL = "deepseek-v4-flash";
 
 export function createModel(env: Env) {
   const opencode = createOpenAICompatible({
@@ -21,5 +27,5 @@ export function createModel(env: Env) {
         ),
       ),
   });
-  return opencode.chatModel(env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash");
+  return opencode.chatModel(env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL);
 }

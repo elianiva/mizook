@@ -1,21 +1,21 @@
 # Progress
 
 ## Status
-
-In Progress
+Completed
 
 ## Tasks
-
-- [x] Remove `as any` casts in gateway.ts (3 occurrences)
-  - Defined `GatewayStub` interface with typed connect/status/disconnect
-  - Replaced `as any` → `as unknown as GatewayStub`
+- [x] Extract duplicated default model into Config.withDefault (model.ts)
+- [x] Replace crypto.randomUUID() with Random.nextUUIDv4 (mizook-agent.ts)
+- [x] Replace new Date() with Clock.currentTimeMillis (mizook-agent.ts)
+- [x] Replace if (stored === null) with Option.fromNullOr pattern (mizook-agent.ts)
+- [x] Verify reminders.ts (no changes needed)
+- [x] Run validation (vp check --fix passes with 0 errors)
+- [x] Commit with jj
 
 ## Files Changed
-
-- `src/platforms/discord/gateway.ts`
+- `src/agent/model.ts`: Added `modelConfig` (Config.withDefault) and `DEFAULT_MODEL`; createModel uses DEFAULT_MODEL
+- `src/agent/mizook-agent.ts`: Added Random import; onStart uses Option.fromNullOr directly; submitTelegramMessage/submitDiscordMessage use Random.nextUUIDv4 and Clock.currentTimeMillis; onChatResponse uses DEFAULT_MODEL
 
 ## Notes
-
-- `DurableObjectStub<DiscordGatewayDO>` has a built-in `connect` method that conflicts with the DO's own `connect`. Had to cast through `unknown` (`as unknown as GatewayStub`).
-- `vp check` passes with 0 errors (2 pre-existing warnings in mizook-agent.ts).
-- Committed as `qvqyvkxs`.
+- 2 pre-existing `no-this-alias` warnings remain (const self = this pattern needed for function* generators)
+- reminders.ts left as-is (already correct)

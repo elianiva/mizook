@@ -1,5 +1,5 @@
 import { callable } from "agents";
-import { Effect, Clock, Option } from "effect";
+import { Effect, Clock, Option, Random } from "effect";
 import {
   Think,
   type ChunkContext,
@@ -16,7 +16,7 @@ import { AgentContextProvider } from "agents/experimental/memory/session";
 import { ThreadImpl, type SerializedThread } from "chat";
 import type { Env } from "../env";
 import { createScopedLogger } from "../logger";
-import { createModel } from "./model";
+import { createModel, DEFAULT_MODEL } from "./model";
 import { configureSession } from "./session";
 import { createReminderTools } from "../tools/reminders";
 
@@ -117,8 +117,8 @@ export class MizookAgent extends Think<Env> {
   onStart() {
     return Effect.gen({ self: this }, function* () {
       const provider = new AgentContextProvider(this, "soul");
-      const stored = yield* Effect.tryPromise(() => provider.get());
-      if (Option.isNone(Option.fromNullOr(stored))) {
+      const storedOpt = Option.fromNullOr(yield* Effect.tryPromise(() => provider.get()));
+      if (Option.isNone(storedOpt)) {
         yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
       }
 
@@ -165,14 +165,16 @@ export class MizookAgent extends Think<Env> {
           phase: "submitted",
         }),
       );
+      const id = yield* Random.nextUUIDv4;
+      const createdAt = new Date(yield* Clock.currentTimeMillis);
       yield* Effect.tryPromise(() =>
         self.saveMessages((current) => [
           ...current,
           {
-            id: crypto.randomUUID(),
+            id,
             role: "user",
             parts: [{ type: "text", text: input.text }],
-            createdAt: new Date(),
+            createdAt,
           },
         ]),
       );
@@ -205,14 +207,16 @@ export class MizookAgent extends Think<Env> {
           phase: "submitted",
         }),
       );
+      const id = yield* Random.nextUUIDv4;
+      const createdAt = new Date(yield* Clock.currentTimeMillis);
       yield* Effect.tryPromise(() =>
         self.saveMessages((current) => [
           ...current,
           {
-            id: crypto.randomUUID(),
+            id,
             role: "user",
             parts: [{ type: "text", text: input.text }],
-            createdAt: new Date(),
+            createdAt,
           },
         ]),
       );
@@ -270,7 +274,7 @@ export class MizookAgent extends Think<Env> {
           detail: {
             phase: "complete",
             requestId: result.requestId,
-            model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
+            model: this.env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL,
             latencyMs: Option.match(turn, {
               onSome: (t) => now - t.startTime,
               onNone: () => 0,
