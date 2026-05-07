@@ -48,6 +48,8 @@ export class MizookAgent extends Think<Env> {
   private _telegram: TelegramAdapter | null = null;
   private _discord: DiscordAdapter | null = null;
 
+  waitForMcpConnections = { timeout: 10_000 } as const;
+
   getTurnState(): TurnState | null {
     return this._turnState;
   }
@@ -84,6 +86,9 @@ export class MizookAgent extends Think<Env> {
       "Write like a real person, not a bot. No markdown, no formatting syntax, no asterisks for bold. " +
       "If you need structure, use natural text: line breaks, indentation, or simple dashes. " +
       "The goal is to feel like chatting with a knowledgeable friend, not reading a document.\n\n" +
+      "Use web_search_exa to search the internet for current information, facts, or news. " +
+      "Use web_fetch_exa to get the full content of a specific URL when you need details from a page. " +
+      "Always search the web when the user asks about real-world events, recent data, or anything you are unsure about.\n\n" +
       "You have reminder capabilities. When the user asks to be reminded about something: " +
       "call set_reminder with a cron expression and the reminder message. " +
       "Use list_reminders to show active reminders and delete_reminder to cancel them."
@@ -99,7 +104,7 @@ export class MizookAgent extends Think<Env> {
   }
 
   sendReminder(payload: ReminderPayload) {
-    return Effect.gen({ self: this }, function*() {
+    return Effect.gen({ self: this }, function* () {
       const tid = this.telegramThreadId(payload.chatId);
       yield* Effect.tryPromise(() =>
         this.getTelegram().postMessage(tid, `\u23f0 Reminder: ${payload.message}`),
@@ -108,18 +113,24 @@ export class MizookAgent extends Think<Env> {
   }
 
   onStart() {
-    return Effect.gen({ self: this }, function*() {
+    return Effect.gen({ self: this }, function* () {
       const provider = new AgentContextProvider(this, "soul");
       const stored = yield* Effect.tryPromise(() => provider.get());
       if (stored === null) {
         yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
+      }
+
+      if (this.env.EXA_API_KEY) {
+        yield* Effect.tryPromise(() =>
+          this.addMcpServer("exa", `https://mcp.exa.ai/mcp?exaApiKey=${this.env.EXA_API_KEY}`),
+        );
       }
     }).pipe(Effect.runPromise);
   }
 
   @callable()
   resetChat() {
-    return Effect.gen({ self: this }, function*() {
+    return Effect.gen({ self: this }, function* () {
       this.resetTurnState();
       this.clearMessages();
       yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
@@ -134,7 +145,7 @@ export class MizookAgent extends Think<Env> {
     thread: SerializedThread;
   }) {
     const self = this;
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       self.serializedThread = input.thread;
       self._turnState = {
@@ -172,7 +183,7 @@ export class MizookAgent extends Think<Env> {
     thread: SerializedThread;
   }) {
     const self = this;
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       self.serializedThread = input.thread;
       self._turnState = {
@@ -203,25 +214,24 @@ export class MizookAgent extends Think<Env> {
   }
 
   override beforeTurn(_ctx: TurnContext) {
-    return Effect.gen({ self: this }, function*() {
-        const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-        const turn = this._turnState;
-        if (!turn) return { system: freshSystem };
-        if (this.turnLog) {
-          this.turnLog.set({ detail: { phase: "before_turn" } });
-        }
-        if (!this.serializedThread) return { system: freshSystem };
-        const { readable, writable } = new TransformStream<string, string>();
-        this.streamWriter = writable.getWriter();
-        const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();
-        const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
-        yield* Effect.tryPromise(() => thread.startTyping());
-        this.pendingStream = thread.post(readable).catch((err) => {
-          console.error("stream failed:", err);
-        });
-        return { system: freshSystem };
-      },
-    ).pipe(Effect.runPromise);
+    return Effect.gen({ self: this }, function* () {
+      const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
+      const turn = this._turnState;
+      if (!turn) return { system: freshSystem };
+      if (this.turnLog) {
+        this.turnLog.set({ detail: { phase: "before_turn" } });
+      }
+      if (!this.serializedThread) return { system: freshSystem };
+      const { readable, writable } = new TransformStream<string, string>();
+      this.streamWriter = writable.getWriter();
+      const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();
+      const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
+      yield* Effect.tryPromise(() => thread.startTyping());
+      this.pendingStream = thread.post(readable).catch((err) => {
+        console.error("stream failed:", err);
+      });
+      return { system: freshSystem };
+    }).pipe(Effect.runPromise);
   }
 
   override onChunk({ chunk }: ChunkContext) {
@@ -230,60 +240,58 @@ export class MizookAgent extends Think<Env> {
   }
 
   override onChatResponse(result: ChatResponseResult) {
-    return Effect.gen({ self: this }, function*() {
-        yield* Effect.tryPromise(() => this.streamWriter?.close() ?? Promise.resolve());
-        yield* Effect.tryPromise(() => this.pendingStream ?? Promise.resolve());
-        this.streamWriter = null;
-        this.pendingStream = null;
-        this.serializedThread = null;
-        const turn = this._turnState;
-        this._turnState = null;
-        if (this.turnLog) {
-          const now = yield* Clock.currentTimeMillis;
-          this.turnLog.set({
-            detail: {
-              phase: "complete",
-              requestId: result.requestId,
-              model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
-              latencyMs: turn ? now - turn.startTime : 0,
-              result: result.status,
-              platform: turn?.platform,
-            },
-          });
-          this.turnLog.emit({ message: "turn_complete" });
-          this.turnLog = null;
-        }
-      },
-    ).pipe(Effect.runPromise);
+    return Effect.gen({ self: this }, function* () {
+      yield* Effect.tryPromise(() => this.streamWriter?.close() ?? Promise.resolve());
+      yield* Effect.tryPromise(() => this.pendingStream ?? Promise.resolve());
+      this.streamWriter = null;
+      this.pendingStream = null;
+      this.serializedThread = null;
+      const turn = this._turnState;
+      this._turnState = null;
+      if (this.turnLog) {
+        const now = yield* Clock.currentTimeMillis;
+        this.turnLog.set({
+          detail: {
+            phase: "complete",
+            requestId: result.requestId,
+            model: this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash",
+            latencyMs: turn ? now - turn.startTime : 0,
+            result: result.status,
+            platform: turn?.platform,
+          },
+        });
+        this.turnLog.emit({ message: "turn_complete" });
+        this.turnLog = null;
+      }
+    }).pipe(Effect.runPromise);
   }
 
   override onChatError(error: unknown) {
-    return Effect.gen({ self: this }, function*() {
-        yield* Effect.tryPromise(() => this.streamWriter?.close() ?? Promise.resolve());
-        yield* Effect.tryPromise(() => this.pendingStream ?? Promise.resolve());
-        this.streamWriter = null;
-        this.pendingStream = null;
-        const turn = this._turnState;
-        this._turnState = null;
-        if (turn && this.serializedThread) {
-          const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();
-          const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
-          yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
-        }
-        this.serializedThread = null;
-        if (this.turnLog) {
-          this.turnLog.set({
-            detail: {
-              phase: "error",
-              error: error instanceof Error ? error.message : String(error),
-              platform: turn?.platform,
-            },
-          });
-          this.turnLog.emit({ message: "turn_error" });
-          this.turnLog = null;
-        }
-        return error;
-      },
-    ).pipe(Effect.runPromise);
+    return Effect.gen({ self: this }, function* () {
+      yield* Effect.tryPromise(() => this.streamWriter?.close() ?? Promise.resolve());
+      yield* Effect.tryPromise(() => this.pendingStream ?? Promise.resolve());
+      this.streamWriter = null;
+      this.pendingStream = null;
+      const turn = this._turnState;
+      this._turnState = null;
+      if (turn && this.serializedThread) {
+        const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();
+        const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
+        yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
+      }
+      this.serializedThread = null;
+      if (this.turnLog) {
+        this.turnLog.set({
+          detail: {
+            phase: "error",
+            error: error instanceof Error ? error.message : String(error),
+            platform: turn?.platform,
+          },
+        });
+        this.turnLog.emit({ message: "turn_error" });
+        this.turnLog = null;
+      }
+      return error;
+    }).pipe(Effect.runPromise);
   }
 }

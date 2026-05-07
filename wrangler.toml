@@ -37,3 +37,4 @@ invocation_logs = true
 # Dev defaults (override with .dev.vars or wrangler secret)
 # [vars]
 # OPENCODE_GO_MODEL = "deepseek-v4-flash"
+# EXA_API_KEY = "your-exa-api-key"
