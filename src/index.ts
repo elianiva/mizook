@@ -1,3 +1,4 @@
+import { Match } from "effect";
 import { routeAgentRequest } from "agents";
 import type { Env } from "./env";
 import { createRequestLogger } from "./logger";
@@ -22,38 +23,35 @@ export default {
     const log = createRequestLogger(request, ctx);
     const url = new URL(request.url);
 
-    if (url.pathname === "/telegram") {
+    const createBotHandler = () => {
       const state = createCloudflareState({ namespace: env.CHAT_STATE });
-      const bot = createBot(env, state);
-      return bot.webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) });
-    }
+      return createBot(env, state);
+    };
 
-    if (url.pathname === "/webhooks/discord") {
-      const state = createCloudflareState({ namespace: env.CHAT_STATE });
-      const bot = createBot(env, state);
-      return bot.webhooks.discord(request, { waitUntil: (p) => ctx.waitUntil(p) });
-    }
-
-    if (url.pathname === "/discord/connect" && request.method === "POST") {
-      return connectDiscordGateway(env, url.origin);
-    }
-
-    if (url.pathname === "/discord/status") {
-      return getDiscordGatewayStatus(env);
-    }
-
-    if (url.pathname === "/discord/disconnect" && request.method === "POST") {
-      return disconnectDiscordGateway(env);
-    }
-
-    if (url.pathname === "/health") {
-      log.set({ detail: { action: "health_check" } });
-      log.emit({ message: "health_check", detail: { status: 200 } });
-      return new Response("OK", { status: 200 });
-    }
-
-    log.set({ detail: { action: "not_found", path: url.pathname } });
-    log.emit({ message: "not_found", detail: { status: 404 } });
-    return new Response("Not found", { status: 404 });
+    return Match.value({ pathname: url.pathname, method: request.method }).pipe(
+      Match.when({ pathname: "/telegram" }, () =>
+        createBotHandler().webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) }),
+      ),
+      Match.when({ pathname: "/webhooks/discord" }, () =>
+        createBotHandler().webhooks.discord(request, { waitUntil: (p) => ctx.waitUntil(p) }),
+      ),
+      Match.when({ pathname: "/discord/connect", method: "POST" }, () =>
+        connectDiscordGateway(env, url.origin),
+      ),
+      Match.when({ pathname: "/discord/status" }, () => getDiscordGatewayStatus(env)),
+      Match.when({ pathname: "/discord/disconnect", method: "POST" }, () =>
+        disconnectDiscordGateway(env),
+      ),
+      Match.when({ pathname: "/health" }, () => {
+        log.set({ detail: { action: "health_check" } });
+        log.emit({ message: "health_check", detail: { status: 200 } });
+        return new Response("OK", { status: 200 });
+      }),
+      Match.orElse(({ pathname }) => {
+        log.set({ detail: { action: "not_found", path: pathname } });
+        log.emit({ message: "not_found", detail: { status: 404 } });
+        return new Response("Not found", { status: 404 });
+      }),
+    );
   },
 } satisfies ExportedHandler<Env>;
