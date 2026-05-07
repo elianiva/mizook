@@ -1,4 +1,4 @@
-import type { MizookAgent } from "./agent";
+import type { MizookAgent } from "./agent/mizook-agent";
 import type { ChatStateDO } from "chat-state-cloudflare-do";
 import type { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
 

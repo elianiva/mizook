@@ -1,11 +1,16 @@
 import { routeAgentRequest } from "agents";
 import type { Env } from "./env";
 import { createRequestLogger } from "./logger";
-import { createBot } from "./bot";
+import { createBot } from "./messaging/bot";
 import { createCloudflareState } from "chat-state-cloudflare-do";
-import { DiscordGatewayDO, getGatewayStub } from "discord-gateway-cloudflare-do";
+import { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
+import {
+  connectDiscordGateway,
+  getDiscordGatewayStatus,
+  disconnectDiscordGateway,
+} from "./platforms/discord/gateway";
 
-export { MizookAgent } from "./agent";
+export { MizookAgent } from "./agent/mizook-agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
 export { DiscordGatewayDO };
 
@@ -30,23 +35,15 @@ export default {
     }
 
     if (url.pathname === "/discord/connect" && request.method === "POST") {
-      const gateway = getGatewayStub({ namespace: env.DISCORD_GATEWAY }) as any;
-      return Response.json(
-        await gateway.connect({
-          botToken: env.DISCORD_BOT_TOKEN,
-          webhookUrl: `${url.origin}/webhooks/discord`,
-        }),
-      );
+      return connectDiscordGateway(env, url.origin);
     }
 
     if (url.pathname === "/discord/status") {
-      const gateway = getGatewayStub({ namespace: env.DISCORD_GATEWAY }) as any;
-      return Response.json(await gateway.status());
+      return getDiscordGatewayStatus(env);
     }
 
     if (url.pathname === "/discord/disconnect" && request.method === "POST") {
-      const gateway = getGatewayStub({ namespace: env.DISCORD_GATEWAY }) as any;
-      return Response.json(await gateway.disconnect());
+      return disconnectDiscordGateway(env);
     }
 
     if (url.pathname === "/health") {

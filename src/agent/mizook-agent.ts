@@ -7,62 +7,49 @@ import {
   type TurnContext,
 } from "@cloudflare/think";
 import type { ToolSet } from "ai";
-import { generateText, tool } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { z } from "zod";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import type { DiscordAdapter } from "@chat-adapter/discord";
-import type { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
-import type { ChatStateDO } from "chat-state-cloudflare-do";
-import { createScopedLogger } from "./logger";
-import { createCompactFunction } from "agents/experimental/memory/utils";
-import { AgentSearchProvider, AgentContextProvider } from "agents/experimental/memory/session";
+import { AgentContextProvider } from "agents/experimental/memory/session";
 import { ThreadImpl, type SerializedThread } from "chat";
-
-export interface Env {
-  AI: Ai;
-  BOT_TOKEN: string;
-  MIZOOK_AGENT: DurableObjectNamespace<MizookAgent>;
-  CHAT_STATE: DurableObjectNamespace<ChatStateDO>;
-  OPENCODE_GO_API_KEY: string;
-  TELEGRAM_ALLOWED_USER_IDS: string;
-  OPENCODE_GO_MODEL?: string;
-  DISCORD_BOT_TOKEN: string;
-  DISCORD_PUBLIC_KEY: string;
-  DISCORD_APPLICATION_ID: string;
-  DISCORD_GATEWAY_SECRET: string;
-  DISCORD_GATEWAY: DurableObjectNamespace<DiscordGatewayDO>;
-}
+import type { Env } from "../env";
+import { createScopedLogger } from "../logger";
+import { createModel } from "./model";
+import { configureSession } from "./session";
+import { createReminderTools } from "../tools/reminders";
 
 type ReminderPayload = {
   chatId: number;
   message: string;
 };
 
-type TurnState =
+export type TurnState =
   | {
-    platform: "telegram";
-    chatId: number;
-    replyToMessageId?: number;
-    startTime: number;
-  }
+      platform: "telegram";
+      chatId: number;
+      replyToMessageId?: number;
+      startTime: number;
+    }
   | {
-    platform: "discord";
-    threadId: string;
-    replyToMessageId?: string;
-    startTime: number;
-  };
+      platform: "discord";
+      threadId: string;
+      replyToMessageId?: string;
+      startTime: number;
+    };
 
 export class MizookAgent extends Think<Env> {
-  private turnState: TurnState | null = null;
+  private _turnState: TurnState | null = null;
   private streamWriter: WritableStreamDefaultWriter<string> | null = null;
   private pendingStream: Promise<unknown> | null = null;
   private serializedThread: SerializedThread | null = null;
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
   private _telegram: TelegramAdapter | null = null;
   private _discord: DiscordAdapter | null = null;
+
+  getTurnState(): TurnState | null {
+    return this._turnState;
+  }
 
   private getTelegram(): TelegramAdapter {
     if (!this._telegram) {
@@ -87,30 +74,7 @@ export class MizookAgent extends Think<Env> {
   }
 
   getModel() {
-    const opencode = createOpenAICompatible({
-      baseURL: "https://opencode.ai/zen/go/v1",
-      name: "Opencode Go",
-      apiKey: this.env.OPENCODE_GO_API_KEY,
-      fetch: this.fetchWithTimeout(60_000),
-    });
-    return opencode.chatModel(this.env.OPENCODE_GO_MODEL ?? "deepseek-v4-flash");
-  }
-
-  private fetchWithTimeout(timeout: number) {
-    return async (url: RequestInfo | URL, options?: RequestInit) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-      try {
-        return await fetch(url, { ...options, signal: controller.signal });
-      } catch (e) {
-        if ((e as Error).name === "AbortError") {
-          throw new Error(`Model request timed out after ${timeout}ms`);
-        }
-        throw e;
-      } finally {
-        clearTimeout(timer);
-      }
-    };
+    return createModel(this.env);
   }
 
   getSystemPrompt() {
@@ -126,106 +90,11 @@ export class MizookAgent extends Think<Env> {
   }
 
   configureSession(session: Session) {
-    return session
-      .withContext("soul", {
-        description:
-          "Your identity, personality, and core instructions. " +
-          "Write to this with set_context to change who you are.",
-        maxTokens: 1000,
-      })
-      .withContext("memory", {
-        description:
-          "Key facts, preferences, and context learned from the user. " +
-          "Proactively update this as you learn new information.",
-        maxTokens: 2000,
-      })
-      .withContext("history", {
-        provider: new AgentSearchProvider(this),
-        description: "Full-text search across your conversation history with this assistant.",
-      })
-      .onCompaction(
-        createCompactFunction({
-          summarize: (prompt) =>
-            generateText({
-              model: this.getModel(),
-              prompt,
-            }).then((r) => r.text),
-        }),
-      )
-      .compactAfter(100_000)
-      .withCachedPrompt();
+    return configureSession(session, this, this.env);
   }
 
   getTools(): ToolSet {
-    return {
-      set_reminder: tool({
-        description:
-          "Set a recurring reminder using a cron schedule. " +
-          "Use when the user asks to be reminded at regular intervals. " +
-          "Examples: 'every day at 7am' -> cron '0 7 * * *', " +
-          "'every Monday at 9am' -> cron '0 9 * * 1', " +
-          "'weekdays at 8am' -> cron '0 8 * * 1-5'",
-        inputSchema: z.object({
-          cron: z
-            .string()
-            .describe(
-              "Cron expression (minute hour day month weekday). " +
-              "Examples: '0 7 * * *' = daily at 7am, " +
-              "'0 9 * * 1' = Mondays at 9am, " +
-              "'0 8 * * 1-5' = weekdays at 8am",
-            ),
-          message: z.string().describe("The reminder message text"),
-        }),
-        execute: async ({ cron, message }) => {
-          const turn = this.turnState;
-          if (!turn || turn.platform !== "telegram")
-            return "Reminders are only available in private chat.";
-
-          const schedule = await this.schedule(cron, "sendReminder", {
-            chatId: turn.chatId,
-            message,
-          } satisfies ReminderPayload);
-
-          return `Reminder set. ID: ${schedule.id}. I will remind you: "${message}"`;
-        },
-      }),
-
-      list_reminders: tool({
-        description: "List all active reminders",
-        inputSchema: z.object({}),
-        execute: async () => {
-          const all = await this.listSchedules();
-          const reminders = all.filter((s) => s.callback === "sendReminder");
-
-          if (reminders.length === 0) return "No active reminders.";
-
-          return reminders
-            .map((s) => {
-              const p = s.payload as ReminderPayload;
-              const next = new Date(s.time * 1000).toLocaleString();
-              const kind =
-                s.type === "cron" && "cron" in s
-                  ? `cron: ${(s as typeof s & { cron: string }).cron}`
-                  : s.type;
-              return `[${s.id.slice(0, 8)}…] ${p.message} — next: ${next} (${kind})`;
-            })
-            .join("\n");
-        },
-      }),
-
-      delete_reminder: tool({
-        description: "Cancel a reminder by its ID",
-        inputSchema: z.object({
-          scheduleId: z.string().describe("The schedule ID of the reminder to cancel"),
-        }),
-        execute: async ({ scheduleId }) => {
-          const cancelled = await this.cancelSchedule(scheduleId);
-          return cancelled
-            ? `Reminder ${scheduleId.slice(0, 8)}… cancelled.`
-            : `Reminder not found or already executed.`;
-        },
-      }),
-    };
+    return createReminderTools(this);
   }
 
   async sendReminder(payload: ReminderPayload) {
@@ -256,7 +125,7 @@ export class MizookAgent extends Think<Env> {
     thread: SerializedThread;
   }) {
     this.serializedThread = input.thread;
-    this.turnState = {
+    this._turnState = {
       platform: "telegram",
       chatId: input.chatId,
       replyToMessageId: input.messageId,
@@ -290,7 +159,7 @@ export class MizookAgent extends Think<Env> {
     thread: SerializedThread;
   }) {
     this.serializedThread = input.thread;
-    this.turnState = {
+    this._turnState = {
       platform: "discord",
       threadId: input.threadId,
       replyToMessageId: input.messageId,
@@ -319,7 +188,7 @@ export class MizookAgent extends Think<Env> {
   override async beforeTurn(_ctx: TurnContext) {
     const freshSystem = await this.session.refreshSystemPrompt();
 
-    const turn = this.turnState;
+    const turn = this._turnState;
     if (!turn) return { system: freshSystem };
 
     if (this.turnLog) {
@@ -354,8 +223,8 @@ export class MizookAgent extends Think<Env> {
     this.pendingStream = null;
     this.serializedThread = null;
 
-    const turn = this.turnState;
-    this.turnState = null;
+    const turn = this._turnState;
+    this._turnState = null;
 
     if (this.turnLog) {
       this.turnLog.set({
@@ -379,8 +248,8 @@ export class MizookAgent extends Think<Env> {
     this.streamWriter = null;
     this.pendingStream = null;
 
-    const turn = this.turnState;
-    this.turnState = null;
+    const turn = this._turnState;
+    this._turnState = null;
 
     if (turn && this.serializedThread) {
       const adapter = turn.platform === "telegram" ? this.getTelegram() : this.getDiscord();

@@ -1,0 +1,17 @@
+export const dmResponses = [
+  "you can't message me directly, silly :p",
+  "aww, you tried to slide into my DMs~ no can do!",
+  "hehe, i don't do DMs! try mentioning me in a server instead \u2728",
+  "sorry, i'm shy. talk to me in a server ok? \ud83d\ude36",
+  "direct messages? what are those? never heard of em \ud83e\udd2a",
+  "nuh uh ~ no DMs allowed, that's like.. a rule or whatever!",
+  "ehe~ you're cute for trying but i only respond in servers!",
+  "whoops, wrong chat! try again in a server \ud83d\udc95",
+  "no DMs teehee \ud83e\udd23",
+  "sorry!! i have a strict no-dm policy,, it's nothing personal!",
+  "you can't just DM me out of nowhere like that!! \ud83d\ude35\u200d\ud83d\udcab",
+  "unfortunately i'm a server-only kinda bot, ya know? \ud83e\udd37\u200d\u2640\ufe0f",
+  "i wish i could chat here but.. no can do!! \ud83d\ude05",
+  "omg hii!! but um.. wrong place! try mentioning me in a server! \ud83d\ude0a",
+  "DM denied !! i only exist in servers, sorry!! \ud83e\udd1e",
+];
