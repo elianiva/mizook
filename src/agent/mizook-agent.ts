@@ -301,13 +301,22 @@ export class MizookAgent extends Think<Env> {
       }
       this.serializedThread = Option.none();
       if (Option.isSome(this.turnLog)) {
-        this.turnLog.value.set({
-          detail: {
-            phase: "error",
-            error: error instanceof Error ? error.message : String(error),
-            platform: Option.getOrNull(turn)?.platform,
-          },
-        });
+        if (error instanceof Error) {
+          this.turnLog.value.error(error, {
+            detail: {
+              phase: "error",
+              platform: Option.getOrNull(turn)?.platform,
+            },
+          });
+        } else {
+          this.turnLog.value.set({
+            detail: {
+              phase: "error",
+              error: String(error),
+              platform: Option.getOrNull(turn)?.platform,
+            },
+          });
+        }
         this.turnLog.value.emit({ message: "turn_error" });
         this.turnLog = Option.none();
       }

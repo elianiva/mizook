@@ -78,7 +78,7 @@ export function createBot(env: Env, state: StateAdapter) {
     }).pipe(
       Effect.tap(() => Effect.sync(() => log.emit({ message: "dm_handler_done" }))),
       Effect.catch((error) => {
-        log.set({ detail: { error: error instanceof Error ? error.message : String(error) } });
+        log.error(error);
         log.emit({ message: "dm_handler_error" });
         return Effect.logError("DM handler error", error);
       }),
@@ -113,7 +113,7 @@ export function createBot(env: Env, state: StateAdapter) {
     }).pipe(
       Effect.tap(() => Effect.sync(() => log.emit({ message: "mention_handler_done" }))),
       Effect.catch((error) => {
-        log.set({ detail: { error: error instanceof Error ? error.message : String(error) } });
+        log.error(error);
         log.emit({ message: "mention_handler_error" });
         return Effect.logError("mention handler error", error);
       }),
@@ -145,7 +145,7 @@ export function createBot(env: Env, state: StateAdapter) {
     }).pipe(
       Effect.tap(() => Effect.sync(() => log.emit({ message: "subscribed_handler_done" }))),
       Effect.catch((error) => {
-        log.set({ detail: { error: error instanceof Error ? error.message : String(error) } });
+        log.error(error);
         log.emit({ message: "subscribed_handler_error" });
         return Effect.logError("subscribed message handler error", error);
       }),

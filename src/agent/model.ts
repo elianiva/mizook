@@ -20,7 +20,8 @@ export function createModel(env: Env) {
       return Effect.tryPromise({
         try: (signal) => fetch(url, { ...options, signal }) as Promise<Response>,
         catch: (cause) => {
-          log.set({ detail: { error: cause instanceof Error ? cause.message : String(cause) } });
+          if (cause instanceof Error) log.error(cause);
+          else log.set({ detail: { error: String(cause) } });
           return new ModelRequestError({ cause });
         },
       }).pipe(

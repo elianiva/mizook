@@ -4,16 +4,16 @@ import type { Env } from "./env";
 import { createRequestLogger } from "./logger";
 import { createBot } from "./messaging/bot";
 import { createCloudflareState } from "chat-state-cloudflare-do";
-import { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
 import {
   connectDiscordGateway,
   getDiscordGatewayStatus,
   disconnectDiscordGateway,
 } from "./platforms/discord/gateway";
 
+// durable objects exports
 export { MizookAgent } from "./agent/mizook-agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
-export { DiscordGatewayDO };
+export { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
