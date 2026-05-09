@@ -65,6 +65,7 @@ wrangler secret put TELEGRAM_ALLOWED_USER_IDS
 | `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                      |
 | `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot |
 | `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                  |
+| `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7) |
 
 ## Available models
 

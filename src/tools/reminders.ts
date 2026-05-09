@@ -13,18 +13,19 @@ export function createReminderTools(agent: MizookAgent) {
     set_reminder: tool({
       description:
         "Set a recurring reminder using a cron schedule. " +
-        "Use when the user asks to be reminded at regular intervals. " +
-        "Examples: 'every day at 7am' -> cron '0 7 * * *', " +
-        "'every Monday at 9am' -> cron '0 9 * * 1', " +
-        "'weekdays at 8am' -> cron '0 8 * * 1-5'",
+        "CRON EXPRESSIONS MUST BE IN UTC. The user's timezone is UTC+7. " +
+        "Convert local times to UTC by subtracting 7 hours from the hour field. " +
+        "Example: user says 'every day at 8am' (UTC+7) -> cron '0 1 * * *' (UTC). " +
+        "Example: 'every Monday at 9am' -> cron '0 2 * * 1'. " +
+        "Example: 'weekdays at midnight' -> cron '0 17 * * 0-4'.",
       inputSchema: z.object({
         cron: z
           .string()
           .describe(
-            "Cron expression (minute hour day month weekday). " +
-              "Examples: '0 7 * * *' = daily at 7am, " +
-              "'0 9 * * 1' = Mondays at 9am, " +
-              "'0 8 * * 1-5' = weekdays at 8am",
+            "Cron expression in UTC (minute hour day month weekday). " +
+              "Convert from the user's timezone (UTC+7) by subtracting 7 hours from the hour. " +
+              "Examples: '0 1 * * *' = daily at 8am UTC+7, " +
+              "'0 2 * * 1' = Mondays at 9am UTC+7",
           ),
         message: z.string().describe("The reminder message text"),
       }),
@@ -54,7 +55,14 @@ export function createReminderTools(agent: MizookAgent) {
         return reminders
           .map((s) => {
             const p = s.payload as ReminderPayload;
-            const next = new Date(s.time * 1000).toLocaleString();
+            const next = new Date(s.time * 1000).toLocaleString("en-ID", {
+              timeZone: "Asia/Jakarta",
+              weekday: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+              day: "numeric",
+              month: "short",
+            });
             const kind =
               s.type === "cron" && "cron" in s
                 ? `cron: ${(s as typeof s & { cron: string }).cron}`

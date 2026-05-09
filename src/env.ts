@@ -11,6 +11,7 @@ export interface Env {
   TELEGRAM_ALLOWED_USER_IDS: string;
   OPENCODE_GO_MODEL?: string;
   EXA_API_KEY?: string;
+  TIMEZONE?: string;
   DISCORD_BOT_TOKEN: string;
   DISCORD_PUBLIC_KEY: string;
   DISCORD_APPLICATION_ID: string;
