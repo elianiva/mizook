@@ -42,6 +42,7 @@ export default {
       Match.when({ pathname: "/discord/disconnect", method: "POST" }, () =>
         disconnectDiscordGateway(env),
       ),
+      Match.when({ pathname: "/screenshots/" }, () => serveScreenshot(url, env)),
       Match.when({ pathname: "/health" }, () => {
         log.set({ detail: { action: "health_check" } });
         log.emit({ message: "health_check", detail: { status: 200 } });
@@ -55,3 +56,18 @@ export default {
     );
   },
 } satisfies ExportedHandler<Env>;
+
+async function serveScreenshot(url: URL, env: Env): Promise<Response> {
+  const key = decodeURIComponent(url.pathname.replace("/screenshots/", ""));
+  if (!key || !key.startsWith("screenshots/")) {
+    return new Response("Not found", { status: 404 });
+  }
+  const obj = await env.SCREENSHOTS.get(key);
+  if (!obj) {
+    return new Response("Not found", { status: 404 });
+  }
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set("Cache-Control", "public, max-age=86400");
+  return new Response(obj.body, { headers });
+}

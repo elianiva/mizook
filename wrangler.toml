@@ -1,10 +1,17 @@
 name = "mizook"
 main = "src/index.ts"
-compatibility_date = "2026-01-01"
+compatibility_date = "2026-05-08"
 compatibility_flags = ["nodejs_compat"]
 
 [ai]
 binding = "AI"
+
+[browser]
+binding = "BROWSER"
+
+[[r2_buckets]]
+binding = "SCREENSHOTS"
+bucket_name = "mizook-screenshots"
 
 [[durable_objects.bindings]]
 class_name = "MizookAgent"
@@ -34,7 +41,6 @@ tag = "v3"
 enabled = true
 invocation_logs = true
 
-# Dev defaults (override with .dev.vars or wrangler secret)
 [vars]
 OPENCODE_GO_MODEL = "deepseek-v4-flash"
 TIMEZONE = "Asia/Jakarta"

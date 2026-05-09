@@ -8,6 +8,8 @@ declare namespace Cloudflare {
   }
   interface Env {
     AI: Ai;
+    BROWSER: Fetcher;
+    SCREENSHOTS: R2Bucket;
     MIZOOK_AGENT: DurableObjectNamespace<import("./src/index").MizookAgent>;
     CHAT_STATE: DurableObjectNamespace<import("./src/index").ChatStateDO>;
     DISCORD_GATEWAY: DurableObjectNamespace<import("./src/index").DiscordGatewayDO>;

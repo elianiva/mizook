@@ -19,6 +19,7 @@ import { createScopedLogger } from "../logger";
 import { createModel, DEFAULT_MODEL } from "./model";
 import { configureSession } from "./session";
 import { createReminderTools } from "../tools/reminders";
+import { createBrowserTools } from "../tools/browser-run";
 
 type ReminderPayload = {
   chatId: number;
@@ -100,7 +101,12 @@ export class MizookAgent extends Think<Env> {
       "Example: 'every Monday at midnight' -> cron '0 17 * * 0' (Mon 0:00 UTC+7 = Sun 17:00 UTC).\n\n" +
       "You have reminder capabilities. When the user asks to be reminded about something: " +
       "call set_reminder with a cron expression and the reminder message. " +
-      "Use list_reminders to show active reminders and delete_reminder to cancel them."
+      "Use list_reminders to show active reminders and delete_reminder to cancel them.\n\n" +
+      "You have browser capabilities using Cloudflare Browser Run. " +
+      "When the user asks you to visit a website, take a screenshot, or check a page, " +
+      "use browser_screenshot_and_send to capture and send the screenshot directly to them. " +
+      "Use browser_screenshot to just capture (returns an R2 key). " +
+      "Use send_photo_to_chat with an R2 key to send a previously taken screenshot."
     );
   }
 
@@ -109,7 +115,30 @@ export class MizookAgent extends Think<Env> {
   }
 
   getTools(): ToolSet {
-    return createReminderTools(this);
+    return {
+      ...createReminderTools(this),
+      ...createBrowserTools(
+        {
+          BROWSER: this.env.BROWSER,
+          SCREENSHOTS: this.env.SCREENSHOTS,
+          BOT_TOKEN: this.env.BOT_TOKEN,
+          DISCORD_BOT_TOKEN: this.env.DISCORD_BOT_TOKEN,
+        },
+        () => {
+          const turnState = this._turnState;
+          if (Option.isSome(turnState)) {
+            const t = turnState.value;
+            if (t.platform === "telegram") {
+              return { platform: "telegram" as const, chatId: t.chatId };
+            }
+            if (t.platform === "discord") {
+              return { platform: "discord" as const, threadId: t.threadId };
+            }
+          }
+          return { platform: "unknown" as const };
+        },
+      ),
+    };
   }
 
   sendReminder(payload: ReminderPayload) {

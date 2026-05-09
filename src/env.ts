@@ -17,4 +17,6 @@ export interface Env {
   DISCORD_APPLICATION_ID: string;
   DISCORD_GATEWAY_SECRET: string;
   DISCORD_GATEWAY: DurableObjectNamespace<DiscordGatewayDO>;
+  BROWSER: Fetcher;
+  SCREENSHOTS: R2Bucket;
 }
