@@ -8,38 +8,83 @@ type ReminderPayload = {
   message: string;
 };
 
+function parseDurationToSeconds(duration: string): number | null {
+  const match = duration.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)?$/i);
+  if (!match) return null;
+
+  const num = parseInt(match[1], 10);
+  const unit = (match[2] || "m").toLowerCase()[0];
+
+  switch (unit) {
+    case "s":
+      return num;
+    case "m":
+      return num * 60;
+    case "h":
+      return num * 3600;
+    case "d":
+      return num * 86400;
+    default:
+      return null;
+  }
+}
+
 export function createReminderTools(agent: MizookAgent) {
   return {
     set_reminder: tool({
       description:
-        "Set a recurring reminder using a cron schedule. " +
+        "Set a reminder. By default creates a ONE-TIME reminder that fires after a delay. " +
+        "Only use the cron field for RECURRING reminders (daily, weekly, etc.). " +
         "CRON EXPRESSIONS MUST BE IN UTC. The user's timezone is UTC+7. " +
         "Convert local times to UTC by subtracting 7 hours from the hour field. " +
-        "Example: user says 'every day at 8am' (UTC+7) -> cron '0 1 * * *' (UTC). " +
-        "Example: 'every Monday at 9am' -> cron '0 2 * * 1'. " +
-        "Example: 'weekdays at midnight' -> cron '0 17 * * 0-4'.",
+        "Example: 'remind me in 30 minutes' -> duration: '30m', cron: omitted. " +
+        "Example: 'remind me in 2 hours' -> duration: '2h', cron: omitted. " +
+        "Example: 'remind me every day at 8am' (UTC+7) -> cron: '0 1 * * *', duration: omitted. " +
+        "Example: 'every Monday at 9am' -> cron: '0 2 * * 1', duration: omitted. " +
+        "Example: 'weekdays at midnight' -> cron: '0 17 * * 0-4', duration: omitted.",
       inputSchema: z.object({
+        message: z.string().describe("The reminder message text"),
+        duration: z
+          .string()
+          .optional()
+          .describe(
+            "For ONE-TIME reminders: how long from now (e.g. '30m', '2h', '1d'). " +
+              "Omit for recurring reminders (use cron instead).",
+          ),
         cron: z
           .string()
+          .optional()
           .describe(
-            "Cron expression in UTC (minute hour day month weekday). " +
+            "For RECURRING reminders only: cron expression in UTC (minute hour day month weekday). " +
               "Convert from the user's timezone (UTC+7) by subtracting 7 hours from the hour. " +
               "Examples: '0 1 * * *' = daily at 8am UTC+7, " +
-              "'0 2 * * 1' = Mondays at 9am UTC+7",
+              "'0 2 * * 1' = Mondays at 9am UTC+7. " +
+              "Do NOT use this for one-time reminders.",
           ),
-        message: z.string().describe("The reminder message text"),
       }),
-      execute: async ({ cron, message }) => {
+      execute: async ({ message, duration, cron }) => {
         const turn = agent.getTurnState();
         if (Option.isNone(turn) || turn.value.platform !== "telegram")
           return "Reminders are only available in private chat.";
 
-        const schedule = await agent.schedule(cron, "sendReminder", {
+        const payload = {
           chatId: turn.value.chatId,
           message,
-        } satisfies ReminderPayload);
+        } satisfies ReminderPayload;
 
-        return `Reminder set. ID: ${schedule.id}. I will remind you: "${message}"`;
+        if (cron) {
+          const schedule = await agent.schedule(cron, "sendReminder", payload);
+          return `Recurring reminder set. ID: ${schedule.id}. I will remind you: "${message}"`;
+        }
+
+        const seconds = duration ? parseDurationToSeconds(duration) : 60;
+        if (seconds === null) {
+          return `Could not parse duration "${duration}". Use e.g. '30m', '2h', '1d'.`;
+        }
+
+        const schedule = await agent.schedule(seconds, "sendReminder", payload);
+        const mins = Math.round(seconds / 60);
+        return `One-time reminder set. ID: ${schedule.id}. I will remind you "${message}" in ${mins} minute${mins === 1 ? "" : "s"}.`;
       },
     }),
 
