@@ -4,11 +4,11 @@ import type { Env } from "../env";
 import { ModelTimeoutError, ModelRequestError } from "../lib/errors";
 import { createScopedLogger } from "../logger";
 
-export const modelConfig = Config.string("OPENCODE_GO_MODEL").pipe(
-  Config.withDefault("deepseek-v4-flash"),
-);
+export const modelConfig = Config.string("OPENCODE_GO_MODEL").pipe(Config.withDefault("mimo-v2.5"));
 
-export const DEFAULT_MODEL = "deepseek-v4-flash";
+export const DEFAULT_MODEL = "mimo-v2.5";
+
+const TIMEOUT_MS = 60_000;
 
 export function createModel(env: Env) {
   const opencode = createOpenAICompatible({
@@ -25,10 +25,10 @@ export function createModel(env: Env) {
           return new ModelRequestError({ cause });
         },
       }).pipe(
-        Effect.timeout(60_000),
+        Effect.timeout(TIMEOUT_MS),
         Effect.catchTag("TimeoutError", () => {
-          log.set({ detail: { error: "timeout", timeoutMs: 60_000 } });
-          return Effect.fail(new ModelTimeoutError({ timeoutMs: 60_000 }));
+          log.set({ detail: { error: "timeout", timeoutMs: TIMEOUT_MS } });
+          return Effect.fail(new ModelTimeoutError({ timeoutMs: TIMEOUT_MS }));
         }),
         Effect.tap((response) =>
           Effect.sync(() => log.set({ detail: { status: response.status } })),
