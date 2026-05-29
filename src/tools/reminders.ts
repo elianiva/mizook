@@ -112,7 +112,7 @@ export function createReminderTools(agent: MizookAgent) {
               s.type === "cron" && "cron" in s
                 ? `cron: ${(s as typeof s & { cron: string }).cron}`
                 : s.type;
-            return `[${s.id.slice(0, 8)}…] ${p.message} — next: ${next} (${kind})`;
+            return `ID: ${s.id} | ${p.message} — next: ${next} (${kind})`;
           })
           .join("\n");
       },
@@ -126,8 +126,8 @@ export function createReminderTools(agent: MizookAgent) {
       execute: async ({ scheduleId }) => {
         const cancelled = await agent.cancelSchedule(scheduleId);
         return cancelled
-          ? `Reminder ${scheduleId.slice(0, 8)}… cancelled.`
-          : `Reminder not found or already executed.`;
+          ? `Reminder cancelled.`
+          : `Reminder not found (ID: ${scheduleId}). Use list_reminders to see active IDs.`;
       },
     }),
   };
