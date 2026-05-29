@@ -10,27 +10,27 @@
     "check": "vp check && tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^2.0.46",
-    "@chat-adapter/discord": "^4.27.0",
-    "@chat-adapter/state-memory": "^4.27.0",
-    "@chat-adapter/telegram": "^4.27.0",
+    "@ai-sdk/openai-compatible": "^2.0.48",
+    "@chat-adapter/discord": "^4.29.0",
+    "@chat-adapter/state-memory": "^4.29.0",
+    "@chat-adapter/telegram": "^4.29.0",
     "@cloudflare/puppeteer": "^1.1.0",
-    "@cloudflare/think": "^0.5.3",
-    "agents": "^0.12.3",
-    "ai": "^6.0.175",
-    "chat": "^4.27.0",
+    "@cloudflare/think": "^0.7.3",
+    "agents": "^0.13.3",
+    "ai": "^6.0.193",
+    "chat": "^4.29.0",
     "chat-state-cloudflare-do": "^0.2.0",
     "discord-gateway-cloudflare-do": "^0.1.2",
     "effect": "4.0.0-beta.62",
-    "evlog": "^2.16.0",
-    "workers-ai-provider": "^3.1.13",
+    "evlog": "^2.18.1",
+    "workers-ai-provider": "^3.1.14",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "typescript": "~6.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:",
-    "wrangler": "^4.88.0"
+    "wrangler": "^4.95.0"
   },
   "packageManager": "pnpm@10.33.0"
 }
