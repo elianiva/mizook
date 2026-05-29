@@ -10,6 +10,7 @@ export interface Env {
   TELEGRAM_ALLOWED_USER_IDS: string;
   OPENCODE_GO_MODEL?: string;
   EXA_API_KEY?: string;
+  CF_API_TOKEN?: string;
   TIMEZONE?: string;
   BROWSER: Fetcher;
   SCREENSHOTS: R2Bucket;

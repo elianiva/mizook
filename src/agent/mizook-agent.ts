@@ -84,7 +84,13 @@ export class MizookAgent extends Think<Env> {
       "When the user asks you to visit a website, take a screenshot, or check a page, " +
       "use browser_screenshot_and_send to capture and send the screenshot directly to them. " +
       "Use browser_screenshot to just capture (returns an R2 key). " +
-      "Use send_photo_to_chat with an R2 key to send a previously taken screenshot."
+      "Use send_photo_to_chat with an R2 key to send a previously taken screenshot.\n\n" +
+      "You have full access to the Cloudflare API via the `search` and `execute` tools. " +
+      "When the user asks about their Cloudflare resources (domains, DNS, Workers, KV, R2, D1, etc.), " +
+      "use `search` to find the right API endpoints, then `execute` to make the API call. " +
+      "Example: 'check my domains' -> search for zone list endpoints, then execute GET /client/v4/zones. " +
+      "Example: 'add a CNAME for x.example.com to y.example.com' -> search DNS record create, then execute POST. " +
+      "For endpoints that need an account_id, search for the account first or ask the user."
     );
   }
 
@@ -132,6 +138,16 @@ export class MizookAgent extends Think<Env> {
       if (this.env.EXA_API_KEY) {
         yield* Effect.tryPromise(() =>
           this.addMcpServer("exa", `https://mcp.exa.ai/mcp?exaApiKey=${this.env.EXA_API_KEY}`),
+        );
+      }
+
+      if (this.env.CF_API_TOKEN) {
+        yield* Effect.tryPromise(() =>
+          this.addMcpServer("cloudflare", "https://mcp.cloudflare.com/mcp", {
+            transport: {
+              headers: { Authorization: `Bearer ${this.env.CF_API_TOKEN}` },
+            },
+          }),
         );
       }
     }).pipe(Effect.runPromise);
