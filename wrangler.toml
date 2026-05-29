@@ -29,6 +29,10 @@ tag = "v1"
 new_sqlite_classes = ["ChatStateDO"]
 tag = "v2"
 
+[[migrations]]
+new_sqlite_classes = ["MizookAgent"]
+tag = "v3"
+
 [observability.logs]
 enabled = true
 invocation_logs = true
