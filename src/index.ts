@@ -4,16 +4,11 @@ import type { Env } from "./env";
 import { createRequestLogger } from "./logger";
 import { createBot } from "./messaging/bot";
 import { createCloudflareState } from "chat-state-cloudflare-do";
-import {
-  connectDiscordGateway,
-  getDiscordGatewayStatus,
-  disconnectDiscordGateway,
-} from "./platforms/discord/gateway";
+
 
 // durable objects exports
 export { MizookAgent } from "./agent/mizook-agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
-export { DiscordGatewayDO } from "discord-gateway-cloudflare-do";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -31,16 +26,6 @@ export default {
     return Match.value({ pathname: url.pathname, method: request.method }).pipe(
       Match.when({ pathname: "/telegram" }, () =>
         createBotHandler().webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) }),
-      ),
-      Match.when({ pathname: "/webhooks/discord" }, () =>
-        createBotHandler().webhooks.discord(request, { waitUntil: (p) => ctx.waitUntil(p) }),
-      ),
-      Match.when({ pathname: "/discord/connect", method: "POST" }, () =>
-        connectDiscordGateway(env, url.origin),
-      ),
-      Match.when({ pathname: "/discord/status" }, () => getDiscordGatewayStatus(env)),
-      Match.when({ pathname: "/discord/disconnect", method: "POST" }, () =>
-        disconnectDiscordGateway(env),
       ),
       Match.when({ pathname: "/screenshots/" }, () => serveScreenshot(url, env)),
       Match.when({ pathname: "/health" }, () => {

@@ -1,13 +1,11 @@
-import { Effect, Random, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { getAgentByName } from "agents";
 import { Chat } from "chat";
 import type { StateAdapter } from "chat";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
-import { createDiscordAdapter } from "@chat-adapter/discord";
 import type { Env } from "../env";
 import type { MizookAgent } from "../agent/mizook-agent";
-import { dmResponses } from "../constants/dm-responses";
 import { AgentLookupError, AgentRpcError } from "../lib/errors";
 import { createScopedLogger } from "../logger";
 
@@ -23,11 +21,6 @@ export function createBot(env: Env, state: StateAdapter) {
     userName: "mizook",
     adapters: {
       telegram,
-      discord: createDiscordAdapter({
-        botToken: env.DISCORD_BOT_TOKEN,
-        publicKey: env.DISCORD_PUBLIC_KEY,
-        applicationId: env.DISCORD_APPLICATION_ID,
-      }),
     },
     state,
     dedupeTtlMs: 600_000,
@@ -36,20 +29,12 @@ export function createBot(env: Env, state: StateAdapter) {
   bot.onDirectMessage((thread, message) => {
     const log = createScopedLogger({
       action: "on_direct_message",
-      platform: thread.id.startsWith("discord:") ? "discord" : "telegram",
+      platform: "telegram",
       thread_id: thread.id,
       user_id: message.author.userId,
     });
 
     return Effect.gen(function* () {
-      if (thread.id.startsWith("discord:")) {
-        const index = yield* Random.nextIntBetween(0, dmResponses.length);
-        const msg = dmResponses[index];
-        yield* Effect.tryPromise(() => thread.post(msg));
-        log.set({ detail: { dm_response: true } });
-        return;
-      }
-
       const userId = Number(message.author.userId);
       if (!allowedUserIds.has(userId)) {
         yield* Effect.tryPromise(() => thread.post("Access denied."));
@@ -89,18 +74,12 @@ export function createBot(env: Env, state: StateAdapter) {
   bot.onNewMention((thread, message) => {
     const log = createScopedLogger({
       action: "on_mention",
-      platform: thread.id.startsWith("discord:") ? "discord" : "telegram",
+      platform: "telegram",
       thread_id: thread.id,
       user_id: message.author.userId,
     });
 
     return Effect.gen(function* () {
-      if (thread.id.startsWith("discord:")) {
-        yield* Effect.tryPromise(() => thread.subscribe());
-        yield* handleDiscordTurn(thread, message, env, log);
-        return;
-      }
-
       const userId = Number(message.author.userId);
       if (!allowedUserIds.has(userId)) {
         yield* Effect.tryPromise(() => thread.post("Access denied."));
@@ -124,17 +103,12 @@ export function createBot(env: Env, state: StateAdapter) {
   bot.onSubscribedMessage((thread, message) => {
     const log = createScopedLogger({
       action: "on_subscribed_message",
-      platform: thread.id.startsWith("discord:") ? "discord" : "telegram",
+      platform: "telegram",
       thread_id: thread.id,
       user_id: message.author.userId,
     });
 
     return Effect.gen(function* () {
-      if (thread.id.startsWith("discord:")) {
-        yield* handleDiscordTurn(thread, message, env, log);
-        return;
-      }
-
       if (message.text.trim() === "/reset") {
         yield* handleReset(thread, telegram, env, log);
         log.set({ detail: { command: "reset" } });
@@ -179,40 +153,6 @@ const handleTelegramTurn = Effect.fnUntraced(function* (
     catch: (cause) => new AgentRpcError({ cause }),
   });
   log.set({ detail: { turn_submitted: true, platform: "telegram", chat_id: Number(chatId) } });
-});
-
-const handleDiscordTurn = Effect.fnUntraced(function* (
-  thread: import("chat").Thread,
-  message: import("chat").Message,
-  env: Env,
-  log: ReturnType<typeof createScopedLogger>,
-) {
-  if (message.text.trim() === "/reset") {
-    const agent = yield* Effect.tryPromise({
-      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, thread.id),
-      catch: (cause) => new AgentLookupError({ cause }),
-    });
-    yield* Effect.tryPromise(() => agent.resetChat());
-    yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
-    log.set({ detail: { command: "reset" } });
-    return;
-  }
-
-  const agent = yield* Effect.tryPromise({
-    try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, thread.id),
-    catch: (cause) => new AgentLookupError({ cause }),
-  });
-  yield* Effect.tryPromise({
-    try: () =>
-      agent.submitDiscordMessage({
-        threadId: thread.id,
-        messageId: String(message.id),
-        text: message.text,
-        thread: thread.toJSON(),
-      }),
-    catch: (cause) => new AgentRpcError({ cause }),
-  });
-  log.set({ detail: { turn_submitted: true, platform: "discord", thread_id: thread.id } });
 });
 
 const handleReset = Effect.fnUntraced(function* (

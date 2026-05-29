@@ -4,7 +4,7 @@
 declare namespace Cloudflare {
   interface GlobalProps {
     mainModule: typeof import("./src/index");
-    durableNamespaces: "MizookAgent" | "ChatStateDO" | "DiscordGatewayDO";
+    durableNamespaces: "MizookAgent" | "ChatStateDO";
   }
   interface Env {
     AI: Ai;
@@ -12,7 +12,6 @@ declare namespace Cloudflare {
     SCREENSHOTS: R2Bucket;
     MIZOOK_AGENT: DurableObjectNamespace<import("./src/index").MizookAgent>;
     CHAT_STATE: DurableObjectNamespace<import("./src/index").ChatStateDO>;
-    DISCORD_GATEWAY: DurableObjectNamespace<import("./src/index").DiscordGatewayDO>;
   }
 }
 interface Env extends Cloudflare.Env {}

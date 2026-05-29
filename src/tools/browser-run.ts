@@ -6,12 +6,10 @@ interface BrowserEnv {
   BROWSER: Fetcher;
   SCREENSHOTS: R2Bucket;
   BOT_TOKEN?: string;
-  DISCORD_BOT_TOKEN?: string;
 }
 
 export type TurnState =
   | { platform: "telegram"; chatId: number }
-  | { platform: "discord"; threadId: string }
   | { platform: "unknown" };
 
 async function takeScreenshot(
@@ -61,12 +59,7 @@ async function takeScreenshot(
 
 async function uploadScreenshot(env: BrowserEnv, img: Uint8Array, turn: TurnState) {
   const platform = turn.platform === "unknown" ? "unknown" : turn.platform;
-  const id =
-    turn.platform === "telegram"
-      ? String(turn.chatId)
-      : turn.platform === "discord"
-        ? turn.threadId
-        : "unknown";
+  const id = turn.platform === "telegram" ? String(turn.chatId) : "unknown";
   const key = `screenshots/${platform}/${id}/${Date.now()}.png`;
   await env.SCREENSHOTS.put(key, img, {
     httpMetadata: { contentType: "image/png" },
@@ -171,26 +164,5 @@ async function sendPhotoToChat(
       method: "POST",
       body: form,
     });
-  } else if (turn.platform === "discord" && env.DISCORD_BOT_TOKEN) {
-    const form = new FormData();
-    form.append(
-      "payload_json",
-      new Blob([JSON.stringify({ content: safeCaption })], {
-        type: "application/json",
-      }),
-    );
-    form.append(
-      "files[0]",
-      new Blob([image.buffer as ArrayBuffer], { type: "image/png" }),
-      "screenshot.png",
-    );
-    await fetch(
-      `https://discord.com/api/v10/channels/${turn.threadId}/messages`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
-        body: form,
-      },
-    );
   }
 }

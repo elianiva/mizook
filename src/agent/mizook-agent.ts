@@ -10,8 +10,6 @@ import {
 import type { ToolSet } from "ai";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import type { TelegramAdapter } from "@chat-adapter/telegram";
-import { createDiscordAdapter } from "@chat-adapter/discord";
-import type { DiscordAdapter } from "@chat-adapter/discord";
 import { AgentContextProvider } from "agents/experimental/memory/session";
 import { ThreadImpl, type SerializedThread } from "chat";
 import type { Env } from "../env";
@@ -26,19 +24,12 @@ type ReminderPayload = {
   message: string;
 };
 
-export type TurnState =
-  | {
-      platform: "telegram";
-      chatId: number;
-      replyToMessageId?: number;
-      startTime: number;
-    }
-  | {
-      platform: "discord";
-      threadId: string;
-      replyToMessageId?: string;
-      startTime: number;
-    };
+export type TurnState = {
+  platform: "telegram";
+  chatId: number;
+  replyToMessageId?: number;
+  startTime: number;
+};
 
 export class MizookAgent extends Think<Env> {
   private _turnState: Option.Option<TurnState> = Option.none();
@@ -47,8 +38,6 @@ export class MizookAgent extends Think<Env> {
   private serializedThread: Option.Option<SerializedThread> = Option.none();
   private turnLog: Option.Option<ReturnType<typeof createScopedLogger>> = Option.none();
   private _telegram: Option.Option<TelegramAdapter> = Option.none();
-  private _discord: Option.Option<DiscordAdapter> = Option.none();
-
   waitForMcpConnections = { timeout: 10_000 } as const;
 
   getTurnState(): Option.Option<TurnState> {
@@ -59,18 +48,6 @@ export class MizookAgent extends Think<Env> {
     return Option.getOrElse(this._telegram, () => {
       const adapter = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
       this._telegram = Option.some(adapter);
-      return adapter;
-    });
-  }
-
-  private getDiscord(): DiscordAdapter {
-    return Option.getOrElse(this._discord, () => {
-      const adapter = createDiscordAdapter({
-        botToken: this.env.DISCORD_BOT_TOKEN,
-        publicKey: this.env.DISCORD_PUBLIC_KEY,
-        applicationId: this.env.DISCORD_APPLICATION_ID,
-      });
-      this._discord = Option.some(adapter);
       return adapter;
     });
   }
@@ -123,18 +100,11 @@ export class MizookAgent extends Think<Env> {
           BROWSER: this.env.BROWSER,
           SCREENSHOTS: this.env.SCREENSHOTS,
           BOT_TOKEN: this.env.BOT_TOKEN,
-          DISCORD_BOT_TOKEN: this.env.DISCORD_BOT_TOKEN,
         },
         () => {
           const turnState = this._turnState;
           if (Option.isSome(turnState)) {
-            const t = turnState.value;
-            if (t.platform === "telegram") {
-              return { platform: "telegram" as const, chatId: t.chatId };
-            }
-            if (t.platform === "discord") {
-              return { platform: "discord" as const, threadId: t.threadId };
-            }
+            return { platform: "telegram" as const, chatId: turnState.value.chatId };
           }
           return { platform: "unknown" as const };
         },
@@ -218,48 +188,6 @@ export class MizookAgent extends Think<Env> {
     }).pipe(Effect.runPromise);
   }
 
-  @callable()
-  submitDiscordMessage(input: {
-    threadId: string;
-    messageId: string;
-    text: string;
-    thread: SerializedThread;
-  }) {
-    const self = this;
-    return Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      self.serializedThread = Option.some(input.thread);
-      self._turnState = Option.some({
-        platform: "discord",
-        threadId: input.threadId,
-        replyToMessageId: input.messageId,
-        startTime: now,
-      });
-      self.turnLog = Option.some(
-        createScopedLogger({
-          action: "turn",
-          thread_id: input.threadId,
-          message_id: input.messageId,
-          platform: "discord",
-          phase: "submitted",
-        }),
-      );
-      const id = yield* Random.nextUUIDv4;
-      const createdAt = new Date(yield* Clock.currentTimeMillis);
-      yield* Effect.tryPromise(() =>
-        self.saveMessages((current) => [
-          ...current,
-          {
-            id,
-            role: "user",
-            parts: [{ type: "text", text: input.text }],
-            createdAt,
-          },
-        ]),
-      );
-    }).pipe(Effect.runPromise);
-  }
-
   override beforeTurn(_ctx: TurnContext) {
     return Effect.gen({ self: this }, function* () {
       const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
@@ -271,7 +199,7 @@ export class MizookAgent extends Think<Env> {
       if (Option.isNone(this.serializedThread)) return { system: freshSystem };
       const { readable, writable } = new TransformStream<string, string>();
       this.streamWriter = Option.some(writable.getWriter());
-      const adapter = turn.value.platform === "telegram" ? this.getTelegram() : this.getDiscord();
+      const adapter = this.getTelegram();
       const thread = ThreadImpl.fromJSON(this.serializedThread.value, adapter);
       yield* Effect.tryPromise(() => thread.startTyping());
       this.pendingStream = Option.some(
@@ -332,7 +260,7 @@ export class MizookAgent extends Think<Env> {
       const turn = this._turnState;
       this._turnState = Option.none();
       if (Option.isSome(turn) && Option.isSome(this.serializedThread)) {
-        const adapter = turn.value.platform === "telegram" ? this.getTelegram() : this.getDiscord();
+        const adapter = this.getTelegram();
         const thread = ThreadImpl.fromJSON(this.serializedThread.value, adapter);
         yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
       }

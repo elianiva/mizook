@@ -21,10 +21,6 @@ name = "MIZOOK_AGENT"
 class_name = "ChatStateDO"
 name = "CHAT_STATE"
 
-[[durable_objects.bindings]]
-class_name = "DiscordGatewayDO"
-name = "DISCORD_GATEWAY"
-
 [[migrations]]
 new_sqlite_classes = ["MizookAgent"]
 tag = "v1"
@@ -32,10 +28,6 @@ tag = "v1"
 [[migrations]]
 new_sqlite_classes = ["ChatStateDO"]
 tag = "v2"
-
-[[migrations]]
-new_sqlite_classes = ["DiscordGatewayDO"]
-tag = "v3"
 
 [observability.logs]
 enabled = true
