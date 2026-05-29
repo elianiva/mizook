@@ -4,8 +4,6 @@ import type { Env } from "../env";
 import { ModelTimeoutError, ModelRequestError } from "../lib/errors";
 import { createScopedLogger } from "../logger";
 
-export const modelConfig = Config.string("OPENCODE_GO_MODEL").pipe(Config.withDefault("mimo-v2.5"));
-
 export const DEFAULT_MODEL = "mimo-v2.5";
 
 const TIMEOUT_MS = 60_000;
