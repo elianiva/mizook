@@ -3,7 +3,7 @@ import { Chat } from "chat";
 import { getAgentByName } from "agents";
 import type { Env } from "./env";
 import type { MizookAgent } from "./agent";
-import type { StateAdapter } from "chat";
+import type { StateAdapter, Thread, Message } from "chat";
 import type { ChannelInterface } from "./channel";
 import { AgentLookupError, AgentRpcError } from "./errors";
 import { createScopedLogger } from "./logger";
@@ -37,8 +37,8 @@ export function createBot(config: BotConfig) {
   };
 
   const handleTurn = Effect.fnUntraced(function* (
-    thread: import("chat").Thread,
-    message: import("chat").Message,
+    thread: Thread,
+    message: Message,
     log: ReturnType<typeof createScopedLogger>,
   ) {
     const { channel, channelName } = resolveChannel(thread.id);
@@ -68,7 +68,7 @@ export function createBot(config: BotConfig) {
     handleStart: boolean;
     allowedUserIds: Set<number>;
   }) => {
-    return (thread: import("chat").Thread, message: import("chat").Message) => {
+    return (thread: Thread, message: Message) => {
       const log = createScopedLogger({
         action: opts.action,
         thread_id: thread.id,
@@ -117,7 +117,7 @@ export function createBot(config: BotConfig) {
   };
 
   const handleReset = Effect.fnUntraced(function* (
-    thread: import("chat").Thread,
+    thread: Thread,
     log: ReturnType<typeof createScopedLogger>,
   ) {
     const { channel, channelName } = resolveChannel(thread.id);
