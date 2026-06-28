@@ -1,9 +1,10 @@
-import { Effect } from "effect";
-import { createTelegramAdapter } from "@chat-adapter/telegram";
-import type { TelegramAdapter } from "@chat-adapter/telegram";
-import type { ChannelInterface } from "../../core/channel";
+import { Context, Effect, Layer } from "effect";
+import { createTelegramAdapter, type TelegramAdapter } from "@chat-adapter/telegram";
+import { WorkersEnv } from "../../core/workers-env";
+import type { Channel, ChatTarget } from "../../core/channel";
 
-export function createTelegramChannel(botToken: string): ChannelInterface {
+// Sole implementation; the TelegramChannel service wraps this.
+export function createTelegramChannel(botToken: string): Channel {
   const tg = createTelegramAdapter({ botToken }) as TelegramAdapter;
 
   return {
@@ -32,3 +33,16 @@ export function createTelegramChannel(botToken: string): ChannelInterface {
       }),
   };
 }
+
+export class TelegramChannel extends Context.Service<TelegramChannel, Channel>()(
+  "mizook/TelegramChannel",
+) {
+  static readonly layer = Layer.effect(TelegramChannel)(
+    Effect.gen(function* () {
+      const { env } = yield* WorkersEnv;
+      return TelegramChannel.of(createTelegramChannel(env.BOT_TOKEN));
+    }),
+  );
+}
+
+export type { ChatTarget };
