@@ -20,7 +20,7 @@
     "chat": "^4.29.0",
     "chat-state-cloudflare-do": "^0.2.0",
     "effect": "4.0.0-beta.62",
-    "evlog": "^2.18.1",
+    "evlog": "^2.19.2",
     "workers-ai-provider": "^3.1.14",
     "zod": "^4.4.3"
   },
