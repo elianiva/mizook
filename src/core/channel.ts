@@ -1,5 +1,5 @@
 import { Context, Layer, type Effect } from "effect";
-import type { StateAdapter } from "chat";
+import type { Adapter } from "chat";
 
 export interface ChatTarget {
   readonly platform: string;
@@ -7,7 +7,7 @@ export interface ChatTarget {
 }
 
 export interface ChannelInterface {
-  readonly adapter: StateAdapter;
+  readonly adapter: Adapter;
   readonly postNotification: (target: ChatTarget, message: string) => Effect.Effect<void>;
   readonly postPhoto: (
     target: ChatTarget,

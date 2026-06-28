@@ -1,0 +1,144 @@
+import { Effect, Schema } from "effect";
+import { Chat } from "chat";
+import type { SerializedThread } from "chat";
+import { getAgentByName } from "agents";
+import type { Env } from "./env";
+import type { MizookAgent } from "./agent";
+import type { ChannelInterface } from "./channel";
+import { AgentLookupError, AgentRpcError } from "./errors";
+import { createScopedLogger } from "./logger";
+
+interface BotConfig {
+  env: Env;
+  channels: Record<string, ChannelInterface>;
+  dedupeTtlMs?: number;
+}
+
+export function createBot(config: BotConfig) {
+  const { env, channels, dedupeTtlMs = 600_000 } = config;
+
+  const adapters = Object.fromEntries(
+    Object.entries(channels).map(([name, ch]) => [name, ch.adapter]),
+  );
+
+  const bot = new Chat({
+    userName: "mizook",
+    adapters,
+    state: undefined!, // provided per-request via createCloudflareState
+    dedupeTtlMs,
+  });
+
+  const handleTurn = (action: string) =>
+    Effect.fnUntraced(function* (
+      thread: import("chat").Thread,
+      message: import("chat").Message,
+      log: ReturnType<typeof createScopedLogger>,
+    ) {
+      const agent = yield* Effect.tryPromise({
+        try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, thread.id),
+        catch: (cause) => new AgentLookupError({ cause }),
+      });
+      yield* Effect.tryPromise({
+        try: () =>
+          agent.submitTurn({
+            thread: thread.toJSON(),
+            message: { id: message.id, text: message.text },
+          }),
+        catch: (cause) => new AgentRpcError({ cause }),
+      });
+      log.set({ detail: { turn_submitted: true, thread_id: thread.id } });
+    });
+
+  const makeHandler = (opts: {
+    action: string;
+    checkAccess: boolean;
+    handleStart: boolean;
+    allowedUserIds: Set<number>;
+  }) => {
+    return (thread: import("chat").Thread, message: import("chat").Message) => {
+      const log = createScopedLogger({
+        action: opts.action,
+        thread_id: thread.id,
+        user_id: message.author.userId,
+      });
+
+      return Effect.gen(function* () {
+        if (opts.checkAccess) {
+          const uid = Number(message.author.userId);
+          if (!opts.allowedUserIds.has(uid)) {
+            yield* Effect.tryPromise(() => thread.post("Access denied."));
+            log.set({ detail: { access_denied: true } });
+            return;
+          }
+        }
+
+        yield* Effect.tryPromise(() => thread.subscribe());
+
+        const text = message.text.trim();
+
+        if (opts.handleStart && text === "/start") {
+          yield* Effect.tryPromise(() =>
+            thread.post("Hello. I am Mizook. Send me a message and I will respond."),
+          );
+          log.set({ detail: { command: "start" } });
+          return;
+        }
+
+        if (text === "/reset") {
+          yield* handleReset(thread, log);
+          log.set({ detail: { command: "reset" } });
+          return;
+        }
+
+        yield* handleTurn(opts.action)(thread, message, log);
+      }).pipe(
+        Effect.tap(() => Effect.sync(() => log.emit({ message: `${opts.action}_done` }))),
+        Effect.catch((error) => {
+          log.error(error);
+          log.emit({ message: `${opts.action}_error` });
+          return Effect.logError(`${opts.action} error`, error);
+        }),
+        Effect.runPromise,
+      );
+    };
+  };
+
+  const handleReset = Effect.fnUntraced(function* (
+    thread: import("chat").Thread,
+    log: ReturnType<typeof createScopedLogger>,
+  ) {
+    const agent = yield* Effect.tryPromise({
+      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, thread.id),
+      catch: (cause) => new AgentLookupError({ cause }),
+    });
+    yield* Effect.tryPromise(() => agent.resetChat());
+    yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
+    log.set({ detail: { reset: true } });
+  });
+
+  const parseAllowedIds = (raw: string) => {
+    try {
+      return new Set(
+        Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
+          raw.split(/[\s,]+/).filter(Boolean),
+        ).filter(Number.isSafeInteger),
+      );
+    } catch {
+      return new Set<number>();
+    }
+  };
+
+  const allowedUserIds = parseAllowedIds(env.TELEGRAM_ALLOWED_USER_IDS);
+
+  bot.onDirectMessage(
+    makeHandler({ action: "on_dm", checkAccess: true, handleStart: true, allowedUserIds }),
+  );
+  bot.onNewMention(
+    makeHandler({ action: "on_mention", checkAccess: true, handleStart: false, allowedUserIds }),
+  );
+  bot.onSubscribedMessage(
+    makeHandler({ action: "on_subscribed", checkAccess: false, handleStart: false, allowedUserIds }),
+  );
+
+  return bot;
+}
