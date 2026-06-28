@@ -12,16 +12,16 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@chat-adapter/state-memory": "^4.31.0",
-    "@chat-adapter/telegram": "^4.29.0",
+    "@chat-adapter/telegram": "^4.31.0",
     "@cloudflare/puppeteer": "^1.1.0",
     "@cloudflare/think": "^0.11.0",
     "agents": "^0.17.0",
     "ai": "^6.0.193",
-    "chat": "^4.29.0",
+    "chat": "^4.31.0",
     "chat-state-cloudflare-do": "^0.2.0",
     "effect": "4.0.0-beta.62",
     "evlog": "^2.19.2",
-    "workers-ai-provider": "^3.1.14",
+    "workers-ai-provider": "^3.2.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
