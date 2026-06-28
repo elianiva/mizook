@@ -1,12 +1,11 @@
 import { Match } from "effect";
 import { routeAgentRequest } from "agents";
-import type { Env } from "./env";
-import { createRequestLogger } from "./logger";
-import { createBot } from "./messaging/bot";
-import { createCloudflareState } from "chat-state-cloudflare-do";
+import type { Env } from "./core/env";
+import { createRequestLogger } from "./core/logger";
+import { handleTelegramWebhook } from "./features/telegram/webhook";
+import { serveScreenshot } from "./features/browser/routes";
 
-// durable objects exports
-export { MizookAgent } from "./agent/mizook-agent";
+export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
 
 export default {
@@ -17,15 +16,8 @@ export default {
     const log = createRequestLogger(request, ctx);
     const url = new URL(request.url);
 
-    const createBotHandler = () => {
-      const state = createCloudflareState({ namespace: env.CHAT_STATE });
-      return createBot(env, state);
-    };
-
     return Match.value({ pathname: url.pathname, method: request.method }).pipe(
-      Match.when({ pathname: "/telegram" }, () =>
-        createBotHandler().webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) }),
-      ),
+      Match.when({ pathname: "/telegram" }, () => handleTelegramWebhook(request, env, ctx)),
       Match.when({ pathname: "/screenshots/" }, () => serveScreenshot(url, env)),
       Match.when({ pathname: "/health" }, () => {
         log.set({ detail: { action: "health_check" } });
@@ -40,18 +32,3 @@ export default {
     );
   },
 } satisfies ExportedHandler<Env>;
-
-async function serveScreenshot(url: URL, env: Env): Promise<Response> {
-  const key = decodeURIComponent(url.pathname.replace("/screenshots/", ""));
-  if (!key || !key.startsWith("screenshots/")) {
-    return new Response("Not found", { status: 404 });
-  }
-  const obj = await env.SCREENSHOTS.get(key);
-  if (!obj) {
-    return new Response("Not found", { status: 404 });
-  }
-  const headers = new Headers();
-  obj.writeHttpMetadata(headers);
-  headers.set("Cache-Control", "public, max-age=86400");
-  return new Response(obj.body, { headers });
-}

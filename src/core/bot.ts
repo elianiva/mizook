@@ -1,21 +1,22 @@
 import { Effect, Schema } from "effect";
 import { Chat } from "chat";
-import type { SerializedThread } from "chat";
 import { getAgentByName } from "agents";
 import type { Env } from "./env";
 import type { MizookAgent } from "./agent";
+import type { StateAdapter } from "chat";
 import type { ChannelInterface } from "./channel";
 import { AgentLookupError, AgentRpcError } from "./errors";
 import { createScopedLogger } from "./logger";
 
 interface BotConfig {
   env: Env;
+  state: StateAdapter;
   channels: Record<string, ChannelInterface>;
   dedupeTtlMs?: number;
 }
 
 export function createBot(config: BotConfig) {
-  const { env, channels, dedupeTtlMs = 600_000 } = config;
+  const { env, state, channels, dedupeTtlMs = 600_000 } = config;
 
   const adapters = Object.fromEntries(
     Object.entries(channels).map(([name, ch]) => [name, ch.adapter]),
@@ -24,12 +25,11 @@ export function createBot(config: BotConfig) {
   const bot = new Chat({
     userName: "mizook",
     adapters,
-    state: undefined!, // provided per-request via createCloudflareState
+    state,
     dedupeTtlMs,
   });
 
-  const handleTurn = (action: string) =>
-    Effect.fnUntraced(function* (
+  const handleTurn = Effect.fnUntraced(function* (
       thread: import("chat").Thread,
       message: import("chat").Message,
       log: ReturnType<typeof createScopedLogger>,
@@ -43,6 +43,7 @@ export function createBot(config: BotConfig) {
           agent.submitTurn({
             thread: thread.toJSON(),
             message: { id: message.id, text: message.text },
+            channelType: "telegram",
           }),
         catch: (cause) => new AgentRpcError({ cause }),
       });
@@ -90,7 +91,7 @@ export function createBot(config: BotConfig) {
           return;
         }
 
-        yield* handleTurn(opts.action)(thread, message, log);
+        yield* handleTurn(thread, message, log);
       }).pipe(
         Effect.tap(() => Effect.sync(() => log.emit({ message: `${opts.action}_done` }))),
         Effect.catch((error) => {

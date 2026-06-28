@@ -11,6 +11,7 @@ export async function handleTelegramWebhook(
   const state = createCloudflareState({ namespace: env.CHAT_STATE });
   const bot = createBot({
     env,
+    state,
     channels: { telegram: createTelegramChannel(env.BOT_TOKEN) },
   });
   return bot.webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) });

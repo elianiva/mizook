@@ -7,25 +7,29 @@ import {
   type Session,
   type TurnContext,
 } from "@cloudflare/think";
+import type { SerializedThread } from "chat";
 import type { ToolSet } from "ai";
-import { createTelegramAdapter } from "@chat-adapter/telegram";
-import type { TelegramAdapter } from "@chat-adapter/telegram";
+import { ThreadImpl } from "chat";
 import { AgentContextProvider } from "agents/experimental/memory/session";
-import { ThreadImpl, type SerializedThread } from "chat";
-import type { Env } from "../env";
-import { createScopedLogger } from "../logger";
+import type { Env } from "./env";
+import { createScopedLogger } from "./logger";
 import { createModel, DEFAULT_MODEL } from "./model";
 import { configureSession } from "./session";
-import type { ReminderPayload } from "../lib/errors";
-import { createReminderTools } from "../tools/reminders";
-import { createBrowserTools, type ChatTarget } from "../tools/browser-run";
+import type { ChannelInterface } from "./channel";
 
-export type TurnState = {
-  platform: "telegram";
-  chatId: number;
+import basePrompt from "./prompts/base.md?raw";
+import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
+import { createBrowserTools } from "../features/browser/tools";
+import { createTelegramChannel } from "../features/telegram/channel";
+import remindersPrompt from "../features/reminders/prompts/reminders.md?raw";
+import browserPrompt from "../features/browser/prompts/browser.md?raw";
+
+interface TurnState {
+  channelType: string;
+  chatId: string;
   replyToMessageId?: number;
   startTime: number;
-};
+}
 
 export class MizookAgent extends Think<Env> {
   private turnState: TurnState | null = null;
@@ -33,7 +37,7 @@ export class MizookAgent extends Think<Env> {
   private pendingStream: Promise<unknown> | null = null;
   private serializedThread: SerializedThread | null = null;
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
-  private telegram: TelegramAdapter | null = null;
+  private _channel: ChannelInterface | null = null;
   waitForMcpConnections = { timeout: 10_000 } as const;
 
   getTurnState(): TurnState | null {
@@ -44,15 +48,11 @@ export class MizookAgent extends Think<Env> {
     return this.env.TIMEZONE ?? "Asia/Jakarta";
   }
 
-  private getTelegram(): TelegramAdapter {
-    if (!this.telegram) {
-      this.telegram = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
+  private getChannel(): ChannelInterface {
+    if (!this._channel) {
+      this._channel = createTelegramChannel(this.env.BOT_TOKEN);
     }
-    return this.telegram;
-  }
-
-  private telegramThreadId(chatId: number): string {
-    return this.getTelegram().encodeThreadId({ chatId: String(chatId) });
+    return this._channel;
   }
 
   getModel() {
@@ -60,37 +60,8 @@ export class MizookAgent extends Think<Env> {
   }
 
   getSystemPrompt() {
-    const tz = this.env.TIMEZONE ?? "UTC+7";
-    return (
-      "You are Mizook, a helpful assistant. Keep replies concise unless the user asks for detail.\n\n" +
-      "Write like a real person, not a bot. No markdown, no formatting syntax, no asterisks for bold. " +
-      "If you need structure, use natural text: line breaks, indentation, or simple dashes. " +
-      "The goal is to feel like chatting with a knowledgeable friend, not reading a document.\n\n" +
-      "Use web_search_exa to search the internet for current information, facts, or news. " +
-      "Use web_fetch_exa to get the full content of a specific URL when you need details from a page. " +
-      "Always search the web when the user asks about real-world events, recent data, or anything you are unsure about.\n\n" +
-      `Your timezone is ${tz}. The user's timezone is ${tz}. ` +
-      "When they say times like '8am' or 'noon', they mean that time in this timezone. " +
-      "Cron expressions run on UTC, so you must convert local times to UTC. " +
-      "Example: user says 'remind me at 8am daily' -> cron '0 1 * * *' (8am UTC+7 = 1am UTC). " +
-      "Example: 'weekdays at 9am' -> cron '0 2 * * 1-5' (9am UTC+7 = 2am UTC). " +
-      "Example: 'every Monday at midnight' -> cron '0 17 * * 0' (Mon 0:00 UTC+7 = Sun 17:00 UTC).\n\n" +
-      "You have reminder capabilities. " +
-      "For one-time reminders, call set_reminder with a duration (e.g. '30m', '2h') and message. " +
-      "For recurring reminders, call set_reminder with a cron expression and message. " +
-      "Use list_reminders to show active reminders and delete_reminder to cancel them.\n\n" +
-      "You have browser capabilities using Cloudflare Browser Run. " +
-      "When the user asks you to visit a website, take a screenshot, or check a page, " +
-      "use browser_screenshot_and_send to capture and send the screenshot directly to them. " +
-      "Use browser_screenshot to just capture (returns an R2 key). " +
-      "Use send_photo_to_chat with an R2 key to send a previously taken screenshot.\n\n" +
-      "You have full access to the Cloudflare API via the `search` and `execute` tools. " +
-      "When the user asks about their Cloudflare resources (domains, DNS, Workers, KV, R2, D1, etc.), " +
-      "use `search` to find the right API endpoints, then `execute` to make the API call. " +
-      "Example: 'check my domains' -> search for zone list endpoints, then execute GET /client/v4/zones. " +
-      "Example: 'add a CNAME for x.example.com to y.example.com' -> search DNS record create, then execute POST. " +
-      "For endpoints that need an account_id, search for the account first or ask the user."
-    );
+    const tz = this.getConfiguredTimezone();
+    return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
   }
 
   configureSession(session: Session) {
@@ -98,29 +69,21 @@ export class MizookAgent extends Think<Env> {
   }
 
   getTools(): ToolSet {
+    const channel = this.getChannel();
+    const getTarget = () => {
+      const ts = this.turnState;
+      return ts ? { platform: ts.channelType, chatId: ts.chatId } : null;
+    };
     return {
-      ...createReminderTools(this, this.getConfiguredTimezone()),
-      ...createBrowserTools(
-        {
-          BROWSER: this.env.BROWSER,
-          SCREENSHOTS: this.env.SCREENSHOTS,
-          BOT_TOKEN: this.env.BOT_TOKEN,
-        },
-        (): ChatTarget => {
-          const ts = this.turnState;
-          if (ts) return { platform: "telegram", chatId: ts.chatId };
-          return { platform: "unknown" };
-        },
-      ),
+      ...createReminderTools(this),
+      ...createBrowserTools(this.env, channel, getTarget),
     };
   }
 
   sendReminder(payload: ReminderPayload) {
-    return Effect.gen({ self: this }, function* () {
-      const tid = this.telegramThreadId(payload.chatId);
-      yield* Effect.tryPromise(() =>
-        this.getTelegram().postMessage(tid, `\u23f0 Reminder: ${payload.message}`),
-      );
+    const channel = this.getChannel();
+    return Effect.gen(function* () {
+      yield* channel.postNotification(payload.target, `\u23f0 Reminder: ${payload.message}`);
     }).pipe(Effect.runPromise);
   }
 
@@ -164,26 +127,21 @@ export class MizookAgent extends Think<Env> {
   }
 
   @callable()
-  submitTelegramMessage(input: {
-    chatId: number;
-    messageId: number;
-    text: string;
-    thread: SerializedThread;
-  }) {
+  submitTurn(input: { thread: SerializedThread; message: { id: string; text: string }; channelType: string }) {
     return Effect.gen({ self: this }, function* () {
       const now = yield* Clock.currentTimeMillis;
       this.serializedThread = input.thread;
       this.turnState = {
-        platform: "telegram",
-        chatId: input.chatId,
-        replyToMessageId: input.messageId,
+        channelType: input.channelType,
+        chatId: input.message.id,
+        replyToMessageId: Number(input.message.id),
         startTime: now,
       };
+      this._channel = null; // rebuild channel on next getChannel()
       this.turnLog = createScopedLogger({
         action: "turn",
-        chat_id: input.chatId,
-        message_id: input.messageId,
-        platform: "telegram",
+        chat_id: input.message.id,
+        channel: input.channelType,
         phase: "submitted",
       });
       const id = yield* Random.nextUUIDv4;
@@ -194,7 +152,7 @@ export class MizookAgent extends Think<Env> {
           {
             id,
             role: "user",
-            parts: [{ type: "text", text: input.text }],
+            parts: [{ type: "text", text: input.message.text }],
             createdAt,
           },
         ]),
@@ -211,10 +169,11 @@ export class MizookAgent extends Think<Env> {
         this.turnLog.set({ detail: { phase: "before_turn" } });
       }
       if (!this.serializedThread) return { system: freshSystem };
+
+      const channel = this.getChannel();
       const { readable, writable } = new TransformStream<string, string>();
       this.streamWriter = writable.getWriter();
-      const adapter = this.getTelegram();
-      const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
+      const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
       yield* Effect.tryPromise(() => thread.startTyping());
       this.pendingStream = thread.post(readable).catch((err) => {
         Effect.logError("stream failed:", err);
@@ -254,7 +213,7 @@ export class MizookAgent extends Think<Env> {
             model: this.env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL,
             latencyMs: turn ? now - turn.startTime : 0,
             result: result.status,
-            platform: turn?.platform,
+            channel: turn?.channelType,
           },
         });
         this.turnLog.emit({ message: "turn_complete" });
@@ -269,8 +228,8 @@ export class MizookAgent extends Think<Env> {
       const turn = this.turnState;
       this.turnState = null;
       if (turn && this.serializedThread) {
-        const adapter = this.getTelegram();
-        const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
+        const channel = this.getChannel();
+        const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
         yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
       }
       this.serializedThread = null;
@@ -279,7 +238,7 @@ export class MizookAgent extends Think<Env> {
           detail: {
             phase: "error",
             error: error instanceof Error ? error.message : String(error),
-            platform: turn?.platform,
+            channel: turn?.channelType,
           },
         });
         if (error instanceof Error) this.turnLog.error(error);
