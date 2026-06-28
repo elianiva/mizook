@@ -17,12 +17,12 @@ import { createModel, DEFAULT_MODEL } from "./model";
 import { configureSession } from "./session";
 import type { ChannelInterface } from "./channel";
 
-import basePrompt from "./prompts/base.md?raw";
+import { basePrompt } from "./prompts/base";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
 import { createTelegramChannel } from "../features/telegram/channel";
-import remindersPrompt from "../features/reminders/prompts/reminders.md?raw";
-import browserPrompt from "../features/browser/prompts/browser.md?raw";
+import { remindersPrompt } from "../features/reminders/prompts/reminders";
+import { browserPrompt } from "../features/browser/prompts/browser";
 
 interface TurnState {
   channelType: string;
