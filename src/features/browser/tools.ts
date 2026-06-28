@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 import puppeteer from "@cloudflare/puppeteer";
@@ -48,6 +49,20 @@ async function takeScreenshot(
   }
 }
 
+async function storeAndSend(
+  env: BrowserEnv,
+  channel: ChannelInterface,
+  img: Uint8Array,
+  target: { platform: string; chatId: string },
+  url: string,
+  caption?: string,
+) {
+  const key = `screenshots/${target.platform}/${target.chatId}/${Date.now()}.png`;
+  await env.SCREENSHOTS.put(key, img, { httpMetadata: { contentType: "image/png" } });
+  await Effect.runPromise(channel.postPhoto(target, img, caption ?? `Screenshot of ${url}`));
+  return key;
+}
+
 export function createBrowserTools(
   env: BrowserEnv,
   channel: ChannelInterface,
@@ -79,6 +94,28 @@ export function createBrowserTools(
       },
     }),
 
+    browser_screenshot_and_send: tool({
+      description:
+        "Take a screenshot of a URL and send it directly to the current chat. " +
+        "One-step: captures, saves, and sends in a single call. " +
+        "Use this when the user asks you to screenshot a page and send it to them.",
+      inputSchema: z.object({
+        url: z.string().url().describe("The URL to screenshot"),
+        caption: z.string().optional().describe("Optional caption for the image"),
+        fullPage: z.boolean().optional().describe("Capture full scrollable page"),
+        width: z.number().optional().describe("Viewport width (default: 1280)"),
+        height: z.number().optional().describe("Viewport height (default: 720)"),
+        waitUntil: z.enum(["load", "networkidle0", "networkidle2", "domcontentloaded"]).optional(),
+      }),
+      execute: async (params) => {
+        const target = getTarget();
+        if (!target) return "No active chat to send to.";
+        const img = await takeScreenshot(env, params.url, params);
+        const key = await storeAndSend(env, channel, img, target, params.url, params.caption);
+        return `Screenshot of ${params.url} captured and sent. R2 key: ${key}`;
+      },
+    }),
+
     send_photo: tool({
       description:
         "Send a screenshot (by its R2 key) to the current chat as a photo. " +
@@ -93,7 +130,7 @@ export function createBrowserTools(
         const obj = await env.SCREENSHOTS.get(r2Key);
         if (!obj) return "Screenshot not found or expired.";
         const buf = new Uint8Array(await obj.arrayBuffer());
-        await channel.postPhoto(target, buf, caption ?? "Screenshot");
+        await Effect.runPromise(channel.postPhoto(target, buf, caption ?? "Screenshot"));
         return "Sent screenshot to chat.";
       },
     }),

@@ -7,7 +7,9 @@ export function createTelegramChannel(botToken: string): ChannelInterface {
   const tg = createTelegramAdapter({ botToken }) as TelegramAdapter;
 
   return {
+    name: "telegram",
     adapter: tg,
+    decodeThreadId: (threadId) => tg.decodeThreadId(threadId),
     postNotification: (target, message) =>
       Effect.tryPromise(() =>
         tg.postMessage(tg.encodeThreadId({ chatId: target.chatId }), message),

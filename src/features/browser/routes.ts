@@ -1,7 +1,8 @@
 import type { Env } from "../../core/env";
 
 export async function serveScreenshot(url: URL, env: Env): Promise<Response> {
-  const key = decodeURIComponent(url.pathname.replace("/screenshots/", ""));
+  const prefix = "/screenshots/";
+  const key = decodeURIComponent(url.pathname.slice(prefix.length));
   if (!key || !key.startsWith("screenshots/")) {
     return new Response("Not found", { status: 404 });
   }

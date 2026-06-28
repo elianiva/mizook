@@ -1,3 +1,6 @@
+import { tool } from "ai";
+import { z } from "zod";
+import type { MizookAgent } from "../../core/agent";
 import type { ChatTarget } from "../../core/channel";
 
 export interface ReminderPayload {
@@ -18,10 +21,6 @@ export function parseDurationToSeconds(duration: string): number | null {
     default: return null;
   }
 }
-
-import { tool } from "ai";
-import { z } from "zod";
-import type { MizookAgent } from "../../core/agent";
 
 export function createReminderTools(agent: MizookAgent) {
   const tz = agent.getConfiguredTimezone();
@@ -57,7 +56,11 @@ export function createReminderTools(agent: MizookAgent) {
           return `Recurring reminder set. ID: ${schedule.id}. I will remind you: "${message}"`;
         }
 
-        const seconds = duration ? parseDurationToSeconds(duration) : 60;
+        if (!duration) {
+          return "Either duration (for one-time) or cron (for recurring) is required.";
+        }
+
+        const seconds = parseDurationToSeconds(duration);
         if (seconds === null) {
           return `Could not parse duration "${duration}". Use e.g. '30m', '2h', '1d'.`;
         }

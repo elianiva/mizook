@@ -27,7 +27,7 @@ import browserPrompt from "../features/browser/prompts/browser.md?raw";
 interface TurnState {
   channelType: string;
   chatId: string;
-  replyToMessageId?: number;
+  replyToMessageId: number;
   startTime: number;
 }
 
@@ -48,6 +48,8 @@ export class MizookAgent extends Think<Env> {
     return this.env.TIMEZONE ?? "Asia/Jakarta";
   }
 
+  // Currently always creates a Telegram channel — multi-channel will need
+  // channel factory injection (e.g. via constructor or per-turn dispatch).
   private getChannel(): ChannelInterface {
     if (!this._channel) {
       this._channel = createTelegramChannel(this.env.BOT_TOKEN);
@@ -127,20 +129,27 @@ export class MizookAgent extends Think<Env> {
   }
 
   @callable()
-  submitTurn(input: { thread: SerializedThread; message: { id: string; text: string }; channelType: string }) {
+  submitTurn(input: {
+    thread: SerializedThread;
+    chatId: string;
+    messageId: string;
+    text: string;
+    channelType: string;
+  }) {
     return Effect.gen({ self: this }, function* () {
       const now = yield* Clock.currentTimeMillis;
       this.serializedThread = input.thread;
       this.turnState = {
         channelType: input.channelType,
-        chatId: input.message.id,
-        replyToMessageId: Number(input.message.id),
+        chatId: input.chatId,
+        replyToMessageId: Number(input.messageId),
         startTime: now,
       };
-      this._channel = null; // rebuild channel on next getChannel()
+      this._channel = null; // rebuild on next getChannel() in case channelType changes
       this.turnLog = createScopedLogger({
         action: "turn",
-        chat_id: input.message.id,
+        chat_id: input.chatId,
+        message_id: input.messageId,
         channel: input.channelType,
         phase: "submitted",
       });
@@ -152,7 +161,7 @@ export class MizookAgent extends Think<Env> {
           {
             id,
             role: "user",
-            parts: [{ type: "text", text: input.message.text }],
+            parts: [{ type: "text", text: input.text }],
             createdAt,
           },
         ]),

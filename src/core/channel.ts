@@ -1,4 +1,4 @@
-import { Context, Layer, type Effect } from "effect";
+import type { Effect } from "effect";
 import type { Adapter } from "chat";
 
 export interface ChatTarget {
@@ -7,7 +7,9 @@ export interface ChatTarget {
 }
 
 export interface ChannelInterface {
+  readonly name: string;
   readonly adapter: Adapter;
+  readonly decodeThreadId: (threadId: string) => { chatId: string };
   readonly postNotification: (target: ChatTarget, message: string) => Effect.Effect<void>;
   readonly postPhoto: (
     target: ChatTarget,
@@ -15,8 +17,3 @@ export interface ChannelInterface {
     caption: string,
   ) => Effect.Effect<void>;
 }
-
-export class Channel extends Context.Service<Channel, ChannelInterface>()("@mizook/Channel") {}
-
-export const ChannelLayer = (implementation: ChannelInterface) =>
-  Layer.succeed(Channel, Channel.of(implementation));

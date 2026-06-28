@@ -13,6 +13,9 @@ export function createModel(env: Env) {
     baseURL: "https://opencode.ai/zen/go/v1",
     name: "Opencode Go",
     apiKey: env.OPENCODE_GO_API_KEY,
+    // Effect.runPromise creates a fiber boundary inside what the AI SDK expects
+    // as a plain fetch. Cancellation and error propagation may differ from a
+    // standard fetch — monitor for race conditions or unhandled rejections.
     fetch: (url, options) => {
       const log = createScopedLogger({ action: "model_request" });
       return Effect.tryPromise({
