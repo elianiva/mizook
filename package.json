@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",
-    "@chat-adapter/state-memory": "^4.29.0",
+    "@chat-adapter/state-memory": "^4.31.0",
     "@chat-adapter/telegram": "^4.29.0",
     "@cloudflare/puppeteer": "^1.1.0",
     "@cloudflare/think": "^0.7.3",
