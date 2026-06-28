@@ -114,21 +114,26 @@ export function createBot(runtime: AppRuntime, env: Env): Chat {
   const state = createCloudflareState({ namespace: env.CHAT_STATE });
   const chat = new Chat({ userName: "mizook", adapters, state, dedupeTtlMs: 600_000 });
 
-  const handle = (eff: Effect.Effect<void, unknown, AppServices>) => {
-    void runtime.runPromise(eff).catch(() => {});
-  };
+  const handle = (eff: Effect.Effect<void, unknown, AppServices>, label?: string) =>
+    runtime.runPromise(eff).catch((err) => {
+      console.error(`[bot] handle failed${label ? ` (${label})` : ""}`, err);
+    });
   const annotate =
     (values: Record<string, unknown>) =>
     <A, E, R>(eff: Effect.Effect<A, E, R>) =>
       Effect.annotateLogs(eff, values);
 
-  chat.onDirectMessage((t, m) =>
-    handle(
+  chat.onDirectMessage((t, m) => {
+    console.info(
+      `[bot] direct_message_received thread=${t.id} user=${m.author.userId} text=${m.text.slice(0, 50)}`,
+    );
+    return handle(
       dispatchMessage({ checkAccess: true, handleStart: true })(t, m).pipe(
         annotate({ thread_id: t.id, user_id: m.author.userId }),
       ),
-    ),
-  );
+      `dm:${t.id}`,
+    );
+  });
   chat.onNewMention((t, m) =>
     handle(
       dispatchMessage({ checkAccess: true, handleStart: false })(t, m).pipe(
@@ -143,11 +148,13 @@ export function createBot(runtime: AppRuntime, env: Env): Chat {
       ),
     ),
   );
-  chat.onSlashCommand(["start", "reset"], (event) =>
-    handle(
+  chat.onSlashCommand(["start", "reset"], (event) => {
+    console.info(`[bot] slash_command_received command=${event.command} user=${event.user.userId}`);
+    return handle(
       dispatchSlash(event).pipe(annotate({ command: event.command, user_id: event.user.userId })),
-    ),
-  );
+      `slash:${event.command}`,
+    );
+  });
 
   return chat;
 }
