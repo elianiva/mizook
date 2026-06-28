@@ -3,7 +3,7 @@ import { Chat } from "chat";
 import { getAgentByName } from "agents";
 import type { Env } from "./env";
 import type { MizookAgent } from "./agent";
-import type { StateAdapter, Thread, Message } from "chat";
+import type { StateAdapter, Thread, Message, SlashCommandEvent } from "chat";
 import type { ChannelInterface } from "./channel";
 import { AgentLookupError, AgentRpcError } from "./errors";
 import { createScopedLogger } from "./logger";
@@ -168,6 +168,50 @@ export function createBot(config: BotConfig) {
       allowedUserIds,
     }),
   );
+
+  bot.onSlashCommand(["start", "reset"], async (event: SlashCommandEvent) => {
+    const log = createScopedLogger({
+      action: `slash_${event.command}`,
+      user_id: event.user.userId,
+      channel_id: event.channel.id,
+    });
+
+    try {
+      const uid = Number(event.user.userId);
+      if (!allowedUserIds.has(uid)) {
+        await event.channel.post("Access denied.");
+        log.set({ detail: { access_denied: true } });
+        log.emit({ message: "slash_access_denied" });
+        return;
+      }
+
+      if (event.command === "/start") {
+        await event.channel.post("Hello. I am Mizook. Send me a message and I will respond.");
+        log.set({ detail: { command: "start" } });
+        log.emit({ message: "slash_start_done" });
+        return;
+      }
+
+      // /reset
+      const { channel, channelName } = resolveChannel(event.channel.id);
+      const { chatId } = channel.decodeThreadId(event.channel.id);
+      const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
+      try {
+        await agent.resetChat();
+        await event.channel.post("Chat reset. Starting fresh.");
+      } catch (error) {
+        await event.channel.post(
+          `Reset failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      }
+      log.set({ detail: { reset: true, chat_id: chatId, channel: channelName } });
+      log.emit({ message: "slash_reset_done" });
+    } catch (error) {
+      log.error(error instanceof Error ? error : new Error(String(error)));
+      log.emit({ message: `slash_${event.command}_error` });
+    }
+  });
 
   return bot;
 }
