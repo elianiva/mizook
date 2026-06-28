@@ -37,30 +37,30 @@ export function createBot(config: BotConfig) {
   };
 
   const handleTurn = Effect.fnUntraced(function* (
-      thread: import("chat").Thread,
-      message: import("chat").Message,
-      log: ReturnType<typeof createScopedLogger>,
-    ) {
-      const { channel, channelName } = resolveChannel(thread.id);
-      const { chatId } = channel.decodeThreadId(thread.id);
-      // chatId is used for DO routing — keeps the same agent instance per chat
-      const agent = yield* Effect.tryPromise({
-        try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
-        catch: (cause) => new AgentLookupError({ cause }),
-      });
-      yield* Effect.tryPromise({
-        try: () =>
-          agent.submitTurn({
-            thread: thread.toJSON(),
-            chatId,
-            messageId: message.id,
-            text: message.text,
-            channelType: channelName,
-          }),
-        catch: (cause) => new AgentRpcError({ cause }),
-      });
-      log.set({ detail: { turn_submitted: true, thread_id: thread.id, chat_id: chatId } });
+    thread: import("chat").Thread,
+    message: import("chat").Message,
+    log: ReturnType<typeof createScopedLogger>,
+  ) {
+    const { channel, channelName } = resolveChannel(thread.id);
+    const { chatId } = channel.decodeThreadId(thread.id);
+    // chatId is used for DO routing — keeps the same agent instance per chat
+    const agent = yield* Effect.tryPromise({
+      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
+      catch: (cause) => new AgentLookupError({ cause }),
     });
+    yield* Effect.tryPromise({
+      try: () =>
+        agent.submitTurn({
+          thread: thread.toJSON(),
+          chatId,
+          messageId: message.id,
+          text: message.text,
+          channelType: channelName,
+        }),
+      catch: (cause) => new AgentRpcError({ cause }),
+    });
+    log.set({ detail: { turn_submitted: true, thread_id: thread.id, chat_id: chatId } });
+  });
 
   const makeHandler = (opts: {
     action: string;
@@ -127,8 +127,14 @@ export function createBot(config: BotConfig) {
       try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
       catch: (cause) => new AgentLookupError({ cause }),
     });
-    yield* Effect.tryPromise(() => agent.resetChat());
-    yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
+    yield* Effect.tryPromise(() => agent.resetChat()).pipe(
+      Effect.tap(() => Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."))),
+      Effect.tapError((error) =>
+        Effect.tryPromise(() =>
+          thread.post(`Reset failed: ${error instanceof Error ? error.message : String(error)}`),
+        ),
+      ),
+    );
     log.set({ detail: { reset: true, chat_id: chatId, channel: channelName } });
   });
 
@@ -155,7 +161,12 @@ export function createBot(config: BotConfig) {
     makeHandler({ action: "on_mention", checkAccess: true, handleStart: false, allowedUserIds }),
   );
   bot.onSubscribedMessage(
-    makeHandler({ action: "on_subscribed", checkAccess: false, handleStart: false, allowedUserIds }),
+    makeHandler({
+      action: "on_subscribed",
+      checkAccess: false,
+      handleStart: false,
+      allowedUserIds,
+    }),
   );
 
   return bot;

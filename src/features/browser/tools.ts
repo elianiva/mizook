@@ -38,7 +38,10 @@ async function takeScreenshot(
             encoding: "base64",
           })) as string;
         })()
-      : ((await page.screenshot({ fullPage: options?.fullPage ?? false, encoding: "base64" })) as string);
+      : ((await page.screenshot({
+          fullPage: options?.fullPage ?? false,
+          encoding: "base64",
+        })) as string);
 
     if (!b64) throw new Error(`Screenshot of ${url} returned empty result`);
     return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));

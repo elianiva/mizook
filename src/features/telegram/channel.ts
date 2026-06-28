@@ -18,7 +18,11 @@ export function createTelegramChannel(botToken: string): ChannelInterface {
       Effect.tryPromise(async () => {
         const form = new FormData();
         form.append("chat_id", target.chatId);
-        form.append("photo", new Blob([photo as BlobPart], { type: "image/png" }), "screenshot.png");
+        form.append(
+          "photo",
+          new Blob([photo as BlobPart], { type: "image/png" }),
+          "screenshot.png",
+        );
         form.append("caption", caption.slice(0, 200));
         const res = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
           method: "POST",

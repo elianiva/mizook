@@ -14,11 +14,16 @@ export function parseDurationToSeconds(duration: string): number | null {
   const num = parseInt(match[1], 10);
   const unit = (match[2] || "m").toLowerCase()[0];
   switch (unit) {
-    case "s": return num;
-    case "m": return num * 60;
-    case "h": return num * 3600;
-    case "d": return num * 86400;
-    default: return null;
+    case "s":
+      return num;
+    case "m":
+      return num * 60;
+    case "h":
+      return num * 3600;
+    case "d":
+      return num * 86400;
+    default:
+      return null;
   }
 }
 
@@ -35,12 +40,18 @@ export function createReminderTools(agent: MizookAgent) {
         "Example: 'every day at 8am' -> cron with appropriate UTC hour, duration: omitted.",
       inputSchema: z.object({
         message: z.string().describe("The reminder message text"),
-        duration: z.string().optional().describe(
-          "For ONE-TIME reminders: how long from now (e.g. '30m', '2h', '1d'). Omit for recurring.",
-        ),
-        cron: z.string().optional().describe(
-          "For RECURRING reminders only: cron expression in UTC. Convert from local time to UTC. Do not use for one-time.",
-        ),
+        duration: z
+          .string()
+          .optional()
+          .describe(
+            "For ONE-TIME reminders: how long from now (e.g. '30m', '2h', '1d'). Omit for recurring.",
+          ),
+        cron: z
+          .string()
+          .optional()
+          .describe(
+            "For RECURRING reminders only: cron expression in UTC. Convert from local time to UTC. Do not use for one-time.",
+          ),
       }),
       execute: async ({ message, duration, cron }) => {
         const turn = agent.getTurnState();
@@ -90,9 +101,10 @@ export function createReminderTools(agent: MizookAgent) {
               day: "numeric",
               month: "short",
             });
-            const kind = s.type === "cron" && "cron" in s
-              ? `cron: ${(s as typeof s & { cron: string }).cron}`
-              : s.type;
+            const kind =
+              s.type === "cron" && "cron" in s
+                ? `cron: ${(s as typeof s & { cron: string }).cron}`
+                : s.type;
             return `ID: ${s.id} | ${p.message} — next: ${next} (${kind})`;
           })
           .join("\n");
