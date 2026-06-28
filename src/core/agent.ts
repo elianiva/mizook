@@ -171,6 +171,7 @@ export class MizookAgent extends Think<Env> {
   }) {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
+        yield* Effect.logInfo(`submitTurn_called chat_id=${input.chatId}`);
         const now = yield* Clock.currentTimeMillis;
         this.serializedThread = input.thread;
         this.currentTurn = {

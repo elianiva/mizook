@@ -36,8 +36,11 @@ const resetCore = (postable: Postable, threadId: string) =>
 
 const handleTurn = (thread: Thread, message: Message) =>
   Effect.gen(function* () {
+    yield* Effect.logInfo("handleTurn_start");
     const { channelName, chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
+    yield* Effect.logInfo(`handleTurn_resolved_channel chat_id=${chatId}`);
     const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+    yield* Effect.logInfo("handleTurn_got_agent");
     yield* Effect.tryPromise({
       try: () =>
         agent.submitTurn({
@@ -59,6 +62,7 @@ interface TurnMode {
 
 const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =>
   Effect.gen(function* () {
+    yield* Effect.logInfo("dispatchMessage_start");
     if (mode.checkAccess) {
       const ok = yield* AllowedUsers.use((a) =>
         Effect.sync(() => a.has(Number(message.author.userId))),
@@ -70,6 +74,7 @@ const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =
       }
     }
     yield* Effect.tryPromise(() => thread.subscribe());
+    yield* Effect.logInfo("dispatchMessage_subscribed");
     const text = message.text.trim();
 
     if (text === "/start" && mode.handleStart) {
@@ -85,6 +90,7 @@ const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =
       return;
     }
 
+    yield* Effect.logInfo("dispatchMessage_about_to_handleTurn");
     yield* handleTurn(thread, message);
   });
 
@@ -114,46 +120,46 @@ export function createBot(runtime: AppRuntime, env: Env): Chat {
   const state = createCloudflareState({ namespace: env.CHAT_STATE });
   const chat = new Chat({ userName: "mizook", adapters, state, dedupeTtlMs: 600_000 });
 
-  const handle = (eff: Effect.Effect<void, unknown, AppServices>, label?: string) =>
-    runtime.runPromise(eff).catch((err) => {
-      console.error(`[bot] handle failed${label ? ` (${label})` : ""}`, err);
-    });
+  const handle = (eff: Effect.Effect<void, unknown, AppServices>, label?: string) => {
+    const labeled = eff.pipe(Effect.annotateLogs({ label: label ?? "?" }));
+    return runtime.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.logInfo("handle_start");
+        yield* labeled;
+        yield* Effect.logInfo("handle_complete");
+      }).pipe(Effect.catchCause((cause) => Effect.logError("handle_failed", cause))),
+    );
+  };
   const annotate =
     (values: Record<string, unknown>) =>
     <A, E, R>(eff: Effect.Effect<A, E, R>) =>
       Effect.annotateLogs(eff, values);
 
   chat.onDirectMessage((t, m) => {
-    console.info(
-      `[bot] direct_message_received thread=${t.id} user=${m.author.userId} text=${m.text.slice(0, 50)}`,
-    );
-    return handle(
-      dispatchMessage({ checkAccess: true, handleStart: true })(t, m).pipe(
-        annotate({ thread_id: t.id, user_id: m.author.userId }),
-      ),
-      `dm:${t.id}`,
-    );
+    const eff = Effect.gen(function* () {
+      yield* Effect.logInfo(`direct_message_received text=${m.text.slice(0, 50)}`);
+      yield* dispatchMessage({ checkAccess: true, handleStart: true })(t, m);
+    }).pipe(annotate({ thread_id: t.id, user_id: m.author.userId, handler: "dm" }));
+    return handle(eff, `dm:${t.id}`);
   });
-  chat.onNewMention((t, m) =>
-    handle(
-      dispatchMessage({ checkAccess: true, handleStart: false })(t, m).pipe(
-        annotate({ thread_id: t.id, user_id: m.author.userId }),
-      ),
-    ),
-  );
-  chat.onSubscribedMessage((t, m) =>
-    handle(
-      dispatchMessage({ checkAccess: false, handleStart: false })(t, m).pipe(
-        annotate({ thread_id: t.id, user_id: m.author.userId }),
-      ),
-    ),
-  );
-  chat.onSlashCommand(["start", "reset"], (event) => {
-    console.info(`[bot] slash_command_received command=${event.command} user=${event.user.userId}`);
-    return handle(
-      dispatchSlash(event).pipe(annotate({ command: event.command, user_id: event.user.userId })),
-      `slash:${event.command}`,
+  chat.onNewMention((t, m) => {
+    const eff = dispatchMessage({ checkAccess: true, handleStart: false })(t, m).pipe(
+      annotate({ thread_id: t.id, user_id: m.author.userId, handler: "mention" }),
     );
+    return handle(eff);
+  });
+  chat.onSubscribedMessage((t, m) => {
+    const eff = dispatchMessage({ checkAccess: false, handleStart: false })(t, m).pipe(
+      annotate({ thread_id: t.id, user_id: m.author.userId, handler: "subscribed" }),
+    );
+    return handle(eff);
+  });
+  chat.onSlashCommand(["start", "reset"], (event) => {
+    const eff = Effect.gen(function* () {
+      yield* Effect.logInfo(`slash_command_received command=${event.command}`);
+      yield* dispatchSlash(event);
+    }).pipe(annotate({ command: event.command, user_id: event.user.userId }));
+    return handle(eff, `slash:${event.command}`);
   });
 
   return chat;

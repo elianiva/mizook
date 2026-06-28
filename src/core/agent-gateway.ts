@@ -22,9 +22,14 @@ export class AgentGateway extends Context.Service<
       const { env } = yield* WorkersEnv;
       return AgentGateway.of({
         lookup: (chatId) =>
-          Effect.tryPromise({
-            try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
-            catch: (cause) => new AgentLookupError({ cause }),
+          Effect.gen(function* () {
+            yield* Effect.logInfo(`lookup_called chat_id=${chatId}`);
+            const stub = yield* Effect.tryPromise({
+              try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
+              catch: (cause) => new AgentLookupError({ cause }),
+            });
+            yield* Effect.logInfo(`lookup_completed chat_id=${chatId}`);
+            return stub;
           }),
       });
     }),
