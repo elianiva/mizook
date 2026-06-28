@@ -1,11 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { MizookAgent } from "../agent/mizook-agent";
-
-type ReminderPayload = {
-  chatId: number;
-  message: string;
-};
+import type { ReminderPayload } from "../lib/errors";
 
 function parseDurationToSeconds(duration: string): number | null {
   const match = duration.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)?$/i);
@@ -28,19 +24,18 @@ function parseDurationToSeconds(duration: string): number | null {
   }
 }
 
-export function createReminderTools(agent: MizookAgent) {
+export function createReminderTools(agent: MizookAgent, _timezone: string) {
   return {
     set_reminder: tool({
       description:
         "Set a reminder. By default creates a ONE-TIME reminder that fires after a delay. " +
         "Only use the cron field for RECURRING reminders (daily, weekly, etc.). " +
-        "CRON EXPRESSIONS MUST BE IN UTC. The user's timezone is UTC+7. " +
-        "Convert local times to UTC by subtracting 7 hours from the hour field. " +
+        "CRON EXPRESSIONS MUST BE IN UTC. Convert from the user's local time to UTC " +
+        "as explained in the system prompt (the offset depends on the configured timezone). " +
         "Example: 'remind me in 30 minutes' -> duration: '30m', cron: omitted. " +
         "Example: 'remind me in 2 hours' -> duration: '2h', cron: omitted. " +
-        "Example: 'remind me every day at 8am' (UTC+7) -> cron: '0 1 * * *', duration: omitted. " +
-        "Example: 'every Monday at 9am' -> cron: '0 2 * * 1', duration: omitted. " +
-        "Example: 'weekdays at midnight' -> cron: '0 17 * * 0-4', duration: omitted.",
+        "Example: 'remind me every day at 8am' -> cron with appropriate UTC hour, duration: omitted. " +
+        "Example: 'every Monday at 9am' -> cron with appropriate UTC hour, duration: omitted.",
       inputSchema: z.object({
         message: z.string().describe("The reminder message text"),
         duration: z
@@ -55,9 +50,7 @@ export function createReminderTools(agent: MizookAgent) {
           .optional()
           .describe(
             "For RECURRING reminders only: cron expression in UTC (minute hour day month weekday). " +
-              "Convert from the user's timezone (UTC+7) by subtracting 7 hours from the hour. " +
-              "Examples: '0 1 * * *' = daily at 8am UTC+7, " +
-              "'0 2 * * 1' = Mondays at 9am UTC+7. " +
+              "Convert from the user's local time to UTC as explained in the system prompt. " +
               "Do NOT use this for one-time reminders.",
           ),
       }),
@@ -66,10 +59,10 @@ export function createReminderTools(agent: MizookAgent) {
         if (!turn || turn.platform !== "telegram")
           return "Reminders are only available in private chat.";
 
-        const payload = {
+        const payload: ReminderPayload = {
           chatId: turn.chatId,
           message,
-        } satisfies ReminderPayload;
+        };
 
         if (cron) {
           const schedule = await agent.schedule(cron, "sendReminder", payload);

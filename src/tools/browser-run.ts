@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import puppeteer from "@cloudflare/puppeteer";
+import { createScopedLogger } from "../logger";
 
 interface BrowserEnv {
   BROWSER: Fetcher;
@@ -49,9 +50,12 @@ async function takeScreenshot(
           encoding: "base64",
         })) as string);
 
-    return b64 ? Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) : new Uint8Array();
+    if (!b64) throw new Error(`Screenshot of ${url} returned empty result`);
+    return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   } finally {
-    await browser.close().catch(() => {});
+    await browser.close().catch((err) => {
+      createScopedLogger({ action: "browser_close_error" }).error(err);
+    });
   }
 }
 

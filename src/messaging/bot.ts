@@ -16,22 +16,17 @@ type HandlerConfig = {
 };
 
 export function createBot(env: Env, state: StateAdapter) {
-  let _allowedUserIds: Set<number> | undefined;
-
-  function getAllowedUserIds(): Set<number> {
-    if (!_allowedUserIds) {
-      try {
-        _allowedUserIds = new Set(
-          Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
-            env.TELEGRAM_ALLOWED_USER_IDS.split(/[\s,]+/).filter(Boolean),
-          ).filter(Number.isSafeInteger),
-        );
-      } catch {
-        _allowedUserIds = new Set();
-      }
+  const allowedUserIds = (() => {
+    try {
+      return new Set(
+        Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
+          env.TELEGRAM_ALLOWED_USER_IDS.split(/[\s,]+/).filter(Boolean),
+        ).filter(Number.isSafeInteger),
+      );
+    } catch {
+      return new Set<number>();
     }
-    return _allowedUserIds;
-  }
+  })();
 
   const telegram = createTelegramAdapter({ botToken: env.BOT_TOKEN }) as TelegramAdapter;
 
@@ -56,7 +51,7 @@ export function createBot(env: Env, state: StateAdapter) {
       return Effect.gen(function* () {
         if (config.checkAccess) {
           const userId = Number(message.author.userId);
-          if (!getAllowedUserIds().has(userId)) {
+          if (!allowedUserIds.has(userId)) {
             yield* Effect.tryPromise(() => thread.post("Access denied."));
             log.set({ detail: { access_denied: true } });
             return;
@@ -76,12 +71,12 @@ export function createBot(env: Env, state: StateAdapter) {
         }
 
         if (text === "/reset") {
-          yield* handleReset(thread, telegram, env, log);
+          yield* handleReset(thread, log);
           log.set({ detail: { command: "reset" } });
           return;
         }
 
-        yield* handleTelegramTurn(thread, message, telegram, env, log);
+        yield* handleTelegramTurn(thread, message, log);
       }).pipe(
         Effect.tap(() => Effect.sync(() => log.emit({ message: `${config.action}_done` }))),
         Effect.catch((error) => {
@@ -102,46 +97,42 @@ export function createBot(env: Env, state: StateAdapter) {
     createHandler({ action: "on_subscribed_message", checkAccess: false, handleStart: false }),
   );
 
+  const handleTelegramTurn = Effect.fnUntraced(function* (
+    thread: import("chat").Thread,
+    message: import("chat").Message,
+    log: ReturnType<typeof createScopedLogger>,
+  ) {
+    const { chatId } = telegram.decodeThreadId(thread.id);
+    const agent = yield* Effect.tryPromise({
+      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
+      catch: (cause) => new AgentLookupError({ cause }),
+    });
+    yield* Effect.tryPromise({
+      try: () =>
+        agent.submitTelegramMessage({
+          chatId: Number(chatId),
+          messageId: Number(message.id),
+          text: message.text,
+          thread: thread.toJSON(),
+        }),
+      catch: (cause) => new AgentRpcError({ cause }),
+    });
+    log.set({ detail: { turn_submitted: true, platform: "telegram", chat_id: Number(chatId) } });
+  });
+
+  const handleReset = Effect.fnUntraced(function* (
+    thread: import("chat").Thread,
+    log: ReturnType<typeof createScopedLogger>,
+  ) {
+    const { chatId } = telegram.decodeThreadId(thread.id);
+    const agent = yield* Effect.tryPromise({
+      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
+      catch: (cause) => new AgentLookupError({ cause }),
+    });
+    yield* Effect.tryPromise(() => agent.resetChat());
+    yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
+    log.set({ detail: { reset: true } });
+  });
+
   return bot;
 }
-
-const handleTelegramTurn = Effect.fnUntraced(function* (
-  thread: import("chat").Thread,
-  message: import("chat").Message,
-  telegram: TelegramAdapter,
-  env: Env,
-  log: ReturnType<typeof createScopedLogger>,
-) {
-  const { chatId } = telegram.decodeThreadId(thread.id);
-  const agent = yield* Effect.tryPromise({
-    try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
-    catch: (cause) => new AgentLookupError({ cause }),
-  });
-  yield* Effect.tryPromise({
-    try: () =>
-      agent.submitTelegramMessage({
-        chatId: Number(chatId),
-        messageId: Number(message.id),
-        text: message.text,
-        thread: thread.toJSON(),
-      }),
-    catch: (cause) => new AgentRpcError({ cause }),
-  });
-  log.set({ detail: { turn_submitted: true, platform: "telegram", chat_id: Number(chatId) } });
-});
-
-const handleReset = Effect.fnUntraced(function* (
-  thread: import("chat").Thread,
-  telegram: TelegramAdapter,
-  env: Env,
-  log: ReturnType<typeof createScopedLogger>,
-) {
-  const { chatId } = telegram.decodeThreadId(thread.id);
-  const agent = yield* Effect.tryPromise({
-    try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
-    catch: (cause) => new AgentLookupError({ cause }),
-  });
-  yield* Effect.tryPromise(() => agent.resetChat());
-  yield* Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."));
-  log.set({ detail: { reset: true } });
-});

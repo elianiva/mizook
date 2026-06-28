@@ -1,5 +1,10 @@
 import { Data } from "effect";
 
+export type ReminderPayload = {
+  chatId: number;
+  message: string;
+};
+
 export class ModelTimeoutError extends Data.TaggedError("ModelTimeoutError")<{
   readonly timeoutMs: number;
 }> {}

@@ -16,13 +16,9 @@ import type { Env } from "../env";
 import { createScopedLogger } from "../logger";
 import { createModel, DEFAULT_MODEL } from "./model";
 import { configureSession } from "./session";
+import type { ReminderPayload } from "../lib/errors";
 import { createReminderTools } from "../tools/reminders";
 import { createBrowserTools, type ChatTarget } from "../tools/browser-run";
-
-type ReminderPayload = {
-  chatId: number;
-  message: string;
-};
 
 export type TurnState = {
   platform: "telegram";
@@ -32,16 +28,16 @@ export type TurnState = {
 };
 
 export class MizookAgent extends Think<Env> {
-  private _turnState: TurnState | null = null;
+  private turnState: TurnState | null = null;
   private streamWriter: WritableStreamDefaultWriter<string> | null = null;
   private pendingStream: Promise<unknown> | null = null;
   private serializedThread: SerializedThread | null = null;
   private turnLog: ReturnType<typeof createScopedLogger> | null = null;
-  private _telegram: TelegramAdapter | null = null;
+  private telegram: TelegramAdapter | null = null;
   waitForMcpConnections = { timeout: 10_000 } as const;
 
   getTurnState(): TurnState | null {
-    return this._turnState;
+    return this.turnState;
   }
 
   getConfiguredTimezone(): string {
@@ -49,10 +45,10 @@ export class MizookAgent extends Think<Env> {
   }
 
   private getTelegram(): TelegramAdapter {
-    if (!this._telegram) {
-      this._telegram = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
+    if (!this.telegram) {
+      this.telegram = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
     }
-    return this._telegram;
+    return this.telegram;
   }
 
   private telegramThreadId(chatId: number): string {
@@ -103,7 +99,7 @@ export class MizookAgent extends Think<Env> {
 
   getTools(): ToolSet {
     return {
-      ...createReminderTools(this),
+      ...createReminderTools(this, this.getConfiguredTimezone()),
       ...createBrowserTools(
         {
           BROWSER: this.env.BROWSER,
@@ -111,7 +107,7 @@ export class MizookAgent extends Think<Env> {
           BOT_TOKEN: this.env.BOT_TOKEN,
         },
         (): ChatTarget => {
-          const ts = this._turnState;
+          const ts = this.turnState;
           if (ts) return { platform: "telegram", chatId: ts.chatId };
           return { platform: "unknown" };
         },
@@ -174,17 +170,16 @@ export class MizookAgent extends Think<Env> {
     text: string;
     thread: SerializedThread;
   }) {
-    const self = this;
-    return Effect.gen(function* () {
+    return Effect.gen({ self: this }, function* () {
       const now = yield* Clock.currentTimeMillis;
-      self.serializedThread = input.thread;
-      self._turnState = {
+      this.serializedThread = input.thread;
+      this.turnState = {
         platform: "telegram",
         chatId: input.chatId,
         replyToMessageId: input.messageId,
         startTime: now,
       };
-      self.turnLog = createScopedLogger({
+      this.turnLog = createScopedLogger({
         action: "turn",
         chat_id: input.chatId,
         message_id: input.messageId,
@@ -194,7 +189,7 @@ export class MizookAgent extends Think<Env> {
       const id = yield* Random.nextUUIDv4;
       const createdAt = new Date(yield* Clock.currentTimeMillis);
       yield* Effect.tryPromise(() =>
-        self.saveMessages((current) => [
+        this.saveMessages((current) => [
           ...current,
           {
             id,
@@ -210,7 +205,7 @@ export class MizookAgent extends Think<Env> {
   override beforeTurn(_ctx: TurnContext) {
     return Effect.gen({ self: this }, function* () {
       const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-      const turn = this._turnState;
+      const turn = this.turnState;
       if (!turn) return { system: freshSystem };
       if (this.turnLog) {
         this.turnLog.set({ detail: { phase: "before_turn" } });
@@ -235,8 +230,10 @@ export class MizookAgent extends Think<Env> {
 
   private cleanupStream() {
     return Effect.gen({ self: this }, function* () {
-      if (this.streamWriter) yield* Effect.tryPromise(() => this.streamWriter!.close());
-      if (this.pendingStream) yield* Effect.tryPromise(() => this.pendingStream!);
+      const writer = this.streamWriter;
+      const pending = this.pendingStream;
+      if (writer) yield* Effect.tryPromise(() => writer.close());
+      if (pending) yield* Effect.tryPromise(() => pending);
       this.streamWriter = null;
       this.pendingStream = null;
     });
@@ -246,8 +243,8 @@ export class MizookAgent extends Think<Env> {
     return Effect.gen({ self: this }, function* () {
       yield* this.cleanupStream();
       this.serializedThread = null;
-      const turn = this._turnState;
-      this._turnState = null;
+      const turn = this.turnState;
+      this.turnState = null;
       if (this.turnLog) {
         const now = yield* Clock.currentTimeMillis;
         this.turnLog.set({
@@ -269,8 +266,8 @@ export class MizookAgent extends Think<Env> {
   override onChatError(error: unknown) {
     return Effect.gen({ self: this }, function* () {
       yield* this.cleanupStream();
-      const turn = this._turnState;
-      this._turnState = null;
+      const turn = this.turnState;
+      this.turnState = null;
       if (turn && this.serializedThread) {
         const adapter = this.getTelegram();
         const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
@@ -278,22 +275,14 @@ export class MizookAgent extends Think<Env> {
       }
       this.serializedThread = null;
       if (this.turnLog) {
-        if (error instanceof Error) {
-          this.turnLog.error(error, {
-            detail: {
-              phase: "error",
-              platform: turn?.platform,
-            },
-          });
-        } else {
-          this.turnLog.set({
-            detail: {
-              phase: "error",
-              error: String(error),
-              platform: turn?.platform,
-            },
-          });
-        }
+        this.turnLog.set({
+          detail: {
+            phase: "error",
+            error: error instanceof Error ? error.message : String(error),
+            platform: turn?.platform,
+          },
+        });
+        if (error instanceof Error) this.turnLog.error(error);
         this.turnLog.emit({ message: "turn_error" });
         this.turnLog = null;
       }
