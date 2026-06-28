@@ -49,8 +49,8 @@ importers:
         specifier: 4.0.0-beta.62
         version: 4.0.0-beta.62
       evlog:
-        specifier: ^2.18.1
-        version: 2.18.1(@voidzero-dev/vite-plus-core@0.1.18(@types/node@25.9.1)(esbuild@0.27.3)(typescript@6.0.3)(yaml@2.8.4))(ai@6.0.193(zod@4.4.3))(express@5.2.1)(hono@4.12.23)(react@19.2.5)
+        specifier: ^2.19.2
+        version: 2.19.2(@voidzero-dev/vite-plus-core@0.1.18(@types/node@25.9.1)(esbuild@0.27.3)(typescript@6.0.3)(yaml@2.8.4))(ai@6.0.193(zod@4.4.3))(express@5.2.1)(hono@4.12.23)(react@19.2.5)
       workers-ai-provider:
         specifier: ^3.1.14
         version: 3.1.14(@ai-sdk/provider@3.0.10)(ai@6.0.193(zod@4.4.3))
@@ -1837,8 +1837,9 @@ packages:
     resolution: {integrity: sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==}
     engines: {node: '>=18.0.0'}
 
-  evlog@2.18.1:
-    resolution: {integrity: sha512-uP7NNcmgQST0VdJ5c+gm4uBOOQDc/lGDWwH6aRS2H4C6mu4Hm7N8bCi6cSKIz8+If6pD2uA5EgPuhvI7OH+SHA==}
+  evlog@2.19.2:
+    resolution: {integrity: sha512-6a8ynL4tKhYK8p+mQv0in1tv3EUDSPvVPAWAuDRlpXTTIoLsR1Nol9dRIqhowakTP9XGNk6atSpvupTTGQDOTA==}
+    engines: {node: '>=18.0.0'}
     peerDependencies:
       '@nestjs/common': '>=11.1.19'
       '@nuxt/kit': ^4.4.2
@@ -4367,7 +4368,7 @@ snapshots:
     dependencies:
       eventsource-parser: 3.1.0
 
-  evlog@2.18.1(@voidzero-dev/vite-plus-core@0.1.18(@types/node@25.9.1)(esbuild@0.27.3)(typescript@6.0.3)(yaml@2.8.4))(ai@6.0.193(zod@4.4.3))(express@5.2.1)(hono@4.12.23)(react@19.2.5):
+  evlog@2.19.2(@voidzero-dev/vite-plus-core@0.1.18(@types/node@25.9.1)(esbuild@0.27.3)(typescript@6.0.3)(yaml@2.8.4))(ai@6.0.193(zod@4.4.3))(express@5.2.1)(hono@4.12.23)(react@19.2.5):
     optionalDependencies:
       ai: 6.0.193(zod@4.4.3)
       express: 5.2.1
