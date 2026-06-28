@@ -1,4 +1,4 @@
-import { Config, Effect } from "effect";
+import { Effect } from "effect";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { Env } from "../env";
 import { ModelTimeoutError, ModelRequestError } from "../lib/errors";

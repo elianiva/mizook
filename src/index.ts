@@ -5,7 +5,6 @@ import { createRequestLogger } from "./logger";
 import { createBot } from "./messaging/bot";
 import { createCloudflareState } from "chat-state-cloudflare-do";
 
-
 // durable objects exports
 export { MizookAgent } from "./agent/mizook-agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";

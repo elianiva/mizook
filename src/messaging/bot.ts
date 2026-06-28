@@ -9,12 +9,30 @@ import type { MizookAgent } from "../agent/mizook-agent";
 import { AgentLookupError, AgentRpcError } from "../lib/errors";
 import { createScopedLogger } from "../logger";
 
+type HandlerConfig = {
+  action: string;
+  checkAccess: boolean;
+  handleStart: boolean;
+};
+
 export function createBot(env: Env, state: StateAdapter) {
-  const allowedUserIds = new Set(
-    Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
-      env.TELEGRAM_ALLOWED_USER_IDS.split(/[\s,]+/).filter(Boolean),
-    ).filter(Number.isSafeInteger),
-  );
+  let _allowedUserIds: Set<number> | undefined;
+
+  function getAllowedUserIds(): Set<number> {
+    if (!_allowedUserIds) {
+      try {
+        _allowedUserIds = new Set(
+          Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
+            env.TELEGRAM_ALLOWED_USER_IDS.split(/[\s,]+/).filter(Boolean),
+          ).filter(Number.isSafeInteger),
+        );
+      } catch {
+        _allowedUserIds = new Set();
+      }
+    }
+    return _allowedUserIds;
+  }
+
   const telegram = createTelegramAdapter({ botToken: env.BOT_TOKEN }) as TelegramAdapter;
 
   const bot = new Chat({
@@ -26,106 +44,63 @@ export function createBot(env: Env, state: StateAdapter) {
     dedupeTtlMs: 600_000,
   });
 
-  bot.onDirectMessage((thread, message) => {
-    const log = createScopedLogger({
-      action: "on_direct_message",
-      platform: "telegram",
-      thread_id: thread.id,
-      user_id: message.author.userId,
-    });
+  const createHandler = (config: HandlerConfig) => {
+    return (thread: import("chat").Thread, message: import("chat").Message) => {
+      const log = createScopedLogger({
+        action: config.action,
+        platform: "telegram",
+        thread_id: thread.id,
+        user_id: message.author.userId,
+      });
 
-    return Effect.gen(function* () {
-      const userId = Number(message.author.userId);
-      if (!allowedUserIds.has(userId)) {
-        yield* Effect.tryPromise(() => thread.post("Access denied."));
-        log.set({ detail: { access_denied: true } });
-        return;
-      }
+      return Effect.gen(function* () {
+        if (config.checkAccess) {
+          const userId = Number(message.author.userId);
+          if (!getAllowedUserIds().has(userId)) {
+            yield* Effect.tryPromise(() => thread.post("Access denied."));
+            log.set({ detail: { access_denied: true } });
+            return;
+          }
+        }
 
-      yield* Effect.tryPromise(() => thread.subscribe());
+        yield* Effect.tryPromise(() => thread.subscribe());
 
-      const text = message.text.trim();
-      if (text === "/start") {
-        yield* Effect.tryPromise(() =>
-          thread.post("Hello. I am Mizook. Send me a message and I will respond."),
-        );
-        log.set({ detail: { command: "start" } });
-        return;
-      }
+        const text = message.text.trim();
 
-      if (text === "/reset") {
-        yield* handleReset(thread, telegram, env, log);
-        log.set({ detail: { command: "reset" } });
-        return;
-      }
+        if (config.handleStart && text === "/start") {
+          yield* Effect.tryPromise(() =>
+            thread.post("Hello. I am Mizook. Send me a message and I will respond."),
+          );
+          log.set({ detail: { command: "start" } });
+          return;
+        }
 
-      yield* handleTelegramTurn(thread, message, telegram, env, log);
-    }).pipe(
-      Effect.tap(() => Effect.sync(() => log.emit({ message: "dm_handler_done" }))),
-      Effect.catch((error) => {
-        log.error(error);
-        log.emit({ message: "dm_handler_error" });
-        return Effect.logError("DM handler error", error);
-      }),
-      Effect.runPromise,
-    );
-  });
+        if (text === "/reset") {
+          yield* handleReset(thread, telegram, env, log);
+          log.set({ detail: { command: "reset" } });
+          return;
+        }
 
-  bot.onNewMention((thread, message) => {
-    const log = createScopedLogger({
-      action: "on_mention",
-      platform: "telegram",
-      thread_id: thread.id,
-      user_id: message.author.userId,
-    });
+        yield* handleTelegramTurn(thread, message, telegram, env, log);
+      }).pipe(
+        Effect.tap(() => Effect.sync(() => log.emit({ message: `${config.action}_done` }))),
+        Effect.catch((error) => {
+          log.error(error);
+          log.emit({ message: `${config.action}_error` });
+          return Effect.logError(`${config.action} error`, error);
+        }),
+        Effect.runPromise,
+      );
+    };
+  };
 
-    return Effect.gen(function* () {
-      const userId = Number(message.author.userId);
-      if (!allowedUserIds.has(userId)) {
-        yield* Effect.tryPromise(() => thread.post("Access denied."));
-        log.set({ detail: { access_denied: true } });
-        return;
-      }
-
-      yield* Effect.tryPromise(() => thread.subscribe());
-      yield* handleTelegramTurn(thread, message, telegram, env, log);
-    }).pipe(
-      Effect.tap(() => Effect.sync(() => log.emit({ message: "mention_handler_done" }))),
-      Effect.catch((error) => {
-        log.error(error);
-        log.emit({ message: "mention_handler_error" });
-        return Effect.logError("mention handler error", error);
-      }),
-      Effect.runPromise,
-    );
-  });
-
-  bot.onSubscribedMessage((thread, message) => {
-    const log = createScopedLogger({
-      action: "on_subscribed_message",
-      platform: "telegram",
-      thread_id: thread.id,
-      user_id: message.author.userId,
-    });
-
-    return Effect.gen(function* () {
-      if (message.text.trim() === "/reset") {
-        yield* handleReset(thread, telegram, env, log);
-        log.set({ detail: { command: "reset" } });
-        return;
-      }
-
-      yield* handleTelegramTurn(thread, message, telegram, env, log);
-    }).pipe(
-      Effect.tap(() => Effect.sync(() => log.emit({ message: "subscribed_handler_done" }))),
-      Effect.catch((error) => {
-        log.error(error);
-        log.emit({ message: "subscribed_handler_error" });
-        return Effect.logError("subscribed message handler error", error);
-      }),
-      Effect.runPromise,
-    );
-  });
+  bot.onDirectMessage(
+    createHandler({ action: "on_direct_message", checkAccess: true, handleStart: true }),
+  );
+  bot.onNewMention(createHandler({ action: "on_mention", checkAccess: true, handleStart: false }));
+  bot.onSubscribedMessage(
+    createHandler({ action: "on_subscribed_message", checkAccess: false, handleStart: false }),
+  );
 
   return bot;
 }

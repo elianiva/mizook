@@ -8,9 +8,7 @@ interface BrowserEnv {
   BOT_TOKEN?: string;
 }
 
-export type TurnState =
-  | { platform: "telegram"; chatId: number }
-  | { platform: "unknown" };
+export type ChatTarget = { platform: "telegram"; chatId: number } | { platform: "unknown" };
 
 async function takeScreenshot(
   env: BrowserEnv,
@@ -57,9 +55,9 @@ async function takeScreenshot(
   }
 }
 
-async function uploadScreenshot(env: BrowserEnv, img: Uint8Array, turn: TurnState) {
-  const platform = turn.platform === "unknown" ? "unknown" : turn.platform;
-  const id = turn.platform === "telegram" ? String(turn.chatId) : "unknown";
+async function uploadScreenshot(env: BrowserEnv, img: Uint8Array, target: ChatTarget) {
+  const platform = target.platform === "unknown" ? "unknown" : target.platform;
+  const id = target.platform === "telegram" ? String(target.chatId) : "unknown";
   const key = `screenshots/${platform}/${id}/${Date.now()}.png`;
   await env.SCREENSHOTS.put(key, img, {
     httpMetadata: { contentType: "image/png" },
@@ -67,7 +65,7 @@ async function uploadScreenshot(env: BrowserEnv, img: Uint8Array, turn: TurnStat
   return key;
 }
 
-export function createBrowserTools(env: BrowserEnv, getTurnState: () => TurnState) {
+export function createBrowserTools(env: BrowserEnv, getTarget: () => ChatTarget) {
   return {
     browser_screenshot: tool({
       description:
@@ -87,15 +85,12 @@ export function createBrowserTools(env: BrowserEnv, getTurnState: () => TurnStat
           .enum(["load", "networkidle0", "networkidle2", "domcontentloaded"])
           .optional()
           .describe("When to consider navigation complete"),
-        selector: z
-          .string()
-          .optional()
-          .describe("CSS selector to capture a specific element only"),
+        selector: z.string().optional().describe("CSS selector to capture a specific element only"),
       }),
       execute: async (params) => {
-        const turn = getTurnState();
+        const target = getTarget();
         const img = await takeScreenshot(env, params.url, params);
-        const key = await uploadScreenshot(env, img, turn);
+        const key = await uploadScreenshot(env, img, target);
         return `Screenshot taken of ${params.url}. R2 key: ${key}. Use send_photo_to_chat with this key to send it to the user.`;
       },
     }),
@@ -108,16 +103,13 @@ export function createBrowserTools(env: BrowserEnv, getTurnState: () => TurnStat
       inputSchema: z.object({
         url: z.string().url().describe("The URL to take a screenshot of"),
         caption: z.string().optional().describe("Optional caption for the image"),
-        fullPage: z
-          .boolean()
-          .optional()
-          .describe("Capture full scrollable page"),
+        fullPage: z.boolean().optional().describe("Capture full scrollable page"),
       }),
       execute: async ({ url, caption, fullPage }) => {
-        const turn = getTurnState();
+        const target = getTarget();
         const img = await takeScreenshot(env, url, { fullPage });
-        const key = await uploadScreenshot(env, img, turn);
-        await sendPhotoToChat(env, turn, img, caption ?? `Screenshot of ${url}`);
+        const key = await uploadScreenshot(env, img, target);
+        await sendPhotoToChat(env, target, img, caption ?? `Screenshot of ${url}`);
         return `Took screenshot of ${url} and sent it to the chat. R2 key: ${key}`;
       },
     }),
@@ -132,11 +124,11 @@ export function createBrowserTools(env: BrowserEnv, getTurnState: () => TurnStat
         caption: z.string().optional().describe("Optional caption"),
       }),
       execute: async ({ r2Key, caption }) => {
-        const turn = getTurnState();
+        const target = getTarget();
         const obj = await env.SCREENSHOTS.get(r2Key);
         if (!obj) return "Screenshot not found or expired.";
         const buf = new Uint8Array(await obj.arrayBuffer());
-        await sendPhotoToChat(env, turn, buf, caption ?? "Screenshot");
+        await sendPhotoToChat(env, target, buf, caption ?? "Screenshot");
         return "Sent screenshot to chat.";
       },
     }),
@@ -145,20 +137,16 @@ export function createBrowserTools(env: BrowserEnv, getTurnState: () => TurnStat
 
 async function sendPhotoToChat(
   env: BrowserEnv,
-  turn: TurnState,
+  target: ChatTarget,
   image: Uint8Array,
   caption: string,
 ) {
   const safeCaption = caption.slice(0, 200);
 
-  if (turn.platform === "telegram" && env.BOT_TOKEN) {
+  if (target.platform === "telegram" && env.BOT_TOKEN) {
     const form = new FormData();
-    form.append("chat_id", String(turn.chatId));
-    form.append(
-      "photo",
-      new Blob([image.buffer as ArrayBuffer], { type: "image/png" }),
-      "screenshot.png",
-    );
+    form.append("chat_id", String(target.chatId));
+    form.append("photo", new Blob([image as BlobPart], { type: "image/png" }), "screenshot.png");
     form.append("caption", safeCaption);
     await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, {
       method: "POST",

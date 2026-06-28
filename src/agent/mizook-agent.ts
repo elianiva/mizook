@@ -1,5 +1,5 @@
 import { callable } from "agents";
-import { Effect, Clock, Option, Random } from "effect";
+import { Effect, Clock, Random } from "effect";
 import {
   Think,
   type ChunkContext,
@@ -17,7 +17,7 @@ import { createScopedLogger } from "../logger";
 import { createModel, DEFAULT_MODEL } from "./model";
 import { configureSession } from "./session";
 import { createReminderTools } from "../tools/reminders";
-import { createBrowserTools } from "../tools/browser-run";
+import { createBrowserTools, type ChatTarget } from "../tools/browser-run";
 
 type ReminderPayload = {
   chatId: number;
@@ -32,24 +32,27 @@ export type TurnState = {
 };
 
 export class MizookAgent extends Think<Env> {
-  private _turnState: Option.Option<TurnState> = Option.none();
-  private streamWriter: Option.Option<WritableStreamDefaultWriter<string>> = Option.none();
-  private pendingStream: Option.Option<Promise<unknown>> = Option.none();
-  private serializedThread: Option.Option<SerializedThread> = Option.none();
-  private turnLog: Option.Option<ReturnType<typeof createScopedLogger>> = Option.none();
-  private _telegram: Option.Option<TelegramAdapter> = Option.none();
+  private _turnState: TurnState | null = null;
+  private streamWriter: WritableStreamDefaultWriter<string> | null = null;
+  private pendingStream: Promise<unknown> | null = null;
+  private serializedThread: SerializedThread | null = null;
+  private turnLog: ReturnType<typeof createScopedLogger> | null = null;
+  private _telegram: TelegramAdapter | null = null;
   waitForMcpConnections = { timeout: 10_000 } as const;
 
-  getTurnState(): Option.Option<TurnState> {
+  getTurnState(): TurnState | null {
     return this._turnState;
   }
 
+  getConfiguredTimezone(): string {
+    return this.env.TIMEZONE ?? "Asia/Jakarta";
+  }
+
   private getTelegram(): TelegramAdapter {
-    return Option.getOrElse(this._telegram, () => {
-      const adapter = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
-      this._telegram = Option.some(adapter);
-      return adapter;
-    });
+    if (!this._telegram) {
+      this._telegram = createTelegramAdapter({ botToken: this.env.BOT_TOKEN });
+    }
+    return this._telegram;
   }
 
   private telegramThreadId(chatId: number): string {
@@ -107,12 +110,10 @@ export class MizookAgent extends Think<Env> {
           SCREENSHOTS: this.env.SCREENSHOTS,
           BOT_TOKEN: this.env.BOT_TOKEN,
         },
-        () => {
-          const turnState = this._turnState;
-          if (Option.isSome(turnState)) {
-            return { platform: "telegram" as const, chatId: turnState.value.chatId };
-          }
-          return { platform: "unknown" as const };
+        (): ChatTarget => {
+          const ts = this._turnState;
+          if (ts) return { platform: "telegram", chatId: ts.chatId };
+          return { platform: "unknown" };
         },
       ),
     };
@@ -130,8 +131,8 @@ export class MizookAgent extends Think<Env> {
   onStart() {
     return Effect.gen({ self: this }, function* () {
       const provider = new AgentContextProvider(this, "soul");
-      const storedOpt = Option.fromNullOr(yield* Effect.tryPromise(() => provider.get()));
-      if (Option.isNone(storedOpt)) {
+      const stored = yield* Effect.tryPromise(() => provider.get());
+      if (!stored) {
         yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
       }
 
@@ -155,11 +156,15 @@ export class MizookAgent extends Think<Env> {
 
   @callable()
   resetChat() {
+    const log = createScopedLogger({ action: "reset_chat" });
     return Effect.gen({ self: this }, function* () {
       this.resetTurnState();
-      this.clearMessages();
+      yield* Effect.tryPromise(() => this.clearMessages());
       yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-    }).pipe(Effect.runPromise);
+    }).pipe(
+      Effect.tap(() => Effect.sync(() => log.emit({ message: "reset_chat_done" }))),
+      Effect.runPromise,
+    );
   }
 
   @callable()
@@ -172,22 +177,20 @@ export class MizookAgent extends Think<Env> {
     const self = this;
     return Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      self.serializedThread = Option.some(input.thread);
-      self._turnState = Option.some({
+      self.serializedThread = input.thread;
+      self._turnState = {
         platform: "telegram",
         chatId: input.chatId,
         replyToMessageId: input.messageId,
         startTime: now,
+      };
+      self.turnLog = createScopedLogger({
+        action: "turn",
+        chat_id: input.chatId,
+        message_id: input.messageId,
+        platform: "telegram",
+        phase: "submitted",
       });
-      self.turnLog = Option.some(
-        createScopedLogger({
-          action: "turn",
-          chat_id: input.chatId,
-          message_id: input.messageId,
-          platform: "telegram",
-          phase: "submitted",
-        }),
-      );
       const id = yield* Random.nextUUIDv4;
       const createdAt = new Date(yield* Clock.currentTimeMillis);
       yield* Effect.tryPromise(() =>
@@ -208,64 +211,57 @@ export class MizookAgent extends Think<Env> {
     return Effect.gen({ self: this }, function* () {
       const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
       const turn = this._turnState;
-      if (Option.isNone(turn)) return { system: freshSystem };
-      if (Option.isSome(this.turnLog)) {
-        this.turnLog.value.set({ detail: { phase: "before_turn" } });
+      if (!turn) return { system: freshSystem };
+      if (this.turnLog) {
+        this.turnLog.set({ detail: { phase: "before_turn" } });
       }
-      if (Option.isNone(this.serializedThread)) return { system: freshSystem };
+      if (!this.serializedThread) return { system: freshSystem };
       const { readable, writable } = new TransformStream<string, string>();
-      this.streamWriter = Option.some(writable.getWriter());
+      this.streamWriter = writable.getWriter();
       const adapter = this.getTelegram();
-      const thread = ThreadImpl.fromJSON(this.serializedThread.value, adapter);
+      const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
       yield* Effect.tryPromise(() => thread.startTyping());
-      this.pendingStream = Option.some(
-        thread.post(readable).catch((err) => {
-          Effect.logError("stream failed:", err);
-        }),
-      );
+      this.pendingStream = thread.post(readable).catch((err) => {
+        Effect.logError("stream failed:", err);
+      });
       return { system: freshSystem };
     }).pipe(Effect.runPromise);
   }
 
   override onChunk({ chunk }: ChunkContext) {
     if (chunk.type !== "text-delta" || !chunk.text) return;
-    void Option.getOrNull(this.streamWriter)?.write(chunk.text);
+    void this.streamWriter?.write(chunk.text);
   }
 
   private cleanupStream() {
     return Effect.gen({ self: this }, function* () {
-      const writer = Option.getOrNull(this.streamWriter);
-      if (writer) yield* Effect.tryPromise(() => writer.close());
-      const stream = Option.getOrNull(this.pendingStream);
-      if (stream) yield* Effect.tryPromise(() => stream);
-      this.streamWriter = Option.none();
-      this.pendingStream = Option.none();
+      if (this.streamWriter) yield* Effect.tryPromise(() => this.streamWriter!.close());
+      if (this.pendingStream) yield* Effect.tryPromise(() => this.pendingStream!);
+      this.streamWriter = null;
+      this.pendingStream = null;
     });
   }
 
   override onChatResponse(result: ChatResponseResult) {
     return Effect.gen({ self: this }, function* () {
       yield* this.cleanupStream();
-      this.serializedThread = Option.none();
+      this.serializedThread = null;
       const turn = this._turnState;
-      this._turnState = Option.none();
-      if (Option.isSome(this.turnLog)) {
+      this._turnState = null;
+      if (this.turnLog) {
         const now = yield* Clock.currentTimeMillis;
-        this.turnLog.value.set({
+        this.turnLog.set({
           detail: {
             phase: "complete",
             requestId: result.requestId,
             model: this.env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL,
-            latencyMs: Option.match(turn, {
-              onSome: (t) => now - t.startTime,
-              onNone: () => 0,
-            }),
+            latencyMs: turn ? now - turn.startTime : 0,
             result: result.status,
-            platform: Option.getOrNull(turn)?.platform,
+            platform: turn?.platform,
           },
         });
-        this.turnLog.value.emit({ message: "turn_complete" });
-        this.turnLog = Option.none();
+        this.turnLog.emit({ message: "turn_complete" });
+        this.turnLog = null;
       }
     }).pipe(Effect.runPromise);
   }
@@ -274,32 +270,32 @@ export class MizookAgent extends Think<Env> {
     return Effect.gen({ self: this }, function* () {
       yield* this.cleanupStream();
       const turn = this._turnState;
-      this._turnState = Option.none();
-      if (Option.isSome(turn) && Option.isSome(this.serializedThread)) {
+      this._turnState = null;
+      if (turn && this.serializedThread) {
         const adapter = this.getTelegram();
-        const thread = ThreadImpl.fromJSON(this.serializedThread.value, adapter);
+        const thread = ThreadImpl.fromJSON(this.serializedThread, adapter);
         yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
       }
-      this.serializedThread = Option.none();
-      if (Option.isSome(this.turnLog)) {
+      this.serializedThread = null;
+      if (this.turnLog) {
         if (error instanceof Error) {
-          this.turnLog.value.error(error, {
+          this.turnLog.error(error, {
             detail: {
               phase: "error",
-              platform: Option.getOrNull(turn)?.platform,
+              platform: turn?.platform,
             },
           });
         } else {
-          this.turnLog.value.set({
+          this.turnLog.set({
             detail: {
               phase: "error",
               error: String(error),
-              platform: Option.getOrNull(turn)?.platform,
+              platform: turn?.platform,
             },
           });
         }
-        this.turnLog.value.emit({ message: "turn_error" });
-        this.turnLog = Option.none();
+        this.turnLog.emit({ message: "turn_error" });
+        this.turnLog = null;
       }
       return error;
     }).pipe(Effect.runPromise);

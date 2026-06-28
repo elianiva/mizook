@@ -1,4 +1,3 @@
-import { Option } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 import type { MizookAgent } from "../agent/mizook-agent";
@@ -64,11 +63,11 @@ export function createReminderTools(agent: MizookAgent) {
       }),
       execute: async ({ message, duration, cron }) => {
         const turn = agent.getTurnState();
-        if (Option.isNone(turn) || turn.value.platform !== "telegram")
+        if (!turn || turn.platform !== "telegram")
           return "Reminders are only available in private chat.";
 
         const payload = {
-          chatId: turn.value.chatId,
+          chatId: turn.chatId,
           message,
         } satisfies ReminderPayload;
 
@@ -97,11 +96,13 @@ export function createReminderTools(agent: MizookAgent) {
 
         if (reminders.length === 0) return "No active reminders.";
 
+        const tz = agent.getConfiguredTimezone();
+
         return reminders
           .map((s) => {
             const p = s.payload as ReminderPayload;
             const next = new Date(s.time * 1000).toLocaleString("en-ID", {
-              timeZone: "Asia/Jakarta",
+              timeZone: tz,
               weekday: "short",
               hour: "2-digit",
               minute: "2-digit",
