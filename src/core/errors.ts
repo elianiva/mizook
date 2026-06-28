@@ -1,12 +1,5 @@
 import { Schema } from "effect";
 
-export class ModelTimeoutError extends Schema.TaggedErrorClass<ModelTimeoutError>()(
-  "ModelTimeoutError",
-  {
-    timeoutMs: Schema.Number,
-  },
-) {}
-
 export class ModelRequestError extends Schema.TaggedErrorClass<ModelRequestError>()(
   "ModelRequestError",
   {

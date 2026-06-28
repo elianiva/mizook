@@ -20,6 +20,7 @@ export class ChannelRegistry extends Context.Service<
   ChannelRegistry,
   {
     resolve(threadId: string): Effect.Effect<ResolvedChannel, UnknownChannelError>;
+    get(name: string): Effect.Effect<Channel, UnknownChannelError>;
     readonly adapters: Record<string, Adapter>;
   }
 >()("mizook/ChannelRegistry") {
@@ -28,17 +29,26 @@ export class ChannelRegistry extends Context.Service<
       const telegram = yield* TelegramChannel;
       const channels: Record<string, Channel> = { telegram };
 
+      const get = (name: string) =>
+        Effect.sync(() => channels[name]).pipe(
+          Effect.flatMap((channel) =>
+            channel
+              ? Effect.succeed<Channel>(channel)
+              : Effect.fail(new UnknownChannelError({ channelName: name })),
+          ),
+        );
       return ChannelRegistry.of({
         // Discord slots in here by name when landed.
         resolve: (threadId) => {
           const channelName = threadId.split(":")[0];
-          const channel = channels[channelName];
-          if (!channel) return Effect.fail(new UnknownChannelError({ channelName }));
-          return Effect.sync(() => {
-            const { chatId } = channel.decodeThreadId(threadId);
-            return { channel, channelName, chatId } satisfies ResolvedChannel;
-          });
+          return get(channelName).pipe(
+            Effect.map((channel): ResolvedChannel => {
+              const { chatId } = channel.decodeThreadId(threadId);
+              return { channel, channelName, chatId };
+            }),
+          );
         },
+        get,
         adapters: Object.fromEntries(
           Object.entries(channels).map(([name, ch]) => [name, ch.adapter]),
         ),

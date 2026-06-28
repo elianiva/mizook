@@ -20,7 +20,3 @@ export interface Channel {
     caption: string,
   ) => Effect.Effect<void, unknown>;
 }
-
-// Compat alias during the service migration; removed once bot/agent consume
-// the ChannelRegistry service.
-export type ChannelInterface = Channel;

@@ -7,58 +7,66 @@ import {
   type Session,
   type TurnContext,
 } from "@cloudflare/think";
+import { AgentContextProvider, AgentSearchProvider } from "agents/experimental/memory/session";
+import { createCompactFunction } from "agents/experimental/memory/utils";
 import type { SerializedThread } from "chat";
-import type { ToolSet } from "ai";
 import { ThreadImpl } from "chat";
-import { AgentContextProvider } from "agents/experimental/memory/session";
-import type { Env } from "./env";
-import { createScopedLogger } from "./logger";
-import { createModel, DEFAULT_MODEL } from "./model";
-import { configureSession } from "./session";
-import type { ChannelInterface } from "./channel";
+import type { ToolSet } from "ai";
 
+import type { Env } from "./env";
+import { getRuntime, type AppServices } from "./runtime";
+import { Model } from "./model";
+import { ChannelRegistry } from "./channel-registry";
 import { basePrompt } from "./prompts/base";
-import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
-import { createBrowserTools } from "../features/browser/tools";
-import { createTelegramChannel } from "../features/telegram/channel";
 import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
+import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
+import { createBrowserTools } from "../features/browser/tools";
 
 interface TurnState {
-  channelType: string;
-  chatId: string;
-  replyToMessageId: number;
-  startTime: number;
+  readonly channelType: string;
+  readonly chatId: string;
+  readonly replyToMessageId: number;
+  readonly startTime: number;
 }
 
 export class MizookAgent extends Think<Env> {
-  private turnState: TurnState | null = null;
-  private streamWriter: WritableStreamDefaultWriter<string> | null = null;
-  private pendingStream: Promise<unknown> | null = null;
+  // Framework-driven mutable turn state. Think's lifecycle is a sequence of
+  // independent callbacks (submitTurn → beforeTurn → onChunk* → onChat*),
+  // so the turn context must persist on the instance between them. Kept to the
+  // minimum the streaming wiring needs.
+  private currentTurn: TurnState | null = null;
   private serializedThread: SerializedThread | null = null;
-  private turnLog: ReturnType<typeof createScopedLogger> | null = null;
-  private _channel: ChannelInterface | null = null;
+  private writer: WritableStreamDefaultWriter<string> | null = null;
+  private pendingStream: Promise<unknown> | null = null;
+
   waitForMcpConnections = { timeout: 10_000 } as const;
 
+  private get runtime() {
+    return getRuntime(this.env);
+  }
+
+  /** Bridge for tool `execute` bodies (Promise-shaped for the AI SDK) to run
+   *  Effect-typed logic against the shared runtime. */
+  run<A, E, R extends AppServices>(eff: Effect.Effect<A, E, R>): Promise<A> {
+    return this.runtime.runPromise(eff);
+  }
+
+  /** Worker bindings (BROWSER/SCREENSHOTS/…) for tool `execute` bodies. */
+  get appEnv() {
+    return this.env;
+  }
+
   getTurnState(): TurnState | null {
-    return this.turnState;
+    return this.currentTurn;
   }
 
   getConfiguredTimezone(): string {
     return this.env.TIMEZONE ?? "Asia/Jakarta";
   }
 
-  // Currently always creates a Telegram channel — multi-channel will need
-  // channel factory injection (e.g. via constructor or per-turn dispatch).
-  private getChannel(): ChannelInterface {
-    if (!this._channel) {
-      this._channel = createTelegramChannel(this.env.BOT_TOKEN);
-    }
-    return this._channel;
-  }
-
   getModel() {
-    return createModel(this.env);
+    return this.runtime.runSync(Model.use((m) => Effect.sync(() => m.chatModel)));
   }
 
   getSystemPrompt() {
@@ -67,64 +75,89 @@ export class MizookAgent extends Think<Env> {
   }
 
   configureSession(session: Session) {
-    return configureSession(session, this, this.env);
+    return session
+      .withContext("soul", {
+        description:
+          "Your identity, personality, and core instructions. " +
+          "Write to this with set_context to change who you are.",
+        maxTokens: 1000,
+      })
+      .withContext("memory", {
+        description:
+          "Key facts, preferences, and context learned from the user. " +
+          "Proactively update this as you learn new information.",
+        maxTokens: 2000,
+      })
+      .withContext("history", {
+        provider: new AgentSearchProvider(this),
+        description: "Full-text search across your conversation history with this assistant.",
+      })
+      .onCompaction(
+        createCompactFunction({
+          summarize: (prompt: string) =>
+            this.runtime.runPromise(Model.use((m) => m.summarize(prompt))),
+        }),
+      )
+      .compactAfter(100_000)
+      .withCachedPrompt();
   }
 
   getTools(): ToolSet {
-    const channel = this.getChannel();
-    const getTarget = () => {
-      const ts = this.turnState;
-      return ts ? { platform: ts.channelType, chatId: ts.chatId } : null;
-    };
     return {
       ...createReminderTools(this),
-      ...createBrowserTools(this.env, channel, getTarget),
+      ...createBrowserTools(this),
     };
   }
 
   sendReminder(payload: ReminderPayload) {
-    const channel = this.getChannel();
-    return Effect.gen(function* () {
-      yield* channel.postNotification(payload.target, `\u23f0 Reminder: ${payload.message}`);
-    }).pipe(Effect.runPromise);
+    return this.runtime.runPromise(
+      ChannelRegistry.use((r) =>
+        r
+          .get(payload.target.platform)
+          .pipe(
+            Effect.flatMap((ch) =>
+              ch.postNotification(payload.target, `\u23f0 Reminder: ${payload.message}`),
+            ),
+          ),
+      ),
+    );
   }
 
-  onStart() {
-    return Effect.gen({ self: this }, function* () {
-      const provider = new AgentContextProvider(this, "soul");
-      const stored = yield* Effect.tryPromise(() => provider.get());
-      if (!stored) {
-        yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
-      }
-
-      if (this.env.EXA_API_KEY) {
-        yield* Effect.tryPromise(() =>
-          this.addMcpServer("exa", `https://mcp.exa.ai/mcp?exaApiKey=${this.env.EXA_API_KEY}`),
-        );
-      }
-
-      if (this.env.CF_API_TOKEN) {
-        yield* Effect.tryPromise(() =>
-          this.addMcpServer("cloudflare", "https://mcp.cloudflare.com/mcp", {
-            transport: {
-              headers: { Authorization: `Bearer ${this.env.CF_API_TOKEN}` },
-            },
-          }),
-        );
-      }
-    }).pipe(Effect.runPromise);
+  override onStart(): Promise<void> {
+    return this.runtime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const provider = new AgentContextProvider(this, "soul");
+        const stored = yield* Effect.tryPromise(() => provider.get());
+        if (!stored) {
+          yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
+        }
+        if (this.env.EXA_API_KEY) {
+          yield* Effect.tryPromise(() =>
+            this.addMcpServer("exa", `https://mcp.exa.ai/mcp?exaApiKey=${this.env.EXA_API_KEY}`),
+          );
+        }
+        if (this.env.CF_API_TOKEN) {
+          yield* Effect.tryPromise(() =>
+            this.addMcpServer("cloudflare", "https://mcp.cloudflare.com/mcp", {
+              transport: { headers: { Authorization: `Bearer ${this.env.CF_API_TOKEN}` } },
+            }),
+          );
+        }
+        yield* Effect.logInfo("agent_onStart_done");
+      }),
+    );
   }
 
   @callable()
   resetChat() {
-    const log = createScopedLogger({ action: "reset_chat" });
-    return Effect.gen({ self: this }, function* () {
-      this.resetTurnState();
-      yield* Effect.tryPromise(() => this.clearMessages());
-      yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-    }).pipe(
-      Effect.tap(() => Effect.sync(() => log.emit({ message: "reset_chat_done" }))),
-      Effect.runPromise,
+    return this.runtime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        this.resetTurnState();
+        this.currentTurn = null;
+        yield* Effect.tryPromise(() => this.clearMessages());
+        yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
+        yield* Effect.logInfo("reset_chat_done");
+      }),
     );
   }
 
@@ -136,125 +169,100 @@ export class MizookAgent extends Think<Env> {
     text: string;
     channelType: string;
   }) {
-    return Effect.gen({ self: this }, function* () {
-      const now = yield* Clock.currentTimeMillis;
-      this.serializedThread = input.thread;
-      this.turnState = {
-        channelType: input.channelType,
-        chatId: input.chatId,
-        replyToMessageId: Number(input.messageId),
-        startTime: now,
-      };
-      this._channel = null; // rebuild on next getChannel() in case channelType changes
-      this.turnLog = createScopedLogger({
-        action: "turn",
-        chat_id: input.chatId,
-        message_id: input.messageId,
-        channel: input.channelType,
-        phase: "submitted",
-      });
-      const id = yield* Random.nextUUIDv4;
-      const createdAt = new Date(yield* Clock.currentTimeMillis);
-      yield* Effect.tryPromise(() =>
-        this.saveMessages((current) => [
-          ...current,
-          {
-            id,
-            role: "user",
-            parts: [{ type: "text", text: input.text }],
-            createdAt,
-          },
-        ]),
-      );
-    }).pipe(Effect.runPromise);
+    return this.runtime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const now = yield* Clock.currentTimeMillis;
+        this.serializedThread = input.thread;
+        this.currentTurn = {
+          channelType: input.channelType,
+          chatId: input.chatId,
+          replyToMessageId: Number(input.messageId),
+          startTime: now,
+        };
+        const id = yield* Random.nextUUIDv4;
+        const createdAt = new Date(yield* Clock.currentTimeMillis);
+        yield* Effect.tryPromise(() =>
+          this.saveMessages((current) => [
+            ...current,
+            { id, role: "user", parts: [{ type: "text", text: input.text }], createdAt },
+          ]),
+        );
+        yield* Effect.logInfo(`turn_received chat_id=${input.chatId} channel=${input.channelType}`);
+      }),
+    );
   }
 
   override beforeTurn(_ctx: TurnContext) {
-    return Effect.gen({ self: this }, function* () {
-      const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-      const turn = this.turnState;
-      if (!turn) return { system: freshSystem };
-      if (this.turnLog) {
-        this.turnLog.set({ detail: { phase: "before_turn" } });
-      }
-      if (!this.serializedThread) return { system: freshSystem };
+    return this.runtime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
+        const turn = this.currentTurn;
+        if (!turn || !this.serializedThread) return { system: freshSystem };
 
-      const channel = this.getChannel();
-      const { readable, writable } = new TransformStream<string, string>();
-      this.streamWriter = writable.getWriter();
-      const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
-      yield* Effect.tryPromise(() => thread.startTyping());
-      this.pendingStream = thread.post(readable).catch((err) => {
-        Effect.logError("stream failed:", err);
-      });
-      return { system: freshSystem };
-    }).pipe(Effect.runPromise);
+        const { channel } = yield* ChannelRegistry.use((r) =>
+          r.resolve(`${turn.channelType}:${turn.chatId}`),
+        );
+        const { readable, writable } = new TransformStream<string, string>();
+        this.writer = writable.getWriter();
+        const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
+        yield* Effect.tryPromise(() => thread.startTyping());
+        this.pendingStream = thread.post(readable).catch((err) => {
+          void this.runtime.runPromise(Effect.logError("stream_failed", err));
+        });
+        return { system: freshSystem };
+      }),
+    );
   }
 
   override onChunk({ chunk }: ChunkContext) {
     if (chunk.type !== "text-delta" || !chunk.text) return;
-    void this.streamWriter?.write(chunk.text);
+    void this.writer?.write(chunk.text);
   }
 
   private cleanupStream() {
     return Effect.gen({ self: this }, function* () {
-      const writer = this.streamWriter;
+      const writer = this.writer;
       const pending = this.pendingStream;
       if (writer) yield* Effect.tryPromise(() => writer.close());
       if (pending) yield* Effect.tryPromise(() => pending);
-      this.streamWriter = null;
+      this.writer = null;
       this.pendingStream = null;
-    });
+    }).pipe(Effect.catchCause((cause) => Effect.logError("stream_cleanup_failed", cause)));
   }
 
   override onChatResponse(result: ChatResponseResult) {
-    return Effect.gen({ self: this }, function* () {
-      yield* this.cleanupStream();
-      this.serializedThread = null;
-      const turn = this.turnState;
-      this.turnState = null;
-      if (this.turnLog) {
-        const now = yield* Clock.currentTimeMillis;
-        this.turnLog.set({
-          detail: {
-            phase: "complete",
-            requestId: result.requestId,
-            model: this.env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL,
-            latencyMs: turn ? now - turn.startTime : 0,
-            result: result.status,
-            channel: turn?.channelType,
-          },
-        });
-        this.turnLog.emit({ message: "turn_complete" });
-        this.turnLog = null;
-      }
-    }).pipe(Effect.runPromise);
+    return this.runtime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        yield* this.cleanupStream();
+        const turn = this.currentTurn;
+        const latency = turn ? (yield* Clock.currentTimeMillis) - turn.startTime : 0;
+        this.currentTurn = null;
+        this.serializedThread = null;
+        yield* Effect.logInfo(
+          `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""} latency_ms=${latency} status=${result.status} channel=${turn?.channelType ?? "?"}`,
+        );
+      }),
+    );
   }
 
   override onChatError(error: unknown) {
-    return Effect.gen({ self: this }, function* () {
-      yield* this.cleanupStream();
-      const turn = this.turnState;
-      this.turnState = null;
-      if (turn && this.serializedThread) {
-        const channel = this.getChannel();
-        const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
-        yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
-      }
-      this.serializedThread = null;
-      if (this.turnLog) {
-        this.turnLog.set({
-          detail: {
-            phase: "error",
-            error: error instanceof Error ? error.message : String(error),
-            channel: turn?.channelType,
-          },
-        });
-        if (error instanceof Error) this.turnLog.error(error);
-        this.turnLog.emit({ message: "turn_error" });
-        this.turnLog = null;
-      }
-      return error;
-    }).pipe(Effect.runPromise);
+    return this.runtime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        yield* this.cleanupStream();
+        const turn = this.currentTurn;
+        const serialized = this.serializedThread;
+        this.currentTurn = null;
+        this.serializedThread = null;
+        if (turn && serialized) {
+          const { channel } = yield* ChannelRegistry.use((r) =>
+            r.resolve(`${turn.channelType}:${turn.chatId}`),
+          );
+          const thread = ThreadImpl.fromJSON(serialized, channel.adapter);
+          yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
+        }
+        yield* Effect.logError("turn_error", error);
+        return error;
+      }),
+    );
   }
 }

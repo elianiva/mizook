@@ -2,8 +2,9 @@ import { Effect } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 import puppeteer from "@cloudflare/puppeteer";
-import type { ChannelInterface } from "../../core/channel";
-import { createScopedLogger } from "../../core/logger";
+import type { MizookAgent } from "../../core/agent";
+import type { ChatTarget } from "../../core/channel";
+import { ChannelRegistry } from "../../core/channel-registry";
 
 interface BrowserEnv {
   BROWSER: Fetcher;
@@ -46,31 +47,38 @@ async function takeScreenshot(
     if (!b64) throw new Error(`Screenshot of ${url} returned empty result`);
     return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   } finally {
-    await browser.close().catch((err) => {
-      createScopedLogger({ action: "browser_close_error" }).error(err);
-    });
+    // Best-effort cleanup; a close failure isn't actionable and shouldn't fail the turn.
+    await browser.close().catch(() => {});
   }
 }
 
 async function storeAndSend(
   env: BrowserEnv,
-  channel: ChannelInterface,
+  agent: MizookAgent,
   img: Uint8Array,
-  target: { platform: string; chatId: string },
+  target: ChatTarget,
   url: string,
   caption?: string,
 ) {
   const key = `screenshots/${target.platform}/${target.chatId}/${Date.now()}.png`;
   await env.SCREENSHOTS.put(key, img, { httpMetadata: { contentType: "image/png" } });
-  await Effect.runPromise(channel.postPhoto(target, img, caption ?? `Screenshot of ${url}`));
+  await agent.run(
+    ChannelRegistry.use((r) =>
+      r
+        .get(target.platform)
+        .pipe(Effect.flatMap((ch) => ch.postPhoto(target, img, caption ?? `Screenshot of ${url}`))),
+    ),
+  );
   return key;
 }
 
-export function createBrowserTools(
-  env: BrowserEnv,
-  channel: ChannelInterface,
-  getTarget: () => { platform: string; chatId: string } | null,
-) {
+export function createBrowserTools(agent: MizookAgent) {
+  const env = agent.appEnv as unknown as BrowserEnv;
+  const getTarget = (): ChatTarget | null => {
+    const turn = agent.getTurnState();
+    return turn ? { platform: turn.channelType, chatId: turn.chatId } : null;
+  };
+
   return {
     browser_screenshot: tool({
       description:
@@ -114,7 +122,7 @@ export function createBrowserTools(
         const target = getTarget();
         if (!target) return "No active chat to send to.";
         const img = await takeScreenshot(env, params.url, params);
-        const key = await storeAndSend(env, channel, img, target, params.url, params.caption);
+        const key = await storeAndSend(env, agent, img, target, params.url, params.caption);
         return `Screenshot of ${params.url} captured and sent. R2 key: ${key}`;
       },
     }),
@@ -133,7 +141,13 @@ export function createBrowserTools(
         const obj = await env.SCREENSHOTS.get(r2Key);
         if (!obj) return "Screenshot not found or expired.";
         const buf = new Uint8Array(await obj.arrayBuffer());
-        await Effect.runPromise(channel.postPhoto(target, buf, caption ?? "Screenshot"));
+        await agent.run(
+          ChannelRegistry.use((r) =>
+            r
+              .get(target.platform)
+              .pipe(Effect.flatMap((ch) => ch.postPhoto(target, buf, caption ?? "Screenshot"))),
+          ),
+        );
         return "Sent screenshot to chat.";
       },
     }),

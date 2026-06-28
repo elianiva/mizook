@@ -1,43 +1,52 @@
-import { Effect } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText, type LanguageModel } from "ai";
 import type { Env } from "./env";
-import { ModelTimeoutError, ModelRequestError } from "./errors";
-import { createScopedLogger } from "./logger";
+import { WorkersEnv } from "./workers-env";
+import { ModelRequestError } from "./errors";
 
 export const DEFAULT_MODEL = "mimo-v2.5";
-
 const TIMEOUT_MS = 60_000;
 
-export function createModel(env: Env) {
+// Native timeout via AbortSignal — no Effect.fiber-boundary wrapper around a
+// fetch the AI SDK owns. This is the sole impl; the Model service wraps it and
+// adds the summarize Effect surface.
+export function createModel(env: Env): LanguageModel {
   const opencode = createOpenAICompatible({
     baseURL: "https://opencode.ai/zen/go/v1",
     name: "Opencode Go",
     apiKey: env.OPENCODE_GO_API_KEY,
-    // Effect.runPromise creates a fiber boundary inside what the AI SDK expects
-    // as a plain fetch. Cancellation and error propagation may differ from a
-    // standard fetch — monitor for race conditions or unhandled rejections.
-    fetch: (url, options) => {
-      const log = createScopedLogger({ action: "model_request" });
-      return Effect.tryPromise({
-        try: (signal) => fetch(url, { ...options, signal }) as Promise<Response>,
-        catch: (cause) => {
-          if (cause instanceof Error) log.error(cause);
-          else log.set({ detail: { error: String(cause) } });
-          return new ModelRequestError({ cause });
-        },
-      }).pipe(
-        Effect.timeout(TIMEOUT_MS),
-        Effect.catchTag("TimeoutError", () => {
-          log.set({ detail: { error: "timeout", timeoutMs: TIMEOUT_MS } });
-          return Effect.fail(new ModelTimeoutError({ timeoutMs: TIMEOUT_MS }));
-        }),
-        Effect.tap((response) =>
-          Effect.sync(() => log.set({ detail: { status: response.status } })),
-        ),
-        Effect.ensuring(Effect.sync(() => log.emit({ message: "model_request_done" }))),
-        Effect.runPromise,
-      );
-    },
+    fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }),
   });
   return opencode.chatModel(env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL);
+}
+
+type GenerateResult = Awaited<ReturnType<typeof generateText>>;
+
+export class Model extends Context.Service<
+  Model,
+  {
+    readonly chatModel: LanguageModel;
+    summarize(prompt: string): Effect.Effect<string, ModelRequestError>;
+  }
+>()("mizook/Model") {
+  static readonly layer = Layer.effect(Model)(
+    Effect.gen(function* () {
+      const { env } = yield* WorkersEnv;
+      const chatModel = createModel(env);
+
+      const summarize = (prompt: string) =>
+        Effect.tryPromise({
+          try: () =>
+            generateText({
+              prompt,
+              model: chatModel,
+              abortSignal: AbortSignal.timeout(TIMEOUT_MS),
+            }) as Promise<GenerateResult>,
+          catch: (cause) => new ModelRequestError({ cause }),
+        }).pipe(Effect.map((r) => r.text));
+
+      return Model.of({ chatModel, summarize });
+    }),
+  );
 }

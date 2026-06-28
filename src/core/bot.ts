@@ -1,53 +1,43 @@
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { Chat } from "chat";
-import { getAgentByName } from "agents";
+import type { Thread, Message, SlashCommandEvent, Adapter } from "chat";
+import { createCloudflareState } from "chat-state-cloudflare-do";
 import type { Env } from "./env";
-import type { MizookAgent } from "./agent";
-import type { StateAdapter, Thread, Message, SlashCommandEvent } from "chat";
-import type { ChannelInterface } from "./channel";
-import { AgentLookupError, AgentRpcError } from "./errors";
-import { createScopedLogger } from "./logger";
+import type { AppRuntime, AppServices } from "./runtime";
+import { ChannelRegistry } from "./channel-registry";
+import { AgentGateway } from "./agent-gateway";
+import { AllowedUsers } from "./allowed-users";
+import { AgentRpcError } from "./errors";
 
-interface BotConfig {
-  env: Env;
-  state: StateAdapter;
-  channels: Record<string, ChannelInterface>;
-  dedupeTtlMs?: number;
+interface Postable {
+  post(message: string): Promise<unknown>;
 }
 
-export function createBot(config: BotConfig) {
-  const { env, state, channels, dedupeTtlMs = 600_000 } = config;
-
-  const adapters = Object.fromEntries(
-    Object.entries(channels).map(([name, ch]) => [name, ch.adapter]),
+// Chat reset shared by the message-path "/reset" command and the slash-command
+// "/reset". Splits the postable (thread or slash channel) from routing so both
+// entry points reuse one effect.
+const resetCore = (postable: Postable, threadId: string) =>
+  Effect.gen(function* () {
+    const { channelName, chatId } = yield* ChannelRegistry.use((r) => r.resolve(threadId));
+    const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+    yield* Effect.tryPromise(() => agent.resetChat());
+    yield* Effect.tryPromise(() => postable.post("Chat reset. Starting fresh."));
+    yield* Effect.logInfo(`reset_done chat_id=${chatId} channel=${channelName}`);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.gen(function* () {
+        yield* Effect.logError("reset_failed", cause);
+        yield* Effect.tryPromise(() =>
+          postable.post(`Reset failed: ${cause instanceof Error ? cause.message : String(cause)}`),
+        ).pipe(Effect.catchCause(() => Effect.void));
+      }),
+    ),
   );
 
-  const bot = new Chat({
-    userName: "mizook",
-    adapters,
-    state,
-    dedupeTtlMs,
-  });
-
-  const resolveChannel = (threadId: string) => {
-    const channelName = threadId.split(":")[0];
-    const channel = channels[channelName];
-    if (!channel) throw new Error(`Unknown channel: ${channelName}`);
-    return { channel, channelName };
-  };
-
-  const handleTurn = Effect.fnUntraced(function* (
-    thread: Thread,
-    message: Message,
-    log: ReturnType<typeof createScopedLogger>,
-  ) {
-    const { channel, channelName } = resolveChannel(thread.id);
-    const { chatId } = channel.decodeThreadId(thread.id);
-    // chatId is used for DO routing — keeps the same agent instance per chat
-    const agent = yield* Effect.tryPromise({
-      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
-      catch: (cause) => new AgentLookupError({ cause }),
-    });
+const handleTurn = (thread: Thread, message: Message) =>
+  Effect.gen(function* () {
+    const { channelName, chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
+    const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
     yield* Effect.tryPromise({
       try: () =>
         agent.submitTurn({
@@ -59,159 +49,105 @@ export function createBot(config: BotConfig) {
         }),
       catch: (cause) => new AgentRpcError({ cause }),
     });
-    log.set({ detail: { turn_submitted: true, thread_id: thread.id, chat_id: chatId } });
+    yield* Effect.logInfo(`turn_submitted chat_id=${chatId} channel=${channelName}`);
+  }).pipe(Effect.catchCause((cause) => Effect.logError("turn_error", cause)));
+
+interface TurnMode {
+  readonly checkAccess: boolean;
+  readonly handleStart: boolean;
+}
+
+const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =>
+  Effect.gen(function* () {
+    if (mode.checkAccess) {
+      const ok = yield* AllowedUsers.use((a) =>
+        Effect.sync(() => a.has(Number(message.author.userId))),
+      );
+      if (!ok) {
+        yield* Effect.tryPromise(() => thread.post("Access denied."));
+        yield* Effect.logInfo("access_denied");
+        return;
+      }
+    }
+    yield* Effect.tryPromise(() => thread.subscribe());
+    const text = message.text.trim();
+
+    if (text === "/start" && mode.handleStart) {
+      yield* Effect.tryPromise(() =>
+        thread.post("Hello. I am Mizook. Send me a message and I will respond."),
+      );
+      yield* Effect.logInfo("command_start");
+      return;
+    }
+
+    if (text === "/reset") {
+      yield* resetCore(thread, thread.id);
+      return;
+    }
+
+    yield* handleTurn(thread, message);
   });
 
-  const makeHandler = (opts: {
-    action: string;
-    checkAccess: boolean;
-    handleStart: boolean;
-    allowedUserIds: Set<number>;
-  }) => {
-    return (thread: Thread, message: Message) => {
-      const log = createScopedLogger({
-        action: opts.action,
-        thread_id: thread.id,
-        user_id: message.author.userId,
-      });
-
-      return Effect.gen(function* () {
-        if (opts.checkAccess) {
-          const uid = Number(message.author.userId);
-          if (!opts.allowedUserIds.has(uid)) {
-            yield* Effect.tryPromise(() => thread.post("Access denied."));
-            log.set({ detail: { access_denied: true } });
-            return;
-          }
-        }
-
-        yield* Effect.tryPromise(() => thread.subscribe());
-
-        const text = message.text.trim();
-
-        if (opts.handleStart && text === "/start") {
-          yield* Effect.tryPromise(() =>
-            thread.post("Hello. I am Mizook. Send me a message and I will respond."),
-          );
-          log.set({ detail: { command: "start" } });
-          return;
-        }
-
-        if (text === "/reset") {
-          yield* handleReset(thread, log);
-          log.set({ detail: { command: "reset" } });
-          return;
-        }
-
-        yield* handleTurn(thread, message, log);
-      }).pipe(
-        Effect.tap(() => Effect.sync(() => log.emit({ message: `${opts.action}_done` }))),
-        Effect.catch((error) => {
-          log.error(error);
-          log.emit({ message: `${opts.action}_error` });
-          return Effect.logError(`${opts.action} error`, error);
-        }),
-        Effect.runPromise,
+const dispatchSlash = (event: SlashCommandEvent) =>
+  Effect.gen(function* () {
+    const ok = yield* AllowedUsers.use((a) => Effect.sync(() => a.has(Number(event.user.userId))));
+    if (!ok) {
+      yield* Effect.tryPromise(() => event.channel.post("Access denied."));
+      yield* Effect.logInfo("slash_access_denied");
+      return;
+    }
+    if (event.command === "/start") {
+      yield* Effect.tryPromise(() =>
+        event.channel.post("Hello. I am Mizook. Send me a message and I will respond."),
       );
-    };
-  };
+      yield* Effect.logInfo("slash_start_done");
+      return;
+    }
+    yield* resetCore(event.channel, event.channel.id);
+    yield* Effect.logInfo("slash_reset_done");
+  }).pipe(Effect.catchCause((cause) => Effect.logError("slash_error", cause)));
 
-  const handleReset = Effect.fnUntraced(function* (
-    thread: Thread,
-    log: ReturnType<typeof createScopedLogger>,
-  ) {
-    const { channel, channelName } = resolveChannel(thread.id);
-    const { chatId } = channel.decodeThreadId(thread.id);
-    // Use chatId to find the same DO instance the agent is using per-turn
-    const agent = yield* Effect.tryPromise({
-      try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
-      catch: (cause) => new AgentLookupError({ cause }),
-    });
-    yield* Effect.tryPromise(() => agent.resetChat()).pipe(
-      Effect.tap(() => Effect.tryPromise(() => thread.post("Chat reset. Starting fresh."))),
-      Effect.tapError((error) =>
-        Effect.tryPromise(() =>
-          thread.post(`Reset failed: ${error instanceof Error ? error.message : String(error)}`),
-        ),
+export function createBot(runtime: AppRuntime, env: Env): Chat {
+  const adapters = runtime.runSync(
+    ChannelRegistry.use((r) => Effect.sync(() => r.adapters)),
+  ) as Record<string, Adapter>;
+  const state = createCloudflareState({ namespace: env.CHAT_STATE });
+  const chat = new Chat({ userName: "mizook", adapters, state, dedupeTtlMs: 600_000 });
+
+  const handle = (eff: Effect.Effect<void, unknown, AppServices>) => {
+    void runtime.runPromise(eff).catch(() => {});
+  };
+  const annotate =
+    (values: Record<string, unknown>) =>
+    <A, E, R>(eff: Effect.Effect<A, E, R>) =>
+      Effect.annotateLogs(eff, values);
+
+  chat.onDirectMessage((t, m) =>
+    handle(
+      dispatchMessage({ checkAccess: true, handleStart: true })(t, m).pipe(
+        annotate({ thread_id: t.id, user_id: m.author.userId }),
       ),
-    );
-    log.set({ detail: { reset: true, chat_id: chatId, channel: channelName } });
-  });
-
-  // Parsed at module scope — stable across requests since env vars rarely change.
-  // A cold start is required to pick up new values, which is fine for an allowlist.
-  const parseAllowedIds = (raw: string) => {
-    try {
-      return new Set(
-        Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
-          raw.split(/[\s,]+/).filter(Boolean),
-        ).filter(Number.isSafeInteger),
-      );
-    } catch {
-      return new Set<number>();
-    }
-  };
-
-  const allowedUserIds = parseAllowedIds(env.TELEGRAM_ALLOWED_USER_IDS);
-
-  bot.onDirectMessage(
-    makeHandler({ action: "on_dm", checkAccess: true, handleStart: true, allowedUserIds }),
+    ),
   );
-  bot.onNewMention(
-    makeHandler({ action: "on_mention", checkAccess: true, handleStart: false, allowedUserIds }),
+  chat.onNewMention((t, m) =>
+    handle(
+      dispatchMessage({ checkAccess: true, handleStart: false })(t, m).pipe(
+        annotate({ thread_id: t.id, user_id: m.author.userId }),
+      ),
+    ),
   );
-  bot.onSubscribedMessage(
-    makeHandler({
-      action: "on_subscribed",
-      checkAccess: false,
-      handleStart: false,
-      allowedUserIds,
-    }),
+  chat.onSubscribedMessage((t, m) =>
+    handle(
+      dispatchMessage({ checkAccess: false, handleStart: false })(t, m).pipe(
+        annotate({ thread_id: t.id, user_id: m.author.userId }),
+      ),
+    ),
+  );
+  chat.onSlashCommand(["start", "reset"], (event) =>
+    handle(
+      dispatchSlash(event).pipe(annotate({ command: event.command, user_id: event.user.userId })),
+    ),
   );
 
-  bot.onSlashCommand(["start", "reset"], async (event: SlashCommandEvent) => {
-    const log = createScopedLogger({
-      action: `slash_${event.command}`,
-      user_id: event.user.userId,
-      channel_id: event.channel.id,
-    });
-
-    try {
-      const uid = Number(event.user.userId);
-      if (!allowedUserIds.has(uid)) {
-        await event.channel.post("Access denied.");
-        log.set({ detail: { access_denied: true } });
-        log.emit({ message: "slash_access_denied" });
-        return;
-      }
-
-      if (event.command === "/start") {
-        await event.channel.post("Hello. I am Mizook. Send me a message and I will respond.");
-        log.set({ detail: { command: "start" } });
-        log.emit({ message: "slash_start_done" });
-        return;
-      }
-
-      // /reset
-      const { channel, channelName } = resolveChannel(event.channel.id);
-      const { chatId } = channel.decodeThreadId(event.channel.id);
-      const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId);
-      try {
-        await agent.resetChat();
-        await event.channel.post("Chat reset. Starting fresh.");
-      } catch (error) {
-        await event.channel.post(
-          `Reset failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        throw error;
-      }
-      log.set({ detail: { reset: true, chat_id: chatId, channel: channelName } });
-      log.emit({ message: "slash_reset_done" });
-    } catch (error) {
-      log.error(error instanceof Error ? error : new Error(String(error)));
-      log.emit({ message: `slash_${event.command}_error` });
-    }
-  });
-
-  return bot;
+  return chat;
 }

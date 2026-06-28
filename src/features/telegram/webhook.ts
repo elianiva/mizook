@@ -1,18 +1,13 @@
 import type { Env } from "../../core/env";
+import { getRuntime } from "../../core/runtime";
 import { createBot } from "../../core/bot";
-import { createCloudflareState } from "chat-state-cloudflare-do";
-import { createTelegramChannel } from "./channel";
 
 export async function handleTelegramWebhook(
   request: Request,
   env: Env,
   ctx: { waitUntil: (p: Promise<unknown>) => void },
 ): Promise<Response> {
-  const state = createCloudflareState({ namespace: env.CHAT_STATE });
-  const bot = createBot({
-    env,
-    state,
-    channels: { telegram: createTelegramChannel(env.BOT_TOKEN) },
-  });
+  const runtime = getRuntime(env);
+  const bot = createBot(runtime, env);
   return bot.webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) });
 }
