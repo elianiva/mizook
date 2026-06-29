@@ -8,7 +8,7 @@ import { ChannelRegistry } from "../../core/channel-registry";
 
 interface BrowserEnv {
   BROWSER: Fetcher;
-  SCREENSHOTS: R2Bucket;
+  MIZOOK_R2: R2Bucket;
 }
 
 async function takeScreenshot(
@@ -61,7 +61,7 @@ async function storeAndSend(
   caption?: string,
 ) {
   const key = `screenshots/${target.platform}/${target.chatId}/${Date.now()}.png`;
-  await env.SCREENSHOTS.put(key, img, { httpMetadata: { contentType: "image/png" } });
+  await env.MIZOOK_R2.put(key, img, { httpMetadata: { contentType: "image/png" } });
   await agent.run(
     ChannelRegistry.use((r) =>
       r
@@ -100,7 +100,7 @@ export function createBrowserTools(agent: MizookAgent) {
 
         const img = await takeScreenshot(env, params.url, params);
         const key = `screenshots/${platform}/${id}/${Date.now()}.png`;
-        await env.SCREENSHOTS.put(key, img, { httpMetadata: { contentType: "image/png" } });
+        await env.MIZOOK_R2.put(key, img, { httpMetadata: { contentType: "image/png" } });
         return `Screenshot taken of ${params.url}. R2 key: ${key}. Use send_photo with this key to send it.`;
       },
     }),
@@ -138,7 +138,7 @@ export function createBrowserTools(agent: MizookAgent) {
       execute: async ({ r2Key, caption }) => {
         const target = getTarget();
         if (!target) return "No active chat to send to.";
-        const obj = await env.SCREENSHOTS.get(r2Key);
+        const obj = await env.MIZOOK_R2.get(r2Key);
         if (!obj) return "Screenshot not found or expired.";
         const buf = new Uint8Array(await obj.arrayBuffer());
         await agent.run(

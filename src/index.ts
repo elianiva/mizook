@@ -4,6 +4,7 @@ import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
 import { handleTelegramWebhook } from "./features/telegram/webhook";
 import { serveScreenshot } from "./features/browser/routes";
+import { serveArtifact } from "./features/artifacts/routes";
 
 export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
@@ -20,6 +21,11 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) =>
     }
     if (pathname === "/screenshots/") {
       return yield* Effect.tryPromise(() => serveScreenshot(url, env)).pipe(
+        Effect.map((r) => r as Response),
+      );
+    }
+    if (pathname.startsWith("/artifacts/")) {
+      return yield* Effect.tryPromise(() => serveArtifact(url, env)).pipe(
         Effect.map((r) => r as Response),
       );
     }

@@ -6,4 +6,5 @@ export interface Env extends Cloudflare.Env {
   EXA_API_KEY?: string;
   CF_API_TOKEN?: string;
   TIMEZONE?: string;
+  BASE_URL?: string;
 }

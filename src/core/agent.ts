@@ -22,6 +22,7 @@ import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
+import { createArtifactTools } from "../features/artifacts/tools";
 
 interface TurnState {
   readonly channelType: string;
@@ -106,6 +107,7 @@ export class MizookAgent extends Think<Env> {
     return {
       ...createReminderTools(this),
       ...createBrowserTools(this),
+      ...createArtifactTools(this),
     };
   }
 

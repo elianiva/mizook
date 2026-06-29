@@ -10,8 +10,8 @@ binding = "AI"
 binding = "BROWSER"
 
 [[r2_buckets]]
-binding = "SCREENSHOTS"
-bucket_name = "mizook-screenshots"
+binding = "MIZOOK_R2"
+bucket_name = "mizook-r2"
 
 [[durable_objects.bindings]]
 class_name = "MizookAgent"
