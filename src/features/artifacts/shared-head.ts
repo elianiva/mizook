@@ -4,7 +4,6 @@
  */
 const sharedCss = `
 @import "tailwindcss";
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Nunito+Sans:wght@400;500;600;700&display=swap");
 
 @theme {
   --font-heading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
@@ -33,6 +32,7 @@ const sharedCss = `
 
 export function getSharedHeadContent(): string {
   return `
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Nunito+Sans:wght@400;500;600;700&display=swap">
     <script src="/assets/tailwind-browser.js"></script>
     <script src="/assets/alpine.min.js" defer></script>
     <style type="text/tailwindcss">${sharedCss}</style>
