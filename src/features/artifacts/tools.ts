@@ -24,7 +24,7 @@ export function createArtifactTools(agent: MizookAgent) {
           httpMetadata: { contentType: "text/html" },
         });
 
-        const base = agent.env.BASE_URL ?? "https://mizook.example.com";
+        const base = agent.appEnv.BASE_URL ?? "https://mzk.elianiva.com";
         return `${base}/artifacts/${name}`;
       },
     }),
