@@ -6,6 +6,7 @@ import {
   type ChatResponseResult,
   type Session,
   type TurnContext,
+  type ToolCallResultContext,
 } from "@cloudflare/think";
 import { AgentContextProvider, AgentSearchProvider } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
@@ -220,6 +221,56 @@ export class MizookAgent extends Think<Env> {
   override onChunk({ chunk }: ChunkContext) {
     if (chunk.type !== "text-delta" || !chunk.text) return;
     void this.writer?.write(chunk.text);
+  }
+
+  override afterToolCall(ctx: ToolCallResultContext) {
+    const turn = this.currentTurn;
+    if (!turn) return;
+
+    const status = ctx.success
+      ? this.getToolSuccessMessage(ctx.toolName, ctx.output)
+      : `⚠️ ${ctx.toolName} failed`;
+
+    if (status) {
+      void this.runtime.runPromise(
+        ChannelRegistry.use((r) =>
+          r
+            .get(turn.channelType)
+            .pipe(
+              Effect.flatMap((ch) =>
+                ch.postNotification({ platform: turn.channelType, chatId: turn.chatId }, status),
+              ),
+            ),
+        ),
+      );
+    }
+  }
+
+  private getToolSuccessMessage(toolName: string, output: unknown): string | null {
+    const result = typeof output === "string" ? output : JSON.stringify(output);
+    switch (toolName) {
+      case "browser_screenshot":
+        return "📸 Screenshot captured";
+      case "browser_screenshot_and_send":
+        return "📸 Screenshot sent";
+      case "send_photo":
+        return "📷 Photo sent";
+      case "set_reminder":
+        return result?.includes("Recurring") ? "🔁 Recurring reminder set" : "⏰ Reminder set";
+      case "list_reminders":
+        return null; // Don't notify for list operations
+      case "delete_reminder":
+        return "🗑️ Reminder deleted";
+      case "write_artifact":
+      case "update_artifact":
+        return "📄 Artifact saved";
+      case "list_artifacts":
+        return null;
+      case "delete_artifact":
+        return "🗑️ Artifact deleted";
+      default:
+        return null;
+    }
   }
 
   private cleanupStream() {
