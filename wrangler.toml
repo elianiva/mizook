@@ -22,7 +22,6 @@ class_name = "ChatStateDO"
 name = "CHAT_STATE"
 
 [[migrations]]
-new_sqlite_classes = ["MizookAgent"]
 tag = "v1"
 
 [[migrations]]
@@ -30,11 +29,9 @@ new_sqlite_classes = ["ChatStateDO"]
 tag = "v2"
 
 [[migrations]]
-new_sqlite_classes = ["MizookAgent"]
 tag = "v3"
 
 [[migrations]]
-deleted_classes = ["DiscordGatewayDO"]
 tag = "v4"
 
 [observability.logs]
