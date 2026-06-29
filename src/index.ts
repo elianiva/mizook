@@ -19,7 +19,10 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) =>
       Match.when("/telegram", () =>
         Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
       ),
-      Match.when("/assets/", () => Effect.tryPromise(() => serveAsset(url, env))),
+      Match.when(
+        (p) => p.startsWith("/assets/"),
+        () => Effect.tryPromise(() => serveAsset(url, env)),
+      ),
       Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
       Match.when(
         (p) => p.startsWith("/artifacts/"),
