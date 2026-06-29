@@ -1,5 +1,6 @@
 import type { Env } from "../../core/env";
 import { injectSharedHead } from "./shared-head";
+import { renderArtifactList } from "./templates/list";
 
 export async function serveArtifact(url: URL, env: Env): Promise<Response> {
   const prefix = "/artifacts/";
@@ -41,46 +42,9 @@ export async function listArtifacts(env: Env): Promise<Response> {
 
   items.sort((a, b) => a.name.localeCompare(b.name));
 
-  const rows = items
-    .map(
-      (item) => `
-        <tr class="border-b border-border">
-          <td class="py-3 w-1/2"><a href="${item.href}" class="text-foreground hover:underline">${item.name}</a></td>
-          <td class="py-3 w-[30%] text-muted-foreground text-sm">${item.modified}</td>
-          <td class="py-3 w-[20%] text-muted-foreground text-sm text-right">${formatSize(item.size)}</td>
-        </tr>`,
-    )
-    .join("");
-
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>mizook</title>
-  <script src="/assets/tailwind-browser.js"></script>
-  <script src="/assets/alpine.min.js" defer></script>
-  <link rel="stylesheet" href="/assets/shared.css">
-</head>
-<body class="bg-background text-foreground font-sans antialiased">
-  <main class="max-w-xl mx-auto px-8 py-16">
-    <h1 class="font-heading text-2xl font-medium tracking-tight mb-1">mizook</h1>
-    <p class="text-muted-foreground text-sm mb-12">${items.length} artifact${items.length === 1 ? "" : "s"}</p>
-    <table class="w-full">
-      <tbody>
-        ${rows || '<tr><td class="py-6 text-muted-foreground italic text-sm">No artifacts yet.</td></tr>'}
-      </tbody>
-    </table>
-  </main>
-</body>
-</html>`;
+  const html = renderArtifactList(items);
 
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
