@@ -3,8 +3,6 @@
  * Ensures consistent styling via Tailwind v4 + Alpine.js + custom theme.
  */
 const sharedCss = `
-@import "tailwindcss";
-
 @theme {
   --font-heading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Nunito Sans", ui-sans-serif, system-ui, sans-serif;
