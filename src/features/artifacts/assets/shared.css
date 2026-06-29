@@ -24,23 +24,3 @@
   --radius: 0.625rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: oklch(0.145 0.008 326);
-    --color-foreground: oklch(0.985 0 0);
-    --color-card: oklch(0.212 0.019 322.12);
-    --color-card-foreground: oklch(0.985 0 0);
-    --color-muted: oklch(0.263 0.024 320.12);
-    --color-muted-foreground: oklch(0.711 0.019 323.02);
-    --color-primary: oklch(0.459 0.187 3.815);
-    --color-primary-foreground: oklch(0.971 0.014 343.198);
-    --color-secondary: oklch(0.274 0.006 286.033);
-    --color-secondary-foreground: oklch(0.985 0 0);
-    --color-accent: oklch(0.263 0.024 320.12);
-    --color-accent-foreground: oklch(0.985 0 0);
-    --color-destructive: oklch(0.704 0.191 22.216);
-    --color-border: oklch(1 0 0 / 10%);
-    --color-input: oklch(1 0 0 / 15%);
-    --color-ring: oklch(0.542 0.034 322.5);
-  }
-}
