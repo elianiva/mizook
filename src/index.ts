@@ -4,13 +4,13 @@ import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
 import { handleTelegramWebhook } from "./features/telegram/webhook";
 import { serveScreenshot } from "./features/browser/routes";
-import { serveArtifact } from "./features/artifacts/routes";
+import { serveArtifact, listArtifacts } from "./features/artifacts/routes";
 
 export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
 
 const route = (request: Request, env: Env, ctx: ExecutionContext) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
@@ -23,9 +23,10 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) =>
         (p) => p.startsWith("/artifacts/"),
         () => Effect.tryPromise(() => serveArtifact(url, env)),
       ),
+      Match.when("/", () => Effect.tryPromise(() => listArtifacts(env))),
       Match.when("/health", () => Effect.succeed(new Response("OK", { status: 200 }))),
       Match.orElse(() =>
-        Effect.gen(function*() {
+        Effect.gen(function* () {
           yield* Effect.logInfo(`not_found path=${pathname}`);
           return new Response("Not found", { status: 404 });
         }),
@@ -44,7 +45,7 @@ export default {
         Effect.annotateLogs({ method: request.method, path: url.pathname }),
         Effect.tap((resp) => Effect.logInfo(`http_response status=${resp.status}`)),
         Effect.catchCause((cause) =>
-          Effect.gen(function*() {
+          Effect.gen(function* () {
             yield* Effect.logError("http_request_failed", cause);
             return new Response("Internal error", { status: 500 });
           }),
