@@ -24,6 +24,7 @@ import { browserPrompt } from "../features/browser/prompts/browser";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
 import { createArtifactTools } from "../features/artifacts/tools";
+import { artifactsPrompt } from "../features/artifacts/prompts/artifacts";
 
 interface TurnState {
   readonly channelType: string;
@@ -73,7 +74,12 @@ export class MizookAgent extends Think<Env> {
 
   getSystemPrompt() {
     const tz = this.getConfiguredTimezone();
-    return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
+    return [
+      basePrompt,
+      remindersPrompt.replace("{{TIMEZONE}}", tz),
+      browserPrompt,
+      artifactsPrompt,
+    ].join("\n\n");
   }
 
   configureSession(session: Session) {

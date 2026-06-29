@@ -5,6 +5,7 @@ import { getRuntime } from "./core/runtime";
 import { handleTelegramWebhook } from "./features/telegram/webhook";
 import { serveScreenshot } from "./features/browser/routes";
 import { serveArtifact, listArtifacts } from "./features/artifacts/routes";
+import { serveAsset } from "./features/artifacts/asset-routes";
 
 export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
@@ -18,6 +19,7 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) =>
       Match.when("/telegram", () =>
         Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
       ),
+      Match.when("/assets/", () => Effect.tryPromise(() => serveAsset(url, env))),
       Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
       Match.when(
         (p) => p.startsWith("/artifacts/"),

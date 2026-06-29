@@ -1,4 +1,5 @@
 import type { Env } from "../../core/env";
+import { injectSharedHead } from "./shared-head";
 
 export async function serveArtifact(url: URL, env: Env): Promise<Response> {
   const prefix = "/artifacts/";
@@ -13,10 +14,14 @@ export async function serveArtifact(url: URL, env: Env): Promise<Response> {
     return new Response("Not found", { status: 404 });
   }
 
+  const rawHtml = await obj.text();
+  const html = injectSharedHead(rawHtml);
+
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("Cache-Control", "public, max-age=3600");
-  return new Response(obj.body, { headers });
+  headers.set("Content-Type", "text/html; charset=utf-8");
+  return new Response(html, { headers });
 }
 
 export async function listArtifacts(env: Env): Promise<Response> {
@@ -34,16 +39,15 @@ export async function listArtifacts(env: Env): Promise<Response> {
     return { name, size, modified, href: `${base}/artifacts/${encodeURIComponent(name)}` };
   });
 
-  // Sort alphabetically by name
   items.sort((a, b) => a.name.localeCompare(b.name));
 
   const rows = items
     .map(
       (item) => `
-        <tr>
-          <td><a href="${item.href}">${item.name}</a></td>
-          <td>${item.modified}</td>
-          <td>${formatSize(item.size)}</td>
+        <tr class="border-b border-border">
+          <td class="py-3 w-1/2"><a href="${item.href}" class="text-foreground hover:underline">${item.name}</a></td>
+          <td class="py-3 w-[30%] text-muted-foreground text-sm">${item.modified}</td>
+          <td class="py-3 w-[20%] text-muted-foreground text-sm text-right">${formatSize(item.size)}</td>
         </tr>`,
     )
     .join("");
@@ -52,92 +56,18 @@ export async function listArtifacts(env: Env): Promise<Response> {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mizook</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: 'Georgia', 'Times New Roman', serif;
-      color: #2F3437;
-      background: #FBFBFA;
-      line-height: 1.6;
-      padding: 4rem 2rem;
-    }
-
-    main {
-      max-width: 640px;
-      margin: 0 auto;
-    }
-
-    h1 {
-      font-size: 1.5rem;
-      font-weight: 400;
-      letter-spacing: -0.02em;
-      margin-bottom: 0.25rem;
-    }
-
-    .subtitle {
-      font-size: 0.875rem;
-      color: #787774;
-      margin-bottom: 3rem;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    tr {
-      border-bottom: 1px solid #EAEAEA;
-    }
-
-    td {
-      padding: 0.75rem 0;
-      font-size: 0.9375rem;
-    }
-
-    td:first-child {
-      width: 50%;
-    }
-
-    td:nth-child(2) {
-      width: 30%;
-      color: #787774;
-      font-size: 0.8125rem;
-    }
-
-    td:last-child {
-      width: 20%;
-      color: #787774;
-      font-size: 0.8125rem;
-      text-align: right;
-    }
-
-    a {
-      color: #2F3437;
-      text-decoration: none;
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
-
-    .empty {
-      color: #787774;
-      font-style: italic;
-      font-size: 0.9375rem;
-      padding: 1.5rem 0;
-    }
-  </style>
+  <script src="/assets/tailwind-browser.js"></script>
+  <script src="/assets/alpine.min.js" defer></script>
+  <link rel="stylesheet" href="/assets/shared.css">
 </head>
-<body>
-  <main>
-    <h1>mizook</h1>
-    <p class="subtitle">${items.length} artifact${items.length === 1 ? "" : "s"}</p>
-    <table>
+<body class="bg-background text-foreground font-sans antialiased">
+  <main class="max-w-xl mx-auto px-8 py-16">
+    <h1 class="font-heading text-2xl font-medium tracking-tight mb-1">mizook</h1>
+    <p class="text-muted-foreground text-sm mb-12">${items.length} artifact${items.length === 1 ? "" : "s"}</p>
+    <table class="w-full">
       <tbody>
-        ${rows || '<tr><td class="empty">No artifacts yet.</td></tr>'}
+        ${rows || '<tr><td class="py-6 text-muted-foreground italic text-sm">No artifacts yet.</td></tr>'}
       </tbody>
     </table>
   </main>
