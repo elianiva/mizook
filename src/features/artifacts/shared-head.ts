@@ -3,6 +3,7 @@
  * Ensures consistent styling via Tailwind v4 + Alpine.js + custom theme.
  */
 const sharedCss = `
+@import "tailwindcss";
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Nunito+Sans:wght@400;500;600;700&display=swap");
 
 @theme {
