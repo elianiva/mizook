@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { MizookAgent } from "../../core/agent";
 
 export function createArtifactTools(agent: MizookAgent) {
-
   return {
     write_artifact: tool({
       description:
@@ -11,12 +10,8 @@ export function createArtifactTools(agent: MizookAgent) {
         "Use this to generate standalone HTML pages (calculators, dashboards, reports, etc.) " +
         "that the user can open in their browser.",
       inputSchema: z.object({
-        name: z
-          .string()
-          .describe("Filename for the artifact (e.g. 'calculator.html')"),
-        content: z
-          .string()
-          .describe("Full HTML content of the artifact"),
+        name: z.string().describe("Filename for the artifact (e.g. 'calculator.html')"),
+        content: z.string().describe("Full HTML content of the artifact"),
       }),
       execute: async ({ name, content }) => {
         const key = `artifacts/${name}`;

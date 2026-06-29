@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Match } from "effect";
 import { routeAgentRequest } from "agents";
 import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
@@ -10,30 +10,27 @@ export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
 
 const route = (request: Request, env: Env, ctx: ExecutionContext) =>
-  Effect.gen(function* () {
+  Effect.gen(function*() {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    if (pathname === "/telegram") {
-      return yield* Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)).pipe(
-        Effect.map((r) => r as Response),
-      );
-    }
-    if (pathname === "/screenshots/") {
-      return yield* Effect.tryPromise(() => serveScreenshot(url, env)).pipe(
-        Effect.map((r) => r as Response),
-      );
-    }
-    if (pathname.startsWith("/artifacts/")) {
-      return yield* Effect.tryPromise(() => serveArtifact(url, env)).pipe(
-        Effect.map((r) => r as Response),
-      );
-    }
-    if (pathname === "/health") {
-      return new Response("OK", { status: 200 });
-    }
-    yield* Effect.logInfo(`not_found path=${pathname}`);
-    return new Response("Not found", { status: 404 });
+    return yield* Match.value(pathname).pipe(
+      Match.when("/telegram", () =>
+        Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
+      ),
+      Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
+      Match.when(
+        (p) => p.startsWith("/artifacts/"),
+        () => Effect.tryPromise(() => serveArtifact(url, env)),
+      ),
+      Match.when("/health", () => Effect.succeed(new Response("OK", { status: 200 }))),
+      Match.orElse(() =>
+        Effect.gen(function*() {
+          yield* Effect.logInfo(`not_found path=${pathname}`);
+          return new Response("Not found", { status: 404 });
+        }),
+      ),
+    );
   });
 
 export default {
@@ -47,7 +44,7 @@ export default {
         Effect.annotateLogs({ method: request.method, path: url.pathname }),
         Effect.tap((resp) => Effect.logInfo(`http_response status=${resp.status}`)),
         Effect.catchCause((cause) =>
-          Effect.gen(function* () {
+          Effect.gen(function*() {
             yield* Effect.logError("http_request_failed", cause);
             return new Response("Internal error", { status: 500 });
           }),
