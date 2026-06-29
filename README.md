@@ -66,6 +66,9 @@ wrangler secret put TELEGRAM_ALLOWED_USER_IDS
 | `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot   |
 | `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                    |
 | `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7) |
+| `EXA_API_KEY`               | No       | Exa API key for web search (MCP integration)               |
+| `CF_API_TOKEN`              | No       | Cloudflare API token for resource management               |
+| `BASE_URL`                  | No       | Base URL for artifact links (default: `https://mzk.elianiva.com`) |
 
 ## Available models
 
@@ -75,11 +78,45 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 - `kimi-k2.6` — Stronger reasoning
 - `deepseek-v4-pro` — Most capable
 
-## Commands
+## Features
 
-| Command  | Description      |
-| -------- | ---------------- |
-| `/start` | Greeting message |
+### AI Chat
+- Conversational AI powered by OpenCode Go (DeepSeek, Kimi, etc.)
+- Streaming responses with real-time updates
+- Persistent memory for user preferences and context
+- Full-text search across conversation history
+- Automatic context compaction for long conversations
+
+### Web Search & Fetch
+- Search the internet for current information via Exa MCP
+- Fetch full content from any URL for detailed analysis
+
+### Cloudflare API
+- Full access to your Cloudflare resources (domains, DNS, Workers, KV, R2, D1, etc.)
+- Query and manage resources via natural language
+
+### Reminders
+- One-time reminders with duration (e.g. "30m", "2h", "1d")
+- Recurring reminders with cron expressions (e.g. "daily at 8am")
+- List and cancel active reminders
+
+### Browser Screenshots
+- Capture screenshots of any website using headless browser
+- Send screenshots directly to chat
+- Viewport and wait options for accurate captures
+
+### HTML Artifacts
+- Generate standalone HTML pages (calculators, dashboards, reports, etc.)
+- Store and manage artifacts in R2
+- Tailwind CSS v4 and Alpine.js pre-configured
+- Public URL for each artifact
+
+### Commands
+
+| Command  | Description           |
+| -------- | --------------------- |
+| `/start` | Greeting message      |
+| `/reset` | Clear conversation and start fresh |
 
 ## Architecture
 
@@ -89,7 +126,22 @@ Telegram → Webhook → Chat SDK → Cloudflare Worker → Durable Object (per 
                                                   OpenCode Go API (AI)
 ```
 
-- [Chat SDK](https://chat-sdk.dev) replaces grammy for Telegram webhook handling and event routing
+- [Chat SDK](https://chat-sdk.dev) handles Telegram webhook handling and event routing
 - Each Telegram chat gets its own Durable Object for isolated AI conversation state
 - Messages stream from the model to Telegram via post+edit (500ms throttle)
 - Webhook secret verification is handled by the Telegram adapter
+- [Think](https://developers.cloudflare.com/agents/) (Cloudflare Agents) manages tool orchestration and streaming
+
+### MCP Integrations
+
+| MCP Server  | Purpose                          | Required |
+| ----------- | -------------------------------- | -------- |
+| Exa         | Web search and URL fetching      | No       |
+| Cloudflare  | Cloudflare API access            | No       |
+
+### Storage
+
+| Bucket | Purpose                          |
+| ------ | -------------------------------- |
+| R2     | Screenshots and HTML artifacts   |
+| DO     | Conversation state and history   |
