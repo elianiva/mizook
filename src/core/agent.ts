@@ -16,7 +16,7 @@ import type { ToolSet } from "ai";
 
 import type { Env } from "./env";
 import { getRuntime, type AppServices } from "./runtime";
-import { Model } from "./model";
+import { Model, createModel } from "./model";
 import { ChannelRegistry } from "./channel-registry";
 import { basePrompt } from "./prompts/base";
 import { remindersPrompt } from "../features/reminders/prompts/reminders";
@@ -25,12 +25,15 @@ import { createReminderTools, type ReminderPayload } from "../features/reminders
 import { createBrowserTools } from "../features/browser/tools";
 import { createArtifactTools } from "../features/artifacts/tools";
 import { artifactsPrompt } from "../features/artifacts/prompts/artifacts";
+// Per-chat model overrides. Resets on cold start — acceptable for a personal bot.
+const modelOverrides = new Map<string, string>();
 
 interface TurnState {
   readonly channelType: string;
   readonly chatId: string;
   readonly replyToMessageId: number;
   readonly startTime: number;
+  readonly traceId: string;
 }
 
 export class MizookAgent extends Think<Env> {
@@ -69,7 +72,24 @@ export class MizookAgent extends Think<Env> {
   }
 
   getModel() {
+    const chatId = this.currentTurn?.chatId;
+    const override = chatId ? modelOverrides.get(chatId) : undefined;
+    if (override) {
+      return this.runtime.runSync(Effect.sync(() => createModel(this.env, override)));
+    }
     return this.runtime.runSync(Model.use((m) => Effect.sync(() => m.chatModel)));
+  }
+
+  @callable()
+  getModelName(chatId?: string): string {
+    const id = chatId ?? this.currentTurn?.chatId;
+    const override = id ? modelOverrides.get(id) : undefined;
+    return override ?? this.env.OPENCODE_GO_MODEL ?? "mimo-v2.5";
+  }
+
+  @callable()
+  setModel(chatId: string, modelName: string) {
+    modelOverrides.set(chatId, modelName);
   }
 
   getSystemPrompt() {
@@ -106,7 +126,7 @@ export class MizookAgent extends Think<Env> {
             this.runtime.runPromise(Model.use((m) => m.summarize(prompt))),
         }),
       )
-      .compactAfter(100_000)
+      .compactAfter(40_000)
       .withCachedPrompt();
   }
 
@@ -141,8 +161,11 @@ export class MizookAgent extends Think<Env> {
           yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
         }
         if (this.env.EXA_API_KEY) {
+          const exaKey = this.env.EXA_API_KEY;
           yield* Effect.tryPromise(() =>
-            this.addMcpServer("exa", `https://mcp.exa.ai/mcp?exaApiKey=${this.env.EXA_API_KEY}`),
+            this.addMcpServer("exa", "https://mcp.exa.ai/mcp", {
+              transport: { headers: { "x-api-key": exaKey } },
+            }),
           );
         }
         if (this.env.CF_API_TOKEN) {
@@ -169,7 +192,6 @@ export class MizookAgent extends Think<Env> {
       }),
     );
   }
-
   @callable()
   submitTurn(input: {
     thread: SerializedThread;
@@ -177,6 +199,7 @@ export class MizookAgent extends Think<Env> {
     messageId: string;
     text: string;
     channelType: string;
+    traceId: string;
   }) {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
@@ -188,6 +211,7 @@ export class MizookAgent extends Think<Env> {
           chatId: input.chatId,
           replyToMessageId: Number(input.messageId),
           startTime: now,
+          traceId: input.traceId,
         };
         const id = yield* Random.nextUUIDv4;
         const createdAt = new Date(yield* Clock.currentTimeMillis);
@@ -255,20 +279,15 @@ export class MizookAgent extends Think<Env> {
   private getToolSuccessMessage(toolName: string, output: unknown): string | null {
     const result = typeof output === "string" ? output : JSON.stringify(output);
     switch (toolName) {
-      case "browser_screenshot":
-        return "📸 Screenshot captured";
       case "browser_screenshot_and_send":
         return "📸 Screenshot sent";
-      case "send_photo":
-        return "📷 Photo sent";
       case "set_reminder":
         return result?.includes("Recurring") ? "🔁 Recurring reminder set" : "⏰ Reminder set";
       case "list_reminders":
-        return null; // Don't notify for list operations
+        return null;
       case "delete_reminder":
         return "🗑️ Reminder deleted";
       case "write_artifact":
-      case "update_artifact":
         return "📄 Artifact saved";
       case "list_artifacts":
         return null;
@@ -299,7 +318,7 @@ export class MizookAgent extends Think<Env> {
         this.currentTurn = null;
         this.serializedThread = null;
         yield* Effect.logInfo(
-          `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""} latency_ms=${latency} status=${result.status} channel=${turn?.channelType ?? "?"}`,
+          `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""} latency_ms=${latency} status=${result.status} channel=${turn?.channelType ?? "?"} trace_id=${turn?.traceId ?? "?"}`,
         );
       }),
     );

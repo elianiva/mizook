@@ -1,12 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { MizookAgent } from "../../core/agent";
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { formatSize } from "./format";
 
 export function createArtifactTools(agent: MizookAgent) {
   return {
@@ -51,27 +46,6 @@ export function createArtifactTools(agent: MizookAgent) {
 
         await agent.appEnv.MIZOOK_R2.delete(key);
         return `Deleted "${name}".`;
-      },
-    }),
-
-    update_artifact: tool({
-      description:
-        "Update an existing HTML artifact by name (alias for overwrite). " +
-        "If the artifact doesn't exist, it will be created.",
-      inputSchema: z.object({
-        name: z.string().describe("Filename for the artifact (e.g. 'calculator.html')"),
-        content: z.string().describe("Full HTML content of the artifact"),
-      }),
-      execute: async ({ name, content }) => {
-        const key = `artifacts/${name}`;
-        const existed = await agent.appEnv.MIZOOK_R2.head(key);
-        await agent.appEnv.MIZOOK_R2.put(key, content, {
-          httpMetadata: { contentType: "text/html" },
-        });
-
-        const base = agent.appEnv.BASE_URL ?? "https://mzk.elianiva.com";
-        const action = existed ? "Updated" : "Created";
-        return `${action} "${name}". URL: ${base}/artifacts/${name}`;
       },
     }),
 

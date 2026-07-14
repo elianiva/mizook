@@ -11,14 +11,14 @@ const TIMEOUT_MS = 60_000;
 // Native timeout via AbortSignal — no Effect.fiber-boundary wrapper around a
 // fetch the AI SDK owns. This is the sole impl; the Model service wraps it and
 // adds the summarize Effect surface.
-export function createModel(env: Env): LanguageModel {
+export function createModel(env: Env, modelName?: string): LanguageModel {
   const opencode = createOpenAICompatible({
     baseURL: "https://opencode.ai/zen/go/v1",
     name: "Opencode Go",
     apiKey: env.OPENCODE_GO_API_KEY,
     fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }),
   });
-  return opencode.chatModel(env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL);
+  return opencode.chatModel(modelName ?? env.OPENCODE_GO_MODEL ?? DEFAULT_MODEL);
 }
 
 type GenerateResult = Awaited<ReturnType<typeof generateText>>;

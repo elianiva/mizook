@@ -8,6 +8,24 @@ import { ChannelRegistry } from "./channel-registry";
 import { AgentGateway } from "./agent-gateway";
 import { AllowedUsers } from "./allowed-users";
 import { AgentRpcError } from "./errors";
+// Simple in-memory token bucket: 30 requests per 60s per chat.
+const rateLimits = new Map<string, { tokens: number; resetAt: number }>();
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+function checkRateLimit(chatId: string): boolean {
+  const now = Date.now();
+  const bucket = rateLimits.get(chatId);
+  if (!bucket || now > bucket.resetAt) {
+    rateLimits.set(chatId, { tokens: RATE_LIMIT_MAX - 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (bucket.tokens <= 0) return false;
+  bucket.tokens--;
+  return true;
+}
+
+const AVAILABLE_MODELS = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "mimo-v2.5-pro"];
 
 interface Postable {
   post(message: string): Promise<unknown>;
@@ -36,11 +54,12 @@ const resetCore = (postable: Postable, threadId: string) =>
 
 const handleTurn = (thread: Thread, message: Message) =>
   Effect.gen(function* () {
-    yield* Effect.logInfo("handleTurn_start");
+    const traceId = crypto.randomUUID();
+    yield* Effect.logInfo(`handleTurn_start trace_id=${traceId}`);
     const { channelName, chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
-    yield* Effect.logInfo(`handleTurn_resolved_channel chat_id=${chatId}`);
+    yield* Effect.logInfo(`handleTurn_resolved_channel chat_id=${chatId} trace_id=${traceId}`);
     const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
-    yield* Effect.logInfo("handleTurn_got_agent");
+    yield* Effect.logInfo(`handleTurn_got_agent trace_id=${traceId}`);
     yield* Effect.tryPromise({
       try: () =>
         agent.submitTurn({
@@ -49,10 +68,13 @@ const handleTurn = (thread: Thread, message: Message) =>
           messageId: message.id,
           text: message.text,
           channelType: channelName,
+          traceId,
         }),
       catch: (cause) => new AgentRpcError({ cause }),
     });
-    yield* Effect.logInfo(`turn_submitted chat_id=${chatId} channel=${channelName}`);
+    yield* Effect.logInfo(
+      `turn_submitted chat_id=${chatId} channel=${channelName} trace_id=${traceId}`,
+    );
   }).pipe(Effect.catchCause((cause) => Effect.logError("turn_error", cause)));
 
 interface TurnMode {
@@ -87,6 +109,66 @@ const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =
 
     if (text === "/reset") {
       yield* resetCore(thread, thread.id);
+      return;
+    }
+
+    if (text === "/help") {
+      yield* Effect.tryPromise(() =>
+        thread.post(
+          "Available commands:\n" +
+            "/help — Show this message\n" +
+            "/status — Show bot status\n" +
+            "/model [name] — Show or set the current model\n" +
+            "/reset — Reset the conversation",
+        ),
+      );
+      yield* Effect.logInfo("command_help");
+      return;
+    }
+
+    if (text === "/status") {
+      const { chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
+      const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+      const modelName = yield* Effect.tryPromise(() => agent.getModelName(chatId));
+      const schedules = (yield* Effect.tryPromise(() => agent.listSchedules())) as Array<{
+        callback: string;
+      }>;
+      const reminderCount = schedules.filter((s) => s.callback === "sendReminder").length;
+      yield* Effect.tryPromise(() =>
+        thread.post(`Model: ${modelName}\nActive reminders: ${reminderCount}`),
+      );
+      yield* Effect.logInfo("command_status");
+      return;
+    }
+
+    if (text.startsWith("/model")) {
+      const { chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
+      const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+      const arg = text.slice(6).trim();
+      if (!arg) {
+        const current = yield* Effect.tryPromise(() => agent.getModelName(chatId));
+        yield* Effect.tryPromise(() =>
+          thread.post(`Current model: ${current}\nAvailable: ${AVAILABLE_MODELS.join(", ")}`),
+        );
+      } else if (!AVAILABLE_MODELS.includes(arg)) {
+        yield* Effect.tryPromise(() =>
+          thread.post(`Unknown model "${arg}". Available: ${AVAILABLE_MODELS.join(", ")}`),
+        );
+      } else {
+        yield* Effect.tryPromise(() => agent.setModel(chatId, arg));
+        yield* Effect.tryPromise(() => thread.post(`Model set to ${arg}`));
+      }
+      yield* Effect.logInfo("command_model");
+      return;
+    }
+
+    // Rate limit check before sending to the model
+    const { chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
+    if (!checkRateLimit(chatId)) {
+      yield* Effect.tryPromise(() =>
+        thread.post("Rate limit exceeded. Please wait a moment and try again."),
+      );
+      yield* Effect.logInfo("rate_limited");
       return;
     }
 
