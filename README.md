@@ -59,15 +59,15 @@ wrangler secret put TELEGRAM_ALLOWED_USER_IDS
 
 ## Configuration
 
-| Variable                    | Required | Description                                                |
-| --------------------------- | -------- | ---------------------------------------------------------- |
-| `BOT_TOKEN`                 | Yes      | Telegram bot token from @BotFather                         |
-| `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                        |
-| `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot   |
-| `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                    |
-| `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7) |
-| `EXA_API_KEY`               | No       | Exa API key for web search (MCP integration)               |
-| `CF_API_TOKEN`              | No       | Cloudflare API token for resource management               |
+| Variable                    | Required | Description                                                       |
+| --------------------------- | -------- | ----------------------------------------------------------------- |
+| `BOT_TOKEN`                 | Yes      | Telegram bot token from @BotFather                                |
+| `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                               |
+| `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot          |
+| `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                           |
+| `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7)        |
+| `EXA_API_KEY`               | No       | Exa API key for web search (MCP integration)                      |
+| `CF_API_TOKEN`              | No       | Cloudflare API token for resource management                      |
 | `BASE_URL`                  | No       | Base URL for artifact links (default: `https://mzk.elianiva.com`) |
 
 ## Available models
@@ -81,6 +81,7 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 ## Features
 
 ### AI Chat
+
 - Conversational AI powered by OpenCode Go (DeepSeek, Kimi, etc.)
 - Streaming responses with real-time updates
 - Persistent memory for user preferences and context
@@ -88,24 +89,29 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 - Automatic context compaction for long conversations
 
 ### Web Search & Fetch
+
 - Search the internet for current information via Exa MCP
 - Fetch full content from any URL for detailed analysis
 
 ### Cloudflare API
+
 - Full access to your Cloudflare resources (domains, DNS, Workers, KV, R2, D1, etc.)
 - Query and manage resources via natural language
 
 ### Reminders
+
 - One-time reminders with duration (e.g. "30m", "2h", "1d")
 - Recurring reminders with cron expressions (e.g. "daily at 8am")
 - List and cancel active reminders
 
 ### Browser Screenshots
+
 - Capture screenshots of any website using headless browser
 - Send screenshots directly to chat
 - Viewport and wait options for accurate captures
 
 ### HTML Artifacts
+
 - Generate standalone HTML pages (calculators, dashboards, reports, etc.)
 - Store and manage artifacts in R2
 - Tailwind CSS v4 and Alpine.js pre-configured
@@ -113,9 +119,9 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 
 ### Commands
 
-| Command  | Description           |
-| -------- | --------------------- |
-| `/start` | Greeting message      |
+| Command  | Description                        |
+| -------- | ---------------------------------- |
+| `/start` | Greeting message                   |
 | `/reset` | Clear conversation and start fresh |
 
 ## Architecture
@@ -134,14 +140,14 @@ Telegram → Webhook → Chat SDK → Cloudflare Worker → Durable Object (per 
 
 ### MCP Integrations
 
-| MCP Server  | Purpose                          | Required |
-| ----------- | -------------------------------- | -------- |
-| Exa         | Web search and URL fetching      | No       |
-| Cloudflare  | Cloudflare API access            | No       |
+| MCP Server | Purpose                     | Required |
+| ---------- | --------------------------- | -------- |
+| Exa        | Web search and URL fetching | No       |
+| Cloudflare | Cloudflare API access       | No       |
 
 ### Storage
 
-| Bucket | Purpose                          |
-| ------ | -------------------------------- |
-| R2     | Screenshots and HTML artifacts   |
-| DO     | Conversation state and history   |
+| Bucket | Purpose                        |
+| ------ | ------------------------------ |
+| R2     | Screenshots and HTML artifacts |
+| DO     | Conversation state and history |

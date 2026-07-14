@@ -10,25 +10,25 @@
     "check": "vp check && tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^2.0.48",
-    "@chat-adapter/state-memory": "^4.31.0",
-    "@chat-adapter/telegram": "^4.31.0",
+    "@ai-sdk/openai-compatible": "^3.0.9",
+    "@chat-adapter/state-memory": "^4.34.0",
+    "@chat-adapter/telegram": "^4.34.0",
     "@cloudflare/puppeteer": "^1.1.0",
-    "@cloudflare/think": "^0.11.0",
-    "agents": "^0.17.0",
-    "ai": "^6.0.193",
-    "chat": "^4.31.0",
+    "@cloudflare/think": "^0.13.0",
+    "agents": "^0.17.4",
+    "ai": "^7.0.26",
+    "chat": "^4.34.0",
     "chat-state-cloudflare-do": "^0.2.0",
     "effect": "4.0.0-beta.62",
-    "workers-ai-provider": "^3.2.1",
+    "workers-ai-provider": "^3.3.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
-    "typescript": "~6.0.2",
+    "typescript": "^7.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:",
-    "wrangler": "^4.105.0"
+    "wrangler": "^4.110.0"
   },
   "packageManager": "pnpm@11.9.0"
 }

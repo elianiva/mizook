@@ -7,8 +7,8 @@ allowBuilds:
   sharp: true
   workerd: true
 catalog:
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.1
-  vite-plus: 0.2.1
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.4
+  vite-plus: 0.2.4
 overrides:
   vite: "catalog:"
 peerDependencyRules:
@@ -16,3 +16,6 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+trustPolicyExclude:
+  - "effect@4.0.0-beta.62"
+  - "semver@6.3.1"
