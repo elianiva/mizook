@@ -1,11 +1,14 @@
 import { Context, Effect, Layer } from "effect";
 import { createTelegramAdapter, type TelegramAdapter } from "@chat-adapter/telegram";
 import { WorkersEnv } from "../../core/workers-env";
+import { commands } from "../../core/bot";
 import type { Channel, ChatTarget } from "../../core/channel";
+export type { ChatTarget };
 
 // Sole implementation; the TelegramChannel service wraps this.
 export function createTelegramChannel(botToken: string): Channel {
   const tg = createTelegramAdapter({ botToken }) as TelegramAdapter;
+  syncCommandMenu(botToken).catch(() => {});
 
   return {
     name: "telegram",
@@ -45,4 +48,14 @@ export class TelegramChannel extends Context.Service<TelegramChannel, Channel>()
   );
 }
 
-export type { ChatTarget };
+async function syncCommandMenu(botToken: string): Promise<void> {
+  const menuCommands = commands
+    .filter((c) => c.slash)
+    .map((c) => ({ command: c.name, description: c.description }));
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ commands: menuCommands }),
+  });
+  if (!res.ok) throw new Error(`setMyCommands failed: ${res.status}`);
+}

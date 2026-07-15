@@ -46,7 +46,7 @@ interface CommandDef {
   handler: (ctx: CommandContext) => Effect.Effect<void, unknown, AppServices>;
 }
 
-const commands: CommandDef[] = [
+export const commands: CommandDef[] = [
   {
     name: "start",
     description: "Start the bot",
@@ -88,8 +88,7 @@ const commands: CommandDef[] = [
     handler: ({ postable }) =>
       Effect.tryPromise(() =>
         postable.post(
-          "Available commands:\n" +
-            commands.map((c) => `/${c.name} — ${c.description}`).join("\n"),
+          "Available commands:\n" + commands.map((c) => `/${c.name} — ${c.description}`).join("\n"),
         ),
       ),
   },
@@ -122,9 +121,7 @@ const commands: CommandDef[] = [
         if (!args) {
           const current = yield* Effect.tryPromise(() => agent.getModelName(chatId));
           yield* Effect.tryPromise(() =>
-            postable.post(
-              `Current model: ${current}\nAvailable: ${AVAILABLE_MODELS.join(", ")}`,
-            ),
+            postable.post(`Current model: ${current}\nAvailable: ${AVAILABLE_MODELS.join(", ")}`),
           );
         } else if (!AVAILABLE_MODELS.includes(args)) {
           yield* Effect.tryPromise(() =>
