@@ -27,6 +27,71 @@ export function parseDurationToSeconds(duration: string): number | null {
   }
 }
 
+function formatDuration(totalSeconds: number): string {
+  const d = Math.floor(totalSeconds / 86400);
+  const h = Math.floor((totalSeconds % 86400) / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return `${s}s`;
+}
+
+const DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function describeCron(cronExpr: string, tz: string): string {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return cronExpr;
+
+  const [min, hour, dom, , dow] = parts;
+
+  const hourNum = parseInt(hour, 10);
+  const minNum = parseInt(min, 10);
+  const d = new Date(Date.UTC(2024, 0, 1, hourNum, minNum));
+  const timeStr = new Intl.DateTimeFormat("en", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+
+  // Day-of-month
+  if (dom !== "*") {
+    const dayNum = parseInt(dom, 10);
+    const v = dayNum % 100;
+    const suffix = v >= 11 && v <= 13 ? "th" : ["th", "st", "nd", "rd"][v % 10] || "th";
+    return `${dayNum}${suffix} of every month at ${timeStr}`;
+  }
+
+  // Day-of-week
+  if (dow !== "*") {
+    if (dow.includes("-")) {
+      const [start, end] = dow.split("-").map(Number);
+      if (start === 1 && end === 5) return `Every weekday at ${timeStr}`;
+      if (start === 0 && end === 4) return `Every Sun–Thu at ${timeStr}`;
+      return `Every ${DOW_NAMES[start]}–${DOW_NAMES[end]} at ${timeStr}`;
+    }
+    return `Every ${DOW_NAMES[parseInt(dow, 10)]} at ${timeStr}`;
+  }
+
+  if (hour !== "*") return `Every day at ${timeStr}`;
+  if (min !== "*") return `Every hour at :${String(minNum).padStart(2, "0")}`;
+  return cronExpr;
+}
+
+function formatFireTime(timeMs: number, tz: string): string {
+  return new Intl.DateTimeFormat("en", {
+    timeZone: tz,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timeMs));
+}
+
 export function createReminderTools(agent: MizookAgent) {
   const tz = agent.getConfiguredTimezone();
 
@@ -64,7 +129,8 @@ export function createReminderTools(agent: MizookAgent) {
 
         if (cron) {
           const schedule = await agent.schedule(cron, "sendReminder", payload);
-          return `Recurring reminder set. ID: ${schedule.id}. I will remind you: "${message}"`;
+          const desc = describeCron(cron, tz);
+          return `Recurring reminder set. ID: ${schedule.id}. "${message}" — ${desc}`;
         }
 
         if (!duration) {
@@ -77,8 +143,9 @@ export function createReminderTools(agent: MizookAgent) {
         }
 
         const schedule = await agent.schedule(seconds, "sendReminder", payload);
-        const mins = Math.round(seconds / 60);
-        return `One-time reminder set. ID: ${schedule.id}. "${message}" in ${mins} minute${mins === 1 ? "" : "s"}.`;
+        const humanDuration = formatDuration(seconds);
+        const fireAt = formatFireTime(Date.now() + seconds * 1000, tz);
+        return `One-time reminder set. ID: ${schedule.id}. "${message}" in ${humanDuration} (at ${fireAt})`;
       },
     }),
 
@@ -93,19 +160,16 @@ export function createReminderTools(agent: MizookAgent) {
         return reminders
           .map((s) => {
             const p = s.payload as ReminderPayload;
-            const next = new Date(s.time * 1000).toLocaleString("en-ID", {
-              timeZone: agent.getConfiguredTimezone(),
-              weekday: "short",
-              hour: "2-digit",
-              minute: "2-digit",
-              day: "numeric",
-              month: "short",
-            });
-            const kind =
-              s.type === "cron" && "cron" in s
-                ? `cron: ${(s as typeof s & { cron: string }).cron}`
-                : s.type;
-            return `ID: ${s.id} | ${p.message} — next: ${next} (${kind})`;
+            const next = formatFireTime(s.time * 1000, tz);
+
+            if (s.type === "cron" && "cron" in s) {
+              const desc = describeCron((s as typeof s & { cron: string }).cron, tz);
+              return `ID: ${s.id} | "${p.message}" — ${desc} · next: ${next}`;
+            }
+
+            const secsUntil = Math.max(0, Math.round(s.time - Date.now()));
+            const remaining = secsUntil > 0 ? ` · in ${formatDuration(secsUntil)}` : "";
+            return `ID: ${s.id} | "${p.message}" — one-time · ${next}${remaining}`;
           })
           .join("\n");
       },
@@ -121,6 +185,25 @@ export function createReminderTools(agent: MizookAgent) {
         return cancelled
           ? "Reminder cancelled."
           : `Reminder not found (ID: ${scheduleId}). Use list_reminders.`;
+      },
+    }),
+
+    delete_all_reminders: tool({
+      description: "Cancel all active reminders at once",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const all = await agent.listSchedules();
+        const reminders = all.filter((s) => s.callback === "sendReminder");
+        if (reminders.length === 0) return "No active reminders.";
+
+        let count = 0;
+        for (const s of reminders) {
+          const ok = await agent.cancelSchedule(s.id);
+          if (ok) count++;
+        }
+        return count === reminders.length
+          ? `All ${count} reminder${count === 1 ? "" : "s"} cancelled.`
+          : `Cancelled ${count} of ${reminders.length} reminders.`;
       },
     }),
   };

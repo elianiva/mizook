@@ -287,6 +287,8 @@ export class MizookAgent extends Think<Env> {
         return null;
       case "delete_reminder":
         return "🗑️ Reminder deleted";
+      case "delete_all_reminders":
+        return "🗑️ Reminders cleared";
       case "write_artifact":
         return "📄 Artifact saved";
       case "list_artifacts":
