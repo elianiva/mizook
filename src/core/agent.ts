@@ -1,5 +1,5 @@
 import { callable } from "agents";
-import { Effect, Clock, Random } from "effect";
+import { Effect, Clock } from "effect";
 import {
   Think,
   type ChunkContext,
@@ -268,20 +268,15 @@ export class MizookAgent extends Think<Env> {
         const manager = this.getOrCreateSessionManager();
         this.session = manager.getSession(input.threadId);
 
-        // Append directly to the new session to avoid stale cache issues
-        const id = yield* Random.nextUUIDv4;
-        const createdAt = new Date(yield* Clock.currentTimeMillis);
-        yield* Effect.tryPromise(() =>
-          this.session.appendMessage({
-            id,
-            role: "user",
-            parts: [{ type: "text", text: input.text }],
-            createdAt,
-          }),
-        );
         yield* Effect.logInfo(
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
         );
+
+        // Trigger Think's turn processing — it handles message saving, beforeTurn, inference, streaming
+        // Don't await — let it run in the background so RPC returns quickly
+        void this.runTurn({ mode: "wait", input: input.text }).catch((err) => {
+          void this.runtime.runPromise(Effect.logError("runTurn_failed", err));
+        });
       }),
     );
   }
@@ -289,9 +284,15 @@ export class MizookAgent extends Think<Env> {
   override beforeTurn(_ctx: TurnContext) {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
+        yield* Effect.logInfo(`beforeTurn_start session_id=${this.session ? "set" : "null"}`);
         const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
         const turn = this.currentTurn;
-        if (!turn || !this.serializedThread) return { system: freshSystem };
+        if (!turn || !this.serializedThread) {
+          yield* Effect.logInfo(
+            `beforeTurn_early_return turn=${!!turn} serialized=${!!this.serializedThread}`,
+          );
+          return { system: freshSystem };
+        }
 
         const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
         const { readable, writable } = new TransformStream<string, string>();
@@ -377,6 +378,7 @@ export class MizookAgent extends Think<Env> {
   override onChatResponse(result: ChatResponseResult) {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
+        yield* Effect.logInfo(`onChatResponse_start status=${result.status}`);
         yield* this.cleanupStream();
         const turn = this.currentTurn;
         const latency = turn ? (yield* Clock.currentTimeMillis) - turn.startTime : 0;
