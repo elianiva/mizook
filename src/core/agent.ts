@@ -268,13 +268,16 @@ export class MizookAgent extends Think<Env> {
         const manager = this.getOrCreateSessionManager();
         this.session = manager.getSession(input.threadId);
 
+        // Append directly to the new session to avoid stale cache issues
         const id = yield* Random.nextUUIDv4;
         const createdAt = new Date(yield* Clock.currentTimeMillis);
         yield* Effect.tryPromise(() =>
-          this.saveMessages((current) => [
-            ...current,
-            { id, role: "user", parts: [{ type: "text", text: input.text }], createdAt },
-          ]),
+          this.session.appendMessage({
+            id,
+            role: "user",
+            parts: [{ type: "text", text: input.text }],
+            createdAt,
+          }),
         );
         yield* Effect.logInfo(
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
