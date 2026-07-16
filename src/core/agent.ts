@@ -8,7 +8,11 @@ import {
   type TurnContext,
   type ToolCallResultContext,
 } from "@cloudflare/think";
-import { AgentContextProvider, AgentSearchProvider } from "agents/experimental/memory/session";
+import {
+  AgentContextProvider,
+  AgentSearchProvider,
+  SessionManager,
+} from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import type { SerializedThread } from "chat";
 import { ThreadImpl } from "chat";
@@ -31,6 +35,7 @@ const modelOverrides = new Map<string, string>();
 interface TurnState {
   readonly channelType: string;
   readonly chatId: string;
+  readonly threadId: string;
   readonly replyToMessageId: number;
   readonly startTime: number;
   readonly traceId: string;
@@ -45,6 +50,7 @@ export class MizookAgent extends Think<Env> {
   private serializedThread: SerializedThread | null = null;
   private writer: WritableStreamDefaultWriter<string> | null = null;
   private pendingStream: Promise<unknown> | null = null;
+  private sessionManager: SessionManager | null = null;
 
   waitForMcpConnections = { timeout: 10_000 } as const;
 
@@ -103,6 +109,8 @@ export class MizookAgent extends Think<Env> {
   }
 
   configureSession(session: Session) {
+    // Configure the base session with shared context blocks.
+    // Per-topic sessions will be created via SessionManager.
     return session
       .withContext("soul", {
         description:
@@ -128,6 +136,37 @@ export class MizookAgent extends Think<Env> {
       )
       .compactAfter(40_000)
       .withCachedPrompt();
+  }
+
+  private getOrCreateSessionManager(): SessionManager {
+    if (!this.sessionManager) {
+      this.sessionManager = SessionManager.create(this)
+        .withContext("soul", {
+          description:
+            "Your identity, personality, and core instructions. " +
+            "Write to this with set_context to change who you are.",
+          maxTokens: 1000,
+        })
+        .withContext("memory", {
+          description:
+            "Key facts, preferences, and context learned from the user. " +
+            "Proactively update this as you learn new information.",
+          maxTokens: 2000,
+        })
+        .withContext("history", {
+          provider: new AgentSearchProvider(this),
+          description: "Full-text search across your conversation history with this assistant.",
+        })
+        .onCompaction(
+          createCompactFunction({
+            summarize: (prompt: string) =>
+              this.runtime.runPromise(Model.use((m) => m.summarize(prompt))),
+          }),
+        )
+        .compactAfter(40_000)
+        .withCachedPrompt();
+    }
+    return this.sessionManager;
   }
 
   getTools(): ToolSet {
@@ -184,11 +223,18 @@ export class MizookAgent extends Think<Env> {
   resetChat() {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
+        const threadId = this.currentTurn?.threadId;
         this.resetTurnState();
         this.currentTurn = null;
-        yield* Effect.tryPromise(() => this.clearMessages());
+        // Clear only the current topic's session
+        if (threadId && this.sessionManager) {
+          const topicSession = this.sessionManager.getSession(threadId);
+          yield* Effect.tryPromise(() => topicSession.clearMessages());
+        } else {
+          yield* Effect.tryPromise(() => this.clearMessages());
+        }
         yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-        yield* Effect.logInfo("reset_chat_done");
+        yield* Effect.logInfo(`reset_chat_done thread_id=${threadId ?? "all"}`);
       }),
     );
   }
@@ -196,6 +242,7 @@ export class MizookAgent extends Think<Env> {
   submitTurn(input: {
     thread: SerializedThread;
     chatId: string;
+    threadId: string;
     messageId: string;
     text: string;
     channelType: string;
@@ -203,16 +250,24 @@ export class MizookAgent extends Think<Env> {
   }) {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
-        yield* Effect.logInfo(`submitTurn_called chat_id=${input.chatId}`);
+        yield* Effect.logInfo(
+          `submitTurn_called chat_id=${input.chatId} thread_id=${input.threadId}`,
+        );
         const now = yield* Clock.currentTimeMillis;
         this.serializedThread = input.thread;
         this.currentTurn = {
           channelType: input.channelType,
           chatId: input.chatId,
+          threadId: input.threadId,
           replyToMessageId: Number(input.messageId),
           startTime: now,
           traceId: input.traceId,
         };
+
+        // Switch to per-topic session for conversation isolation
+        const manager = this.getOrCreateSessionManager();
+        this.session = manager.getSession(input.threadId);
+
         const id = yield* Random.nextUUIDv4;
         const createdAt = new Date(yield* Clock.currentTimeMillis);
         yield* Effect.tryPromise(() =>
@@ -221,7 +276,9 @@ export class MizookAgent extends Think<Env> {
             { id, role: "user", parts: [{ type: "text", text: input.text }], createdAt },
           ]),
         );
-        yield* Effect.logInfo(`turn_received chat_id=${input.chatId} channel=${input.channelType}`);
+        yield* Effect.logInfo(
+          `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
+        );
       }),
     );
   }
@@ -233,9 +290,7 @@ export class MizookAgent extends Think<Env> {
         const turn = this.currentTurn;
         if (!turn || !this.serializedThread) return { system: freshSystem };
 
-        const { channel } = yield* ChannelRegistry.use((r) =>
-          r.resolve(`${turn.channelType}:${turn.chatId}`),
-        );
+        const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
         const { readable, writable } = new TransformStream<string, string>();
         this.writer = writable.getWriter();
         const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
@@ -340,9 +395,7 @@ export class MizookAgent extends Think<Env> {
         this.currentTurn = null;
         this.serializedThread = null;
         if (turn && serialized) {
-          const { channel } = yield* ChannelRegistry.use((r) =>
-            r.resolve(`${turn.channelType}:${turn.chatId}`),
-          );
+          const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
           const thread = ThreadImpl.fromJSON(serialized, channel.adapter);
           yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
         }

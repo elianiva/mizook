@@ -213,6 +213,7 @@ const handleTurn = (thread: Thread, message: Message) =>
         agent.submitTurn({
           thread: thread.toJSON(),
           chatId,
+          threadId: thread.id,
           messageId: message.id,
           text: message.text,
           channelType: channelName,
@@ -221,7 +222,7 @@ const handleTurn = (thread: Thread, message: Message) =>
       catch: (cause) => new AgentRpcError({ cause }),
     });
     yield* Effect.logInfo(
-      `turn_submitted chat_id=${chatId} channel=${channelName} trace_id=${traceId}`,
+      `turn_submitted chat_id=${chatId} thread_id=${thread.id} channel=${channelName} trace_id=${traceId}`,
     );
   }).pipe(Effect.catchCause((cause) => Effect.logError("turn_error", cause)));
 
