@@ -272,9 +272,10 @@ export class MizookAgent extends Think<Env> {
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
         );
 
-        // Trigger Think's turn processing — it handles message saving, beforeTurn, inference, streaming
-        // Don't await — let it run in the background so RPC returns quickly
-        void this.runTurn({ mode: "wait", input: input.text }).catch((err) => {
+        // Submit as async submission so Think persists to SQL + schedules an alarm.
+        // Mode "wait" runs the turn inline but fire-and-forget drops it after RPC returns;
+        // mode "submit" survives via alarm-driven submission drain.
+        void this.runTurn({ mode: "submit", input: input.text }).catch((err) => {
           void this.runtime.runPromise(Effect.logError("runTurn_failed", err));
         });
       }),
