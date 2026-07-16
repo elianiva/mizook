@@ -193,7 +193,7 @@ export class MizookAgent extends Think<Env> {
 
   override onStart(): Promise<void> {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
+      Effect.gen({ self: this }, function*() {
         const provider = new AgentContextProvider(this, "soul");
         const stored = yield* Effect.tryPromise(() => provider.get());
         if (!stored) {
@@ -222,7 +222,7 @@ export class MizookAgent extends Think<Env> {
   @callable()
   resetChat() {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
+      Effect.gen({ self: this }, function*() {
         const threadId = this.currentTurn?.threadId;
         this.resetTurnState();
         this.currentTurn = null;
@@ -249,7 +249,7 @@ export class MizookAgent extends Think<Env> {
     traceId: string;
   }) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
+      Effect.gen({ self: this }, function*() {
         yield* Effect.logInfo(
           `submitTurn_called chat_id=${input.chatId} thread_id=${input.threadId}`,
         );
@@ -275,8 +275,9 @@ export class MizookAgent extends Think<Env> {
         // Submit as async submission so Think persists to SQL + schedules an alarm.
         // Mode "wait" runs the turn inline but fire-and-forget drops it after RPC returns;
         // mode "submit" survives via alarm-driven submission drain.
-        void this.runTurn({ mode: "submit", input: input.text }).catch((err) => {
-          void this.runtime.runPromise(Effect.logError("runTurn_failed", err));
+        yield* Effect.tryPromise({
+          try: () => this.runTurn({ mode: "submit", input: input.text }),
+          catch: (err) => Effect.logError("runTurn_failed", err),
         });
       }),
     );
@@ -284,7 +285,7 @@ export class MizookAgent extends Think<Env> {
 
   override beforeTurn(_ctx: TurnContext) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
+      Effect.gen({ self: this }, function*() {
         yield* Effect.logInfo(`beforeTurn_start session_id=${this.session ? "set" : "null"}`);
         const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
         const turn = this.currentTurn;
@@ -300,9 +301,9 @@ export class MizookAgent extends Think<Env> {
         this.writer = writable.getWriter();
         const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
         yield* Effect.tryPromise(() => thread.startTyping());
-        this.pendingStream = thread.post(readable).catch((err) => {
-          void this.runtime.runPromise(Effect.logError("stream_failed", err));
-        });
+        this.pendingStream = thread
+          .post(readable)
+          .catch((err) => Effect.logError("stream_failed", err));
         return { system: freshSystem };
       }),
     );
@@ -319,9 +320,7 @@ export class MizookAgent extends Think<Env> {
 
     if (!ctx.success) {
       const msg = ctx.error instanceof Error ? ctx.error.message : String(ctx.error);
-      void this.runtime.runPromise(
-        Effect.logError("tool_failed", { toolName: ctx.toolName, error: msg }),
-      );
+      Effect.logError("tool_failed", { toolName: ctx.toolName, error: msg });
     }
 
     const status = this.getToolSuccessMessage(ctx.toolName, ctx.output);
@@ -366,7 +365,7 @@ export class MizookAgent extends Think<Env> {
   }
 
   private cleanupStream() {
-    return Effect.gen({ self: this }, function* () {
+    return Effect.gen({ self: this }, function*() {
       const writer = this.writer;
       const pending = this.pendingStream;
       if (writer) yield* Effect.tryPromise(() => writer.close());
@@ -378,7 +377,7 @@ export class MizookAgent extends Think<Env> {
 
   override onChatResponse(result: ChatResponseResult) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
+      Effect.gen({ self: this }, function*() {
         yield* Effect.logInfo(`onChatResponse_start status=${result.status}`);
         yield* this.cleanupStream();
         const turn = this.currentTurn;
@@ -394,7 +393,7 @@ export class MizookAgent extends Think<Env> {
 
   override onChatError(error: unknown) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
+      Effect.gen({ self: this }, function*() {
         yield* this.cleanupStream();
         const turn = this.currentTurn;
         const serialized = this.serializedThread;
