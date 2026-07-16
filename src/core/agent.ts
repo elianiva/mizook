@@ -257,9 +257,16 @@ export class MizookAgent extends Think<Env> {
     const turn = this.currentTurn;
     if (!turn) return;
 
+    if (!ctx.success) {
+      void this.runtime.runPromise(
+        Effect.logError("tool_failed", { toolName: ctx.toolName, error: ctx.error }),
+      );
+    }
+
+    const displayName = ctx.toolName.replace(/^tool_[^_]+_/, "");
     const status = ctx.success
       ? this.getToolSuccessMessage(ctx.toolName, ctx.output)
-      : `⚠️ ${ctx.toolName} failed`;
+      : `⚠️ ${displayName} error`;
 
     if (status) {
       void this.runtime.runPromise(
