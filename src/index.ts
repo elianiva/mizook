@@ -4,8 +4,6 @@ import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
 import { handleTelegramWebhook } from "./features/telegram/webhook";
 import { serveScreenshot } from "./features/browser/routes";
-import { serveArtifact, listArtifacts } from "./features/artifacts/routes";
-import { serveAsset } from "./features/artifacts/asset-routes";
 
 export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
@@ -19,17 +17,8 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) =>
       Match.when("/telegram", () =>
         Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
       ),
-      Match.when(
-        (p) => p.startsWith("/assets/"),
-        () => Effect.tryPromise(() => serveAsset(url, env)),
-      ),
       Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
-      Match.when(
-        (p) => p.startsWith("/artifacts/"),
-        () => Effect.tryPromise(() => serveArtifact(url, env)),
-      ),
-      Match.when("/", () => Effect.tryPromise(() => listArtifacts(env))),
-      Match.when("/health", () => Effect.succeed(new Response("OK", { status: 200 }))),
+      Match.when("/", () => Effect.succeed(new Response("mizook", { status: 200 }))),
       Match.orElse(() =>
         Effect.gen(function* () {
           yield* Effect.logInfo(`not_found path=${pathname}`);

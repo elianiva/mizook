@@ -4,15 +4,11 @@ import { z } from "zod";
 import puppeteer from "@cloudflare/puppeteer";
 import type { MizookAgent } from "../../core/agent";
 import type { ChatTarget } from "../../core/channel";
+import type { Env } from "../../core/env";
 import { ChannelRegistry } from "../../core/channel-registry";
 
-interface BrowserEnv {
-  BROWSER: Fetcher;
-  MIZOOK_R2: R2Bucket;
-}
-
 async function takeScreenshot(
-  env: BrowserEnv,
+  env: Env,
   url: string,
   options?: {
     fullPage?: boolean;
@@ -25,7 +21,7 @@ async function takeScreenshot(
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const browser = await puppeteer.launch(env.BROWSER);
+      const browser = await puppeteer.launch(env.BROWSER as unknown as Fetcher);
       try {
         const page = await browser.newPage();
         await page.setViewport({ width: options?.width ?? 1280, height: options?.height ?? 720 });
@@ -50,22 +46,21 @@ async function takeScreenshot(
         if (!b64) throw new Error(`Screenshot of ${url} returned empty result`);
         return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       } finally {
-        await browser.close().catch(() => {});
+        try {
+          await browser.close();
+        } catch {
+          // Cleanup — swallow close errors to preserve original failure
+        }
       }
     } catch (error) {
       lastError = error;
-      if (attempt < 2) {
-        await new Promise<void>((resolve) => {
-          setTimeout(() => resolve(), 1000);
-        });
-      }
     }
   }
   throw lastError;
 }
 
 async function storeAndSend(
-  env: BrowserEnv,
+  env: Env,
   agent: MizookAgent,
   img: Uint8Array,
   target: ChatTarget,
@@ -85,7 +80,7 @@ async function storeAndSend(
 }
 
 export function createBrowserTools(agent: MizookAgent) {
-  const env = agent.appEnv as unknown as BrowserEnv;
+  const env = agent.appEnv;
   const getTarget = (): ChatTarget | null => {
     const turn = agent.getTurnState();
     return turn ? { platform: turn.channelType, chatId: turn.chatId } : null;

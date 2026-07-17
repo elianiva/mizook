@@ -7,7 +7,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
-    "check": "vp check && tsc --noEmit"
+    "check": "vp check",
+    "fmt": "vp check --fix",
+    "lint": "vp lint"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.9",

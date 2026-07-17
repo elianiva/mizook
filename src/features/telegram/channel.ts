@@ -2,16 +2,13 @@ import { Context, Effect, Layer } from "effect";
 import { createTelegramAdapter, type TelegramAdapter } from "@chat-adapter/telegram";
 import { WorkersEnv } from "../../core/workers-env";
 import { commands } from "../../core/bot";
-import type { Channel, ChatTarget } from "../../core/channel";
-export type { ChatTarget };
+import type { Channel } from "../../core/channel";
 
 // Sole implementation; the TelegramChannel service wraps this.
 export function createTelegramChannel(botToken: string): Channel {
   const tg = createTelegramAdapter({ botToken }) as TelegramAdapter;
-  syncCommandMenu(botToken).catch(() => {});
 
   return {
-    name: "telegram",
     adapter: tg,
     decodeThreadId: (threadId) => tg.decodeThreadId(threadId),
     postNotification: (target, message) =>
@@ -43,7 +40,11 @@ export class TelegramChannel extends Context.Service<TelegramChannel, Channel>()
   static readonly layer = Layer.effect(TelegramChannel)(
     Effect.gen(function* () {
       const { env } = yield* WorkersEnv;
-      return TelegramChannel.of(createTelegramChannel(env.BOT_TOKEN));
+      const channel = TelegramChannel.of(createTelegramChannel(env.BOT_TOKEN));
+      yield* Effect.tryPromise(() => syncCommandMenu(env.BOT_TOKEN)).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("syncCommandMenu_failed", cause)),
+      );
+      return channel;
     }),
   );
 }

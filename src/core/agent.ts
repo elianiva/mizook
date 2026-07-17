@@ -11,6 +11,7 @@ import {
 import {
   AgentContextProvider,
   AgentSearchProvider,
+  Session as AgentSession,
   SessionManager,
 } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
@@ -20,16 +21,14 @@ import type { ToolSet } from "ai";
 
 import type { Env } from "./env";
 import { getRuntime, type AppServices } from "./runtime";
-import { Model, createModel } from "./model";
+import { createModel, summarize } from "./model";
 import { ChannelRegistry } from "./channel-registry";
 import { basePrompt } from "./prompts/base";
 import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
-import { createArtifactTools } from "../features/artifacts/tools";
-import { artifactsPrompt } from "../features/artifacts/prompts/artifacts";
-// Per-chat model overrides. Resets on cold start — acceptable for a personal bot.
+
 const modelOverrides = new Map<string, string>();
 
 interface TurnState {
@@ -58,13 +57,10 @@ export class MizookAgent extends Think<Env> {
     return getRuntime(this.env);
   }
 
-  /** Bridge for tool `execute` bodies (Promise-shaped for the AI SDK) to run
-   *  Effect-typed logic against the shared runtime. */
   run<A, E, R extends AppServices>(eff: Effect.Effect<A, E, R>): Promise<A> {
     return this.runtime.runPromise(eff);
   }
 
-  /** Worker bindings (BROWSER/SCREENSHOTS/…) for tool `execute` bodies. */
   get appEnv() {
     return this.env;
   }
@@ -78,12 +74,7 @@ export class MizookAgent extends Think<Env> {
   }
 
   getModel() {
-    const chatId = this.currentTurn?.chatId;
-    const override = chatId ? modelOverrides.get(chatId) : undefined;
-    if (override) {
-      return this.runtime.runSync(Effect.sync(() => createModel(this.env, override)));
-    }
-    return this.runtime.runSync(Model.use((m) => Effect.sync(() => m.chatModel)));
+    return createModel(this.env, this.getModelName(this.currentTurn?.chatId));
   }
 
   @callable()
@@ -100,28 +91,13 @@ export class MizookAgent extends Think<Env> {
 
   getSystemPrompt() {
     const tz = this.getConfiguredTimezone();
-    return [
-      basePrompt,
-      remindersPrompt.replace("{{TIMEZONE}}", tz),
-      browserPrompt,
-      artifactsPrompt,
-    ].join("\n\n");
+    return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
   }
 
-  /** Apply the shared context/compaction config to any chainable builder
-   *  (Session or SessionManager). Both expose the same fluent surface. */
-  private _applySessionConfig<
-    T extends {
-      withContext: Function;
-      onCompaction: Function;
-      compactAfter: Function;
-      withCachedPrompt: Function;
-    },
-  >(builder: T): T {
-    const summarizer = (prompt: string) =>
-      this.runtime.runPromise(Model.use((m) => m.summarize(prompt)));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (builder as any)
+  private _applySessionConfig<T extends AgentSession | SessionManager>(builder: T): T {
+    const summarizer = (prompt: string) => summarize(this.env, prompt);
+
+    return builder
       .withContext("soul", {
         description:
           "Your identity, personality, and core instructions. " +
@@ -140,7 +116,7 @@ export class MizookAgent extends Think<Env> {
       })
       .onCompaction(createCompactFunction({ summarize: summarizer }))
       .compactAfter(40_000)
-      .withCachedPrompt();
+      .withCachedPrompt() as T;
   }
 
   configureSession(session: Session) {
@@ -158,7 +134,6 @@ export class MizookAgent extends Think<Env> {
     return {
       ...createReminderTools(this),
       ...createBrowserTools(this),
-      ...createArtifactTools(this),
     };
   }
 
@@ -209,10 +184,9 @@ export class MizookAgent extends Think<Env> {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
         const threadId = this.currentTurn?.threadId;
-        yield* Effect.sync(() => {
-          this.resetTurnState();
-          this.currentTurn = null;
-        });
+        this.resetTurnState();
+        this.currentTurn = null;
+
         // Clear only the current topic's session
         if (threadId && this.sessionManager) {
           const topicSession = this.sessionManager.getSession(threadId);
@@ -220,11 +194,13 @@ export class MizookAgent extends Think<Env> {
         } else {
           yield* Effect.tryPromise(() => this.clearMessages());
         }
+
         yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
         yield* Effect.logInfo(`reset_chat_done thread_id=${threadId ?? "all"}`);
       }),
     );
   }
+
   @callable()
   submitTurn(input: {
     thread: SerializedThread;
@@ -379,12 +355,7 @@ export class MizookAgent extends Think<Env> {
         return "🗑️ Reminder deleted";
       case "delete_all_reminders":
         return "🗑️ Reminders cleared";
-      case "write_artifact":
-        return "📄 Artifact saved";
-      case "list_artifacts":
-        return null;
-      case "delete_artifact":
-        return "🗑️ Artifact deleted";
+
       default:
         return null;
     }

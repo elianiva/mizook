@@ -59,22 +59,23 @@ wrangler secret put TELEGRAM_ALLOWED_USER_IDS
 
 ## Configuration
 
-| Variable                    | Required | Description                                                       |
-| --------------------------- | -------- | ----------------------------------------------------------------- |
-| `BOT_TOKEN`                 | Yes      | Telegram bot token from @BotFather                                |
-| `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                               |
-| `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot          |
-| `OPENCODE_GO_MODEL`         | No       | Model ID (default: `deepseek-v4-flash`)                           |
-| `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7)        |
-| `EXA_API_KEY`               | No       | Exa API key for web search (MCP integration)                      |
-| `CF_API_TOKEN`              | No       | Cloudflare API token for resource management                      |
-| `BASE_URL`                  | No       | Base URL for artifact links (default: `https://mzk.elianiva.com`) |
+| Variable                    | Required | Description                                                |
+| --------------------------- | -------- | ---------------------------------------------------------- |
+| `BOT_TOKEN`                 | Yes      | Telegram bot token from @BotFather                         |
+| `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                        |
+| `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot   |
+| `OPENCODE_GO_MODEL`         | No       | Model ID (default: `mimo-v2.5`)                            |
+| `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7) |
+| `EXA_API_KEY`               | No       | Exa API key for web search (MCP integration)               |
+| `CF_API_TOKEN`              | No       | Cloudflare API token for resource management               |
+| `BASE_URL`                  | No       | Base URL for links (default: `https://mzk.elianiva.com`)   |
 
 ## Available models
 
 The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaults:
 
-- `deepseek-v4-flash` — Fast, cheap (default)
+- `mimo-v2.5` — Fast, cheap (default)
+- `deepseek-v4-flash` — Fast, cheap
 - `kimi-k2.6` — Stronger reasoning
 - `deepseek-v4-pro` — Most capable
 
@@ -110,13 +111,6 @@ The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaul
 - Send screenshots directly to chat
 - Viewport and wait options for accurate captures
 
-### HTML Artifacts
-
-- Generate standalone HTML pages (calculators, dashboards, reports, etc.)
-- Store and manage artifacts in R2
-- Tailwind CSS v4 and Alpine.js pre-configured
-- Public URL for each artifact
-
 ### Commands
 
 | Command  | Description                        |
@@ -149,5 +143,5 @@ Telegram → Webhook → Chat SDK → Cloudflare Worker → Durable Object (per 
 
 | Bucket | Purpose                        |
 | ------ | ------------------------------ |
-| R2     | Screenshots and HTML artifacts |
+| R2     | Screenshots                    |
 | DO     | Conversation state and history |

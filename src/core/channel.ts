@@ -10,7 +10,6 @@ export interface ChatTarget {
 // becomes its own Context.Service implementing this; ChannelRegistry composes
 // them into a lookup keyed by the threadId prefix.
 export interface Channel {
-  readonly name: string;
   readonly adapter: Adapter;
   readonly decodeThreadId: (threadId: string) => { readonly chatId: string };
   readonly postNotification: (target: ChatTarget, message: string) => Effect.Effect<void, unknown>;
