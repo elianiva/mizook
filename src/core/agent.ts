@@ -274,9 +274,10 @@ export class MizookAgent extends Think<Env> {
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
         );
 
-        this.runTurn({ mode: "submit", input: input.text }).catch((err) =>
-          Effect.logError("runTurn_failed", err),
-        );
+        yield* Effect.tryPromise({
+          try: () => this.runTurn({ mode: "wait", input: input.text }),
+          catch: (cause) => new StorageError({ cause }),
+        });
       }),
     );
   }
