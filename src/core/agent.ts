@@ -258,6 +258,22 @@ export class MizookAgent extends Think<Env> {
         // Switch to per-topic session for conversation isolation
         this.session = manager.getSession(input.threadId);
 
+        // Seed the per-thread session's soul context. SessionManager
+        // namespaces context keys as `{label}_{sessionId}`, so the
+        // base soul set in onStart (key "soul") is invisible here.
+        const soulSeed = this.getSystemPrompt();
+        const soulProvider = new AgentContextProvider(this, `soul_${input.threadId}`);
+        const storedSoul = yield* Effect.tryPromise({
+          try: () => soulProvider.get(),
+          catch: (cause) => new StorageError({ cause }),
+        });
+        if (!storedSoul) {
+          yield* Effect.tryPromise({
+            try: () => soulProvider.set(soulSeed),
+            catch: (cause) => new StorageError({ cause }),
+          });
+        }
+
         // Persist turn state so beforeTurn/onChatError can recover it
         // after eviction. The serialized thread and chat target live here
         // so the response can still be delivered even if the DO cold-starts.
@@ -315,6 +331,10 @@ export class MizookAgent extends Think<Env> {
               );
               turn = recoveredTurn;
               serialized = recoveredSerialized;
+
+              // Recreate the per-thread session on cold start recovery
+              const manager = this.getOrCreateSessionManager();
+              this.session = manager.getSession(recoveredTurn.threadId);
             }
           }
         }
