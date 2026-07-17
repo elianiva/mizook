@@ -255,16 +255,26 @@ export class MizookAgent extends Think<Env> {
           // Switch to per-topic session for conversation isolation
           this.session = manager.getSession(input.threadId);
         });
+        // Persist turn state so beforeTurn/onChatError can recover it
+        // after eviction. The serialized thread and chat target live here
+        // so the response can still be delivered even if the DO cold-starts.
+        yield* Effect.tryPromise(() =>
+          this.ctx.storage.put({
+            __turn: this.currentTurn,
+            __serializedThread: this.serializedThread,
+          }),
+        );
 
         yield* Effect.logInfo(
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
         );
 
-        // Process the turn inline. Mode "wait" runs inference synchronously so session
-        // switching (above) is stable — no race with an async alarm.
-        yield* Effect.tryPromise({
-          try: () => this.runTurn({ mode: "wait", input: input.text }),
-          catch: (err) => new Error("runTurn_failed", { cause: err }),
+        // Submit as async submission so Think persists to SQL + schedules an alarm.
+        // Mode "submit" survives via alarm-driven submission drain — no race with
+        // async eviction. Mode "wait" runs the turn inline but fire-and-forget drops
+        // it after RPC returns, losing the turn on eviction.
+        this.runTurn({ mode: "submit", input: input.text }).catch((err) => {
+          this.runtime.runFork(Effect.logError("runTurn_failed", err));
         });
       }),
     );
@@ -275,17 +285,44 @@ export class MizookAgent extends Think<Env> {
       Effect.gen({ self: this }, function* () {
         yield* Effect.logInfo(`beforeTurn_start session_id=${this.session ? "set" : "null"}`);
         const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
-        const turn = this.currentTurn;
-        if (!turn || !this.serializedThread) {
+        let turn = this.currentTurn;
+        let serialized = this.serializedThread;
+
+        // Recover from DO storage if cold-started after eviction
+        if (!turn || !serialized) {
+          const stored = yield* Effect.tryPromise(() =>
+            this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
+          ).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
+          if (stored instanceof Map) {
+            const st = stored as Map<string, unknown>;
+            const recoveredTurn = st.get("__turn") as TurnState | undefined;
+            const recoveredSerialized = st.get("__serializedThread") as
+              | SerializedThread
+              | undefined;
+            if (recoveredTurn && recoveredSerialized) {
+              yield* Effect.sync(() => {
+                this.currentTurn = recoveredTurn;
+                this.serializedThread = recoveredSerialized;
+              });
+              yield* Effect.logInfo(
+                `beforeTurn_recovered_from_storage thread_id=${recoveredTurn.threadId}`,
+              );
+              turn = recoveredTurn;
+              serialized = recoveredSerialized;
+            }
+          }
+        }
+
+        if (!turn || !serialized) {
           yield* Effect.logInfo(
-            `beforeTurn_early_return turn=${!!turn} serialized=${!!this.serializedThread}`,
+            `beforeTurn_no_turn_context turn=${!!turn} serialized=${!!serialized}`,
           );
           return { system: freshSystem };
         }
 
-        const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
+        const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn!.threadId));
         const { readable, writable } = new TransformStream<string, string>();
-        const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
+        const thread = ThreadImpl.fromJSON(serialized, channel.adapter);
         yield* Effect.tryPromise(() => thread.startTyping());
         yield* Effect.sync(() => {
           this.writer = writable.getWriter();
@@ -371,14 +408,16 @@ export class MizookAgent extends Think<Env> {
       Effect.gen({ self: this }, function* () {
         yield* Effect.logInfo(`onChatResponse_start status=${result.status}`);
         yield* this.cleanupStream();
-        const turn = this.currentTurn;
-        const latency = turn ? (yield* Clock.currentTimeMillis) - turn.startTime : 0;
+        // Clear both memory and storage so a stale __turn never poisons a subsequent turn
         yield* Effect.sync(() => {
           this.currentTurn = null;
           this.serializedThread = null;
         });
+        yield* Effect.tryPromise(() =>
+          this.ctx.storage.delete(["__turn", "__serializedThread"]),
+        ).pipe(Effect.catchCause(() => Effect.void));
         yield* Effect.logInfo(
-          `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""} latency_ms=${latency} status=${result.status} channel=${turn?.channelType ?? "?"} trace_id=${turn?.traceId ?? "?"}`,
+          `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""}`,
         );
       }),
     );
@@ -388,12 +427,35 @@ export class MizookAgent extends Think<Env> {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
         yield* this.cleanupStream();
-        const turn = this.currentTurn;
-        const serialized = this.serializedThread;
+        let turn = this.currentTurn;
+        let serialized = this.serializedThread;
+
+        // Recover from DO storage if cold-started
+        if (!turn || !serialized) {
+          const stored = yield* Effect.tryPromise(() =>
+            this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
+          ).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
+          if (stored instanceof Map) {
+            const st = stored as Map<string, unknown>;
+            const recoveredTurn = st.get("__turn") as TurnState | undefined;
+            const recoveredSerialized = st.get("__serializedThread") as
+              | SerializedThread
+              | undefined;
+            if (recoveredTurn && recoveredSerialized) {
+              turn = recoveredTurn;
+              serialized = recoveredSerialized;
+            }
+          }
+        }
+
         yield* Effect.sync(() => {
           this.currentTurn = null;
           this.serializedThread = null;
         });
+        yield* Effect.tryPromise(() =>
+          this.ctx.storage.delete(["__turn", "__serializedThread"]),
+        ).pipe(Effect.catchCause(() => Effect.void));
+
         if (turn && serialized) {
           const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
           const thread = ThreadImpl.fromJSON(serialized, channel.adapter);
