@@ -7,7 +7,13 @@ import type { Env } from "./env";
 import { WorkersEnv } from "./workers-env";
 import type { MizookAgent } from "./agent";
 import type { AppRuntime, AppServices } from "./runtime";
-import { AgentRpcError } from "./errors";
+import {
+  AgentLookupError,
+  AgentRpcError,
+  ChatActionError,
+  ModelQueryError,
+  ModelSetError,
+} from "./errors";
 import type { Channel } from "./channel";
 import { parseAllowedIds } from "./allowed-users";
 
@@ -31,7 +37,10 @@ const AVAILABLE_MODELS = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "
 
 const lookupAgent = Effect.fn("lookupAgent")(function* (chatId: string) {
   const { env } = yield* WorkersEnv;
-  return yield* Effect.tryPromise(() => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId));
+  return yield* Effect.tryPromise({
+    try: () => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId),
+    catch: (cause) => new AgentLookupError({ cause }),
+  });
 });
 
 interface CommandContext {
@@ -40,12 +49,19 @@ interface CommandContext {
   args: string;
 }
 
+type CommandError =
+  | AgentLookupError
+  | AgentRpcError
+  | ChatActionError
+  | ModelQueryError
+  | ModelSetError;
+
 interface CommandDef {
   name: string;
   description: string;
   slash: boolean;
   requiresStart?: boolean;
-  handler: (ctx: CommandContext) => Effect.Effect<void, unknown, AppServices>;
+  handler: (ctx: CommandContext) => Effect.Effect<void, CommandError, AppServices>;
 }
 
 export const commands: CommandDef[] = [
@@ -55,9 +71,10 @@ export const commands: CommandDef[] = [
     slash: true,
     requiresStart: true,
     handler: ({ postable }) =>
-      Effect.tryPromise(() =>
-        postable.post("Hello. I am Mizook. Send me a message and I will respond."),
-      ),
+      Effect.tryPromise({
+        try: () => postable.post("Hello. I am Mizook. Send me a message and I will respond."),
+        catch: (cause) => new ChatActionError({ cause }),
+      }),
   },
   {
     name: "reset",
@@ -66,18 +83,37 @@ export const commands: CommandDef[] = [
     handler: ({ postable, chatId }) =>
       Effect.gen(function* () {
         const agent = yield* lookupAgent(chatId);
-        yield* Effect.tryPromise(() => agent.resetChat());
-        yield* Effect.tryPromise(() => postable.post("Chat reset. Starting fresh."));
+        yield* Effect.tryPromise({
+          try: () => agent.resetChat(),
+          catch: (cause) => new AgentRpcError({ cause }),
+        });
+        yield* Effect.tryPromise({
+          try: () => postable.post("Chat reset. Starting fresh."),
+          catch: (cause) => new ChatActionError({ cause }),
+        });
         yield* Effect.logInfo(`reset_done chat_id=${chatId}`);
       }).pipe(
+        Effect.catchTag("AgentRpcError", (error) =>
+          Effect.gen(function* () {
+            yield* Effect.logError("reset_rpc_failed", error);
+            yield* Effect.tryPromise({
+              try: () => postable.post("Reset failed. Please try again."),
+              catch: (cause) => new ChatActionError({ cause }),
+            }).pipe(Effect.catchCause(() => Effect.void));
+          }),
+        ),
+        Effect.catchTag("ChatActionError", (error) =>
+          Effect.gen(function* () {
+            yield* Effect.logError("reset_notification_failed", error);
+          }),
+        ),
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
-            yield* Effect.logError("reset_failed", cause);
-            yield* Effect.tryPromise(() =>
-              postable.post(
-                `Reset failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-              ),
-            ).pipe(Effect.catchCause(() => Effect.void));
+            yield* Effect.logError("reset_unexpected", cause);
+            yield* Effect.tryPromise({
+              try: () => postable.post("Unexpected error during reset."),
+              catch: (cause) => new ChatActionError({ cause }),
+            }).pipe(Effect.catchCause(() => Effect.void));
           }),
         ),
       ),
@@ -87,11 +123,14 @@ export const commands: CommandDef[] = [
     description: "Show available commands",
     slash: true,
     handler: ({ postable }) =>
-      Effect.tryPromise(() =>
-        postable.post(
-          "Available commands:\n" + commands.map((c) => `/${c.name} — ${c.description}`).join("\n"),
-        ),
-      ),
+      Effect.tryPromise({
+        try: () =>
+          postable.post(
+            "Available commands:\n" +
+              commands.map((c) => `/${c.name} — ${c.description}`).join("\n"),
+          ),
+        catch: (cause) => new ChatActionError({ cause }),
+      }),
   },
   {
     name: "status",
@@ -100,14 +139,19 @@ export const commands: CommandDef[] = [
     handler: ({ postable, chatId }) =>
       Effect.gen(function* () {
         const agent = yield* lookupAgent(chatId);
-        const modelName = yield* Effect.tryPromise(() => agent.getModelName(chatId));
-        const schedules = (yield* Effect.tryPromise(() => agent.listSchedules())) as Array<{
-          callback: string;
-        }>;
+        const modelName = yield* Effect.tryPromise({
+          try: () => agent.getModelName(chatId),
+          catch: (cause) => new ModelQueryError({ cause }),
+        });
+        const schedules = (yield* Effect.tryPromise({
+          try: () => agent.listSchedules(),
+          catch: (cause) => new ModelQueryError({ cause }),
+        })) as Array<{ callback: string }>;
         const reminderCount = schedules.filter((s) => s.callback === "sendReminder").length;
-        yield* Effect.tryPromise(() =>
-          postable.post(`Model: ${modelName}\nActive reminders: ${reminderCount}`),
-        );
+        yield* Effect.tryPromise({
+          try: () => postable.post(`Model: ${modelName}\nActive reminders: ${reminderCount}`),
+          catch: (cause) => new ChatActionError({ cause }),
+        });
       }),
   },
   {
@@ -118,17 +162,30 @@ export const commands: CommandDef[] = [
       Effect.gen(function* () {
         const agent = yield* lookupAgent(chatId);
         if (!args) {
-          const current = yield* Effect.tryPromise(() => agent.getModelName(chatId));
-          yield* Effect.tryPromise(() =>
-            postable.post(`Current model: ${current}\nAvailable: ${AVAILABLE_MODELS.join(", ")}`),
-          );
+          const current = yield* Effect.tryPromise({
+            try: () => agent.getModelName(chatId),
+            catch: (cause) => new ModelQueryError({ cause }),
+          });
+          yield* Effect.tryPromise({
+            try: () =>
+              postable.post(`Current model: ${current}\nAvailable: ${AVAILABLE_MODELS.join(", ")}`),
+            catch: (cause) => new ChatActionError({ cause }),
+          });
         } else if (!AVAILABLE_MODELS.includes(args)) {
-          yield* Effect.tryPromise(() =>
-            postable.post(`Unknown model "${args}". Available: ${AVAILABLE_MODELS.join(", ")}`),
-          );
+          yield* Effect.tryPromise({
+            try: () =>
+              postable.post(`Unknown model "${args}". Available: ${AVAILABLE_MODELS.join(", ")}`),
+            catch: (cause) => new ChatActionError({ cause }),
+          });
         } else {
-          yield* Effect.tryPromise(() => agent.setModel(chatId, args));
-          yield* Effect.tryPromise(() => postable.post(`Model set to ${args}`));
+          yield* Effect.tryPromise({
+            try: () => agent.setModel(chatId, args),
+            catch: (cause) => new ModelSetError({ cause }),
+          });
+          yield* Effect.tryPromise({
+            try: () => postable.post(`Model set to ${args}`),
+            catch: (cause) => new ChatActionError({ cause }),
+          });
         }
       }),
   },
@@ -158,15 +215,22 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
     message: Message,
   ) {
     if (mode.checkAccess && !allowedUsers.has(Number(message.author.userId))) {
-      yield* Effect.tryPromise(() => thread.post("Access denied."));
+      yield* Effect.tryPromise({
+        try: () => thread.post("Access denied."),
+        catch: (cause) => new ChatActionError({ cause }),
+      });
       return;
     }
-    yield* Effect.tryPromise(() => thread.subscribe());
+    yield* Effect.tryPromise({
+      try: () => thread.subscribe(),
+      catch: (cause) => new ChatActionError({ cause }),
+    });
     const { chatId } = channel.decodeThreadId(thread.id);
     if (!checkRateLimit(chatId)) {
-      yield* Effect.tryPromise(() =>
-        thread.post("Rate limit exceeded. Please wait a moment and try again."),
-      );
+      yield* Effect.tryPromise({
+        try: () => thread.post("Rate limit exceeded. Please wait a moment and try again."),
+        catch: (cause) => new ChatActionError({ cause }),
+      });
       return;
     }
     yield* handleTurn(thread, message);
@@ -175,7 +239,10 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
   const dispatchSlash = (event: SlashCommandEvent) =>
     Effect.gen(function* () {
       if (!allowedUsers.has(Number(event.user.userId))) {
-        yield* Effect.tryPromise(() => event.channel.post("Access denied."));
+        yield* Effect.tryPromise({
+          try: () => event.channel.post("Access denied."),
+          catch: (cause) => new ChatActionError({ cause }),
+        });
         return;
       }
       const cmd = findCommandByName(event.command);
@@ -187,7 +254,23 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
           args: event.text,
         });
       }
-    }).pipe(Effect.catchCause((cause) => Effect.logError("slash_error", cause)));
+    }).pipe(
+      Effect.catchTag("AgentLookupError", (error) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("slash_agent_lookup_failed", error);
+          yield* Effect.tryPromise({
+            try: () => event.channel.post("Agent unavailable. Try again later."),
+            catch: (cause) => new ChatActionError({ cause }),
+          }).pipe(Effect.catchCause(() => Effect.void));
+        }),
+      ),
+      Effect.catchTag("ChatActionError", (error) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("slash_notification_failed", error);
+        }),
+      ),
+      Effect.catchCause((cause) => Effect.logError("slash_unexpected", cause)),
+    );
 
   const handleTurn = (thread: Thread, message: Message) =>
     Effect.gen(function* () {
@@ -213,7 +296,27 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
       yield* Effect.logInfo(
         `turn_submitted chat_id=${chatId} thread_id=${thread.id} trace_id=${traceId}`,
       );
-    }).pipe(Effect.catchCause((cause) => Effect.logError("turn_error", cause)));
+    }).pipe(
+      Effect.catchTag("AgentLookupError", (error) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("turn_agent_lookup_failed", error);
+          yield* Effect.tryPromise({
+            try: () => thread.post("Failed to connect to agent. Please try again."),
+            catch: (cause) => new ChatActionError({ cause }),
+          }).pipe(Effect.catchCause(() => Effect.void));
+        }),
+      ),
+      Effect.catchTag("AgentRpcError", (error) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("turn_rpc_failed", error);
+          yield* Effect.tryPromise({
+            try: () => thread.post("Failed to process your message. Please try again."),
+            catch: (cause) => new ChatActionError({ cause }),
+          }).pipe(Effect.catchCause(() => Effect.void));
+        }),
+      ),
+      Effect.catchCause((cause) => Effect.logError("turn_unexpected", cause)),
+    );
 
   const onMessage = (mode: TurnMode, handlerName: string) => {
     return (t: Thread, m: Message) => {

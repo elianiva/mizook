@@ -29,6 +29,11 @@ import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
+import {
+  ChatActionError,
+  SessionError,
+  StorageError,
+} from "./errors";
 
 const modelOverrides = new Map<string, string>();
 
@@ -157,24 +162,34 @@ export class MizookAgent extends Think<Env> {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
         const provider = new AgentContextProvider(this, "soul");
-        const stored = yield* Effect.tryPromise(() => provider.get());
+        const stored = yield* Effect.tryPromise({
+          try: () => provider.get(),
+          catch: (cause) => new StorageError({ cause }),
+        });
         if (!stored) {
-          yield* Effect.tryPromise(() => provider.set(this.getSystemPrompt()));
+          yield* Effect.tryPromise({
+            try: () => provider.set(this.getSystemPrompt()),
+            catch: (cause) => new StorageError({ cause }),
+          });
         }
         if (this.env.EXA_API_KEY) {
           const exaKey = this.env.EXA_API_KEY;
-          yield* Effect.tryPromise(() =>
-            this.addMcpServer("exa", "https://mcp.exa.ai/mcp", {
-              transport: { headers: { "x-api-key": exaKey } },
-            }),
-          );
+          yield* Effect.tryPromise({
+            try: () =>
+              this.addMcpServer("exa", "https://mcp.exa.ai/mcp", {
+                transport: { headers: { "x-api-key": exaKey } },
+              }),
+            catch: (cause) => new StorageError({ cause }),
+          });
         }
         if (this.env.CF_API_TOKEN) {
-          yield* Effect.tryPromise(() =>
-            this.addMcpServer("cloudflare", "https://mcp.cloudflare.com/mcp", {
-              transport: { headers: { Authorization: `Bearer ${this.env.CF_API_TOKEN}` } },
-            }),
-          );
+          yield* Effect.tryPromise({
+            try: () =>
+              this.addMcpServer("cloudflare", "https://mcp.cloudflare.com/mcp", {
+                transport: { headers: { Authorization: `Bearer ${this.env.CF_API_TOKEN}` } },
+              }),
+            catch: (cause) => new StorageError({ cause }),
+          });
         }
         yield* Effect.logInfo("agent_onStart_done");
       }),
@@ -192,12 +207,21 @@ export class MizookAgent extends Think<Env> {
         // Clear only the current topic's session
         if (threadId && this.sessionManager) {
           const topicSession = this.sessionManager.getSession(threadId);
-          yield* Effect.tryPromise(() => topicSession.clearMessages());
+          yield* Effect.tryPromise({
+            try: () => topicSession.clearMessages(),
+            catch: (cause) => new SessionError({ cause }),
+          });
         } else {
-          yield* Effect.tryPromise(() => this.clearMessages());
+          yield* Effect.tryPromise({
+            try: () => this.clearMessages(),
+            catch: (cause) => new SessionError({ cause }),
+          });
         }
 
-        yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
+        yield* Effect.tryPromise({
+          try: () => this.session.refreshSystemPrompt(),
+          catch: (cause) => new SessionError({ cause }),
+        });
         yield* Effect.logInfo(`reset_chat_done thread_id=${threadId ?? "all"}`);
       }),
     );
@@ -237,12 +261,14 @@ export class MizookAgent extends Think<Env> {
         // Persist turn state so beforeTurn/onChatError can recover it
         // after eviction. The serialized thread and chat target live here
         // so the response can still be delivered even if the DO cold-starts.
-        yield* Effect.tryPromise(() =>
-          this.ctx.storage.put({
-            __turn: this.currentTurn,
-            __serializedThread: this.serializedThread,
-          }),
-        );
+        yield* Effect.tryPromise({
+          try: () =>
+            this.ctx.storage.put({
+              __turn: this.currentTurn,
+              __serializedThread: this.serializedThread,
+            }),
+          catch: (cause) => new StorageError({ cause }),
+        });
 
         yield* Effect.logInfo(
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
@@ -259,15 +285,19 @@ export class MizookAgent extends Think<Env> {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
         yield* Effect.logInfo(`beforeTurn_start session_id=${this.session ? "set" : "null"}`);
-        const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
+        const freshSystem = yield* Effect.tryPromise({
+          try: () => this.session.refreshSystemPrompt(),
+          catch: (cause) => new SessionError({ cause }),
+        });
         let turn = this.currentTurn;
         let serialized = this.serializedThread;
 
         // Recover from DO storage if cold-started after eviction
         if (!turn || !serialized) {
-          const stored = yield* Effect.tryPromise(() =>
-            this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
-          ).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
+          const stored = yield* Effect.tryPromise({
+            try: () => this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
+            catch: (cause) => new StorageError({ cause }),
+          }).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
           if (stored instanceof Map) {
             const st = stored as Map<string, unknown>;
             const recoveredTurn = st.get("__turn") as TurnState | undefined;
@@ -297,7 +327,10 @@ export class MizookAgent extends Think<Env> {
 
         const { readable, writable } = new TransformStream<string, string>();
         const thread = ThreadImpl.fromJSON(serialized, this.channel.adapter);
-        yield* Effect.tryPromise(() => thread.startTyping());
+        yield* Effect.tryPromise({
+          try: () => thread.startTyping(),
+          catch: (cause) => new ChatActionError({ cause }),
+        });
         yield* Effect.sync(() => {
           this.writer = writable.getWriter();
           this.pendingStream = thread
@@ -355,8 +388,18 @@ export class MizookAgent extends Think<Env> {
     return Effect.gen({ self: this }, function* () {
       const writer = this.writer;
       const pending = this.pendingStream;
-      if (writer) yield* Effect.tryPromise(() => writer.close());
-      if (pending) yield* Effect.tryPromise(() => pending);
+      if (writer) {
+        yield* Effect.tryPromise({
+          try: () => writer.close(),
+          catch: (cause) => new ChatActionError({ cause }),
+        });
+      }
+      if (pending) {
+        yield* Effect.tryPromise({
+          try: () => pending,
+          catch: (cause) => new ChatActionError({ cause }),
+        });
+      }
       yield* Effect.sync(() => {
         this.writer = null;
         this.pendingStream = null;
@@ -374,9 +417,10 @@ export class MizookAgent extends Think<Env> {
           this.currentTurn = null;
           this.serializedThread = null;
         });
-        yield* Effect.tryPromise(() =>
-          this.ctx.storage.delete(["__turn", "__serializedThread"]),
-        ).pipe(Effect.catchCause(() => Effect.void));
+        yield* Effect.tryPromise({
+          try: () => this.ctx.storage.delete(["__turn", "__serializedThread"]),
+          catch: (cause) => new StorageError({ cause }),
+        }).pipe(Effect.catchCause(() => Effect.void));
         yield* Effect.logInfo(
           `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""}`,
         );
@@ -393,9 +437,10 @@ export class MizookAgent extends Think<Env> {
 
         // Recover from DO storage if cold-started
         if (!turn || !serialized) {
-          const stored = yield* Effect.tryPromise(() =>
-            this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
-          ).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
+          const stored = yield* Effect.tryPromise({
+            try: () => this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
+            catch: (cause) => new StorageError({ cause }),
+          }).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
           if (stored instanceof Map) {
             const st = stored as Map<string, unknown>;
             const recoveredTurn = st.get("__turn") as TurnState | undefined;
@@ -413,13 +458,17 @@ export class MizookAgent extends Think<Env> {
           this.currentTurn = null;
           this.serializedThread = null;
         });
-        yield* Effect.tryPromise(() =>
-          this.ctx.storage.delete(["__turn", "__serializedThread"]),
-        ).pipe(Effect.catchCause(() => Effect.void));
+        yield* Effect.tryPromise({
+          try: () => this.ctx.storage.delete(["__turn", "__serializedThread"]),
+          catch: (cause) => new StorageError({ cause }),
+        }).pipe(Effect.catchCause(() => Effect.void));
 
         if (turn && serialized) {
           const thread = ThreadImpl.fromJSON(serialized, this.channel.adapter);
-          yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
+          yield* Effect.tryPromise({
+            try: () => thread.post("Sorry, something went wrong."),
+            catch: (cause) => new ChatActionError({ cause }),
+          });
         }
         yield* Effect.logError("turn_error", error);
         return error;

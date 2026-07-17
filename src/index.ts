@@ -4,6 +4,7 @@ import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
 import { handleTelegramWebhook } from "./features/telegram/webhook";
 import { serveScreenshot } from "./features/browser/routes";
+import { ScreenshotError, WebhookError } from "./core/errors";
 
 export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
@@ -14,9 +15,17 @@ const route = Effect.fn("route")(function* (request: Request, env: Env, ctx: Exe
 
   return yield* Match.value(pathname).pipe(
     Match.when("/telegram", () =>
-      Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
+      Effect.tryPromise({
+        try: () => handleTelegramWebhook(request, env, ctx),
+        catch: (cause) => new WebhookError({ cause }),
+      }),
     ),
-    Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
+    Match.when("/screenshots/", () =>
+      Effect.tryPromise({
+        try: () => serveScreenshot(url, env),
+        catch: (cause) => new ScreenshotError({ cause }),
+      }),
+    ),
     Match.when("/", () => Effect.succeed(new Response("mizook", { status: 200 }))),
     Match.orElse(() =>
       Effect.gen(function* () {

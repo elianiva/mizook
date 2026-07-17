@@ -7,7 +7,8 @@ export function parseAllowedIds(raw: string): Set<number> {
         raw.split(/[\s,]+/).filter(Boolean),
       ).filter(Number.isSafeInteger),
     );
-  } catch {
+  } catch (cause) {
+    console.error("parseAllowedIds_failed", cause);
     return new Set<number>();
   }
 }
