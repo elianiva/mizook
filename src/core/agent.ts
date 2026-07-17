@@ -12,7 +12,6 @@ import {
   AgentContextProvider,
   AgentSearchProvider,
   Session as AgentSession,
-  SessionManager,
 } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
 import type { SerializedThread } from "chat";
@@ -55,7 +54,6 @@ export class MizookAgent extends Think<Env> {
   private serializedThread: SerializedThread | null = null;
   private writer: WritableStreamDefaultWriter<string> | null = null;
   private pendingStream: Promise<unknown> | null = null;
-  private sessionManager: SessionManager | null = null;
 
   waitForMcpConnections = { timeout: 10_000 } as const;
 
@@ -109,7 +107,7 @@ export class MizookAgent extends Think<Env> {
     return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
   }
 
-  private _applySessionConfig<T extends AgentSession | SessionManager>(builder: T): T {
+  private _applySessionConfig(builder: AgentSession): AgentSession {
     const summarizer = (prompt: string) => summarize(this.env, prompt);
 
     return builder
@@ -131,18 +129,11 @@ export class MizookAgent extends Think<Env> {
       })
       .onCompaction(createCompactFunction({ summarize: summarizer }))
       .compactAfter(40_000)
-      .withCachedPrompt() as T;
+      .withCachedPrompt();
   }
 
   configureSession(session: Session) {
     return this._applySessionConfig(session);
-  }
-
-  private getOrCreateSessionManager(): SessionManager {
-    if (!this.sessionManager) {
-      this.sessionManager = this._applySessionConfig(SessionManager.create(this));
-    }
-    return this.sessionManager;
   }
 
   getTools(): ToolSet {
@@ -200,29 +191,17 @@ export class MizookAgent extends Think<Env> {
   resetChat() {
     return this.runtime.runPromise(
       Effect.gen({ self: this }, function* () {
-        const threadId = this.currentTurn?.threadId;
         this.resetTurnState();
         this.currentTurn = null;
-
-        // Clear only the current topic's session
-        if (threadId && this.sessionManager) {
-          const topicSession = this.sessionManager.getSession(threadId);
-          yield* Effect.tryPromise({
-            try: () => topicSession.clearMessages(),
-            catch: (cause) => new SessionError({ cause }),
-          });
-        } else {
-          yield* Effect.tryPromise({
-            try: () => this.clearMessages(),
-            catch: (cause) => new SessionError({ cause }),
-          });
-        }
-
+        yield* Effect.tryPromise({
+          try: () => this.clearMessages(),
+          catch: (cause) => new SessionError({ cause }),
+        });
         yield* Effect.tryPromise({
           try: () => this.session.refreshSystemPrompt(),
           catch: (cause) => new SessionError({ cause }),
         });
-        yield* Effect.logInfo(`reset_chat_done thread_id=${threadId ?? "all"}`);
+        yield* Effect.logInfo("reset_chat_done");
       }),
     );
   }
@@ -244,7 +223,6 @@ export class MizookAgent extends Think<Env> {
         );
 
         const now = yield* Clock.currentTimeMillis;
-        const manager = this.getOrCreateSessionManager();
         this.serializedThread = input.thread;
         this.currentTurn = {
           channelType: input.channelType,
@@ -254,25 +232,6 @@ export class MizookAgent extends Think<Env> {
           startTime: now,
           traceId: input.traceId,
         };
-
-        // Switch to per-topic session for conversation isolation
-        this.session = manager.getSession(input.threadId);
-
-        // Seed the per-thread session's soul context. SessionManager
-        // namespaces context keys as `{label}_{sessionId}`, so the
-        // base soul set in onStart (key "soul") is invisible here.
-        const soulSeed = this.getSystemPrompt();
-        const soulProvider = new AgentContextProvider(this, `soul_${input.threadId}`);
-        const storedSoul = yield* Effect.tryPromise({
-          try: () => soulProvider.get(),
-          catch: (cause) => new StorageError({ cause }),
-        });
-        if (!storedSoul) {
-          yield* Effect.tryPromise({
-            try: () => soulProvider.set(soulSeed),
-            catch: (cause) => new StorageError({ cause }),
-          });
-        }
 
         // Persist turn state so beforeTurn/onChatError can recover it
         // after eviction. The serialized thread and chat target live here
@@ -331,10 +290,6 @@ export class MizookAgent extends Think<Env> {
               );
               turn = recoveredTurn;
               serialized = recoveredSerialized;
-
-              // Recreate the per-thread session on cold start recovery
-              const manager = this.getOrCreateSessionManager();
-              this.session = manager.getSession(recoveredTurn.threadId);
             }
           }
         }
