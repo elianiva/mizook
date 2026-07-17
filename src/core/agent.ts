@@ -218,21 +218,22 @@ export class MizookAgent extends Think<Env> {
         yield* Effect.logInfo(
           `submitTurn_called chat_id=${input.chatId} thread_id=${input.threadId}`,
         );
+
         const now = yield* Clock.currentTimeMillis;
         const manager = this.getOrCreateSessionManager();
-        yield* Effect.sync(() => {
-          this.serializedThread = input.thread;
-          this.currentTurn = {
-            channelType: input.channelType,
-            chatId: input.chatId,
-            threadId: input.threadId,
-            replyToMessageId: Number(input.messageId),
-            startTime: now,
-            traceId: input.traceId,
-          };
-          // Switch to per-topic session for conversation isolation
-          this.session = manager.getSession(input.threadId);
-        });
+        this.serializedThread = input.thread;
+        this.currentTurn = {
+          channelType: input.channelType,
+          chatId: input.chatId,
+          threadId: input.threadId,
+          replyToMessageId: Number(input.messageId),
+          startTime: now,
+          traceId: input.traceId,
+        };
+
+        // Switch to per-topic session for conversation isolation
+        this.session = manager.getSession(input.threadId);
+
         // Persist turn state so beforeTurn/onChatError can recover it
         // after eviction. The serialized thread and chat target live here
         // so the response can still be delivered even if the DO cold-starts.
@@ -247,13 +248,9 @@ export class MizookAgent extends Think<Env> {
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
         );
 
-        // Submit as async submission so Think persists to SQL + schedules an alarm.
-        // Mode "submit" survives via alarm-driven submission drain — no race with
-        // async eviction. Mode "wait" runs the turn inline but fire-and-forget drops
-        // it after RPC returns, losing the turn on eviction.
-        this.runTurn({ mode: "submit", input: input.text }).catch((err) => {
-          this.runtime.runFork(Effect.logError("runTurn_failed", err));
-        });
+        this.runTurn({ mode: "submit", input: input.text }).catch((err) =>
+          Effect.logError("runTurn_failed", err),
+        );
       }),
     );
   }

@@ -1,6 +1,5 @@
 import { Effect } from "effect";
 import { createTelegramAdapter, type TelegramAdapter } from "@chat-adapter/telegram";
-import { commands } from "../../core/bot";
 import type { Channel } from "../../core/channel";
 
 export function createTelegramChannel(botToken: string): Channel {
@@ -30,16 +29,4 @@ export function createTelegramChannel(botToken: string): Channel {
         if (!res.ok) throw new Error(`sendPhoto failed: ${res.status}`);
       }),
   };
-}
-
-export async function syncCommandMenu(botToken: string): Promise<void> {
-  const menuCommands = commands
-    .filter((c) => c.slash)
-    .map((c) => ({ command: c.name, description: c.description }));
-  const res = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commands: menuCommands }),
-  });
-  if (!res.ok) throw new Error(`setMyCommands failed: ${res.status}`);
 }

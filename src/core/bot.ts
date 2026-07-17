@@ -2,13 +2,14 @@ import { Effect } from "effect";
 import { Chat } from "chat";
 import type { Thread, Message, SlashCommandEvent } from "chat";
 import { createCloudflareState } from "chat-state-cloudflare-do";
+import { getAgentByName } from "agents";
 import type { Env } from "./env";
+import { WorkersEnv } from "./workers-env";
+import type { MizookAgent } from "./agent";
 import type { AppRuntime, AppServices } from "./runtime";
-import { AgentGateway } from "./agent-gateway";
 import { AgentRpcError } from "./errors";
 import type { Channel } from "./channel";
 import { parseAllowedIds } from "./allowed-users";
-import { syncCommandMenu } from "../features/telegram/channel";
 
 const rateLimits = new Map<string, { tokens: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 30;
@@ -28,7 +29,10 @@ function checkRateLimit(chatId: string): boolean {
 
 const AVAILABLE_MODELS = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "mimo-v2.5-pro"];
 
-// ── Command registry ────────────────────────────────────────────────────
+const lookupAgent = Effect.fn("lookupAgent")(function* (chatId: string) {
+  const { env } = yield* WorkersEnv;
+  return yield* Effect.tryPromise(() => getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, chatId));
+});
 
 interface CommandContext {
   postable: { post(message: string): Promise<unknown> };
@@ -61,7 +65,7 @@ export const commands: CommandDef[] = [
     slash: true,
     handler: ({ postable, chatId }) =>
       Effect.gen(function* () {
-        const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+        const agent = yield* lookupAgent(chatId);
         yield* Effect.tryPromise(() => agent.resetChat());
         yield* Effect.tryPromise(() => postable.post("Chat reset. Starting fresh."));
         yield* Effect.logInfo(`reset_done chat_id=${chatId}`);
@@ -95,7 +99,7 @@ export const commands: CommandDef[] = [
     slash: true,
     handler: ({ postable, chatId }) =>
       Effect.gen(function* () {
-        const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+        const agent = yield* lookupAgent(chatId);
         const modelName = yield* Effect.tryPromise(() => agent.getModelName(chatId));
         const schedules = (yield* Effect.tryPromise(() => agent.listSchedules())) as Array<{
           callback: string;
@@ -112,7 +116,7 @@ export const commands: CommandDef[] = [
     slash: true,
     handler: ({ postable, chatId, args }) =>
       Effect.gen(function* () {
-        const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+        const agent = yield* lookupAgent(chatId);
         if (!args) {
           const current = yield* Effect.tryPromise(() => agent.getModelName(chatId));
           yield* Effect.tryPromise(() =>
@@ -130,24 +134,12 @@ export const commands: CommandDef[] = [
   },
 ];
 
-function findCommand(text: string): { command: CommandDef; args: string } | undefined {
-  const trimmed = text.trim();
-  for (const cmd of commands) {
-    if (trimmed === `/${cmd.name}`) return { command: cmd, args: "" };
-    if (trimmed.startsWith(`/${cmd.name} `))
-      return { command: cmd, args: trimmed.slice(cmd.name.length + 2).trim() };
-  }
-  return undefined;
+function findCommandByName(command: string): CommandDef | undefined {
+  const name = command.startsWith("/") ? command.slice(1) : command;
+  return commands.find((c) => c.name === name);
 }
 
-let menuSynced = false;
-
 export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat {
-  if (!menuSynced) {
-    menuSynced = true;
-    syncCommandMenu(env.BOT_TOKEN).catch(() => {});
-  }
-
   const state = createCloudflareState({ namespace: env.CHAT_STATE });
   const chat = new Chat({
     userName: "mizook",
@@ -160,32 +152,25 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
 
   const allowedUsers = parseAllowedIds(env.TELEGRAM_ALLOWED_USER_IDS);
 
-  const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =>
-    Effect.gen(function* () {
-      if (mode.checkAccess && !allowedUsers.has(Number(message.author.userId))) {
-        yield* Effect.tryPromise(() => thread.post("Access denied."));
-        return;
-      }
-      yield* Effect.tryPromise(() => thread.subscribe());
-
-      const match = findCommand(message.text);
-      if (match) {
-        const { command, args } = match;
-        if (command.requiresStart && !mode.handleStart) return;
-        const { chatId } = channel.decodeThreadId(thread.id);
-        yield* command.handler({ postable: thread, chatId, args });
-        return;
-      }
-
-      const { chatId } = channel.decodeThreadId(thread.id);
-      if (!checkRateLimit(chatId)) {
-        yield* Effect.tryPromise(() =>
-          thread.post("Rate limit exceeded. Please wait a moment and try again."),
-        );
-        return;
-      }
-      yield* handleTurn(thread, message);
-    });
+  const dispatchMessage = Effect.fn("dispatchMessage")(function* (
+    mode: TurnMode,
+    thread: Thread,
+    message: Message,
+  ) {
+    if (mode.checkAccess && !allowedUsers.has(Number(message.author.userId))) {
+      yield* Effect.tryPromise(() => thread.post("Access denied."));
+      return;
+    }
+    yield* Effect.tryPromise(() => thread.subscribe());
+    const { chatId } = channel.decodeThreadId(thread.id);
+    if (!checkRateLimit(chatId)) {
+      yield* Effect.tryPromise(() =>
+        thread.post("Rate limit exceeded. Please wait a moment and try again."),
+      );
+      return;
+    }
+    yield* handleTurn(thread, message);
+  });
 
   const dispatchSlash = (event: SlashCommandEvent) =>
     Effect.gen(function* () {
@@ -193,10 +178,10 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
         yield* Effect.tryPromise(() => event.channel.post("Access denied."));
         return;
       }
-      const match = findCommand(event.command);
-      if (match) {
+      const cmd = findCommandByName(event.command);
+      if (cmd) {
         const { chatId } = channel.decodeThreadId(event.channel.id);
-        yield* match.command.handler({
+        yield* cmd.handler({
           postable: event.channel,
           chatId,
           args: event.text,
@@ -210,7 +195,7 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
       yield* Effect.logInfo(`handleTurn_start trace_id=${traceId}`);
       const { chatId } = channel.decodeThreadId(thread.id);
       yield* Effect.logInfo(`handleTurn_resolved_channel chat_id=${chatId} trace_id=${traceId}`);
-      const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+      const agent = yield* lookupAgent(chatId);
       yield* Effect.logInfo(`handleTurn_got_agent trace_id=${traceId}`);
       yield* Effect.tryPromise({
         try: () =>
@@ -236,7 +221,7 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
         if (handlerName === "dm") {
           yield* Effect.logInfo(`direct_message_received text=${m.text.slice(0, 50)}`);
         }
-        yield* dispatchMessage(mode)(t, m);
+        yield* dispatchMessage(mode, t, m);
       }).pipe(
         Effect.annotateLogs({ thread_id: t.id, user_id: m.author.userId, handler: handlerName }),
       );

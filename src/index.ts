@@ -8,25 +8,24 @@ import { serveScreenshot } from "./features/browser/routes";
 export { MizookAgent } from "./core/agent";
 export { ChatStateDO } from "chat-state-cloudflare-do";
 
-const route = (request: Request, env: Env, ctx: ExecutionContext) =>
-  Effect.gen(function* () {
-    const url = new URL(request.url);
-    const pathname = url.pathname;
+const route = Effect.fn("route")(function* (request: Request, env: Env, ctx: ExecutionContext) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
 
-    return yield* Match.value(pathname).pipe(
-      Match.when("/telegram", () =>
-        Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
-      ),
-      Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
-      Match.when("/", () => Effect.succeed(new Response("mizook", { status: 200 }))),
-      Match.orElse(() =>
-        Effect.gen(function* () {
-          yield* Effect.logInfo(`not_found path=${pathname}`);
-          return new Response("Not found", { status: 404 });
-        }),
-      ),
-    );
-  });
+  return yield* Match.value(pathname).pipe(
+    Match.when("/telegram", () =>
+      Effect.tryPromise(() => handleTelegramWebhook(request, env, ctx)),
+    ),
+    Match.when("/screenshots/", () => Effect.tryPromise(() => serveScreenshot(url, env))),
+    Match.when("/", () => Effect.succeed(new Response("mizook", { status: 200 }))),
+    Match.orElse(() =>
+      Effect.gen(function* () {
+        yield* Effect.logInfo(`not_found path=${pathname}`);
+        return new Response("Not found", { status: 404 });
+      }),
+    ),
+  );
+});
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
