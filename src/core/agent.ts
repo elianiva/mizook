@@ -108,10 +108,20 @@ export class MizookAgent extends Think<Env> {
     ].join("\n\n");
   }
 
-  configureSession(session: Session) {
-    // Configure the base session with shared context blocks.
-    // Per-topic sessions will be created via SessionManager.
-    return session
+  /** Apply the shared context/compaction config to any chainable builder
+   *  (Session or SessionManager). Both expose the same fluent surface. */
+  private _applySessionConfig<
+    T extends {
+      withContext: Function;
+      onCompaction: Function;
+      compactAfter: Function;
+      withCachedPrompt: Function;
+    },
+  >(builder: T): T {
+    const summarizer = (prompt: string) =>
+      this.runtime.runPromise(Model.use((m) => m.summarize(prompt)));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (builder as any)
       .withContext("soul", {
         description:
           "Your identity, personality, and core instructions. " +
@@ -128,43 +138,18 @@ export class MizookAgent extends Think<Env> {
         provider: new AgentSearchProvider(this),
         description: "Full-text search across your conversation history with this assistant.",
       })
-      .onCompaction(
-        createCompactFunction({
-          summarize: (prompt: string) =>
-            this.runtime.runPromise(Model.use((m) => m.summarize(prompt))),
-        }),
-      )
+      .onCompaction(createCompactFunction({ summarize: summarizer }))
       .compactAfter(40_000)
       .withCachedPrompt();
   }
 
+  configureSession(session: Session) {
+    return this._applySessionConfig(session);
+  }
+
   private getOrCreateSessionManager(): SessionManager {
     if (!this.sessionManager) {
-      this.sessionManager = SessionManager.create(this)
-        .withContext("soul", {
-          description:
-            "Your identity, personality, and core instructions. " +
-            "Write to this with set_context to change who you are.",
-          maxTokens: 1000,
-        })
-        .withContext("memory", {
-          description:
-            "Key facts, preferences, and context learned from the user. " +
-            "Proactively update this as you learn new information.",
-          maxTokens: 2000,
-        })
-        .withContext("history", {
-          provider: new AgentSearchProvider(this),
-          description: "Full-text search across your conversation history with this assistant.",
-        })
-        .onCompaction(
-          createCompactFunction({
-            summarize: (prompt: string) =>
-              this.runtime.runPromise(Model.use((m) => m.summarize(prompt))),
-          }),
-        )
-        .compactAfter(40_000)
-        .withCachedPrompt();
+      this.sessionManager = this._applySessionConfig(SessionManager.create(this));
     }
     return this.sessionManager;
   }
@@ -193,7 +178,7 @@ export class MizookAgent extends Think<Env> {
 
   override onStart(): Promise<void> {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function*() {
+      Effect.gen({ self: this }, function* () {
         const provider = new AgentContextProvider(this, "soul");
         const stored = yield* Effect.tryPromise(() => provider.get());
         if (!stored) {
@@ -222,10 +207,12 @@ export class MizookAgent extends Think<Env> {
   @callable()
   resetChat() {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function*() {
+      Effect.gen({ self: this }, function* () {
         const threadId = this.currentTurn?.threadId;
-        this.resetTurnState();
-        this.currentTurn = null;
+        yield* Effect.sync(() => {
+          this.resetTurnState();
+          this.currentTurn = null;
+        });
         // Clear only the current topic's session
         if (threadId && this.sessionManager) {
           const topicSession = this.sessionManager.getSession(threadId);
@@ -249,35 +236,35 @@ export class MizookAgent extends Think<Env> {
     traceId: string;
   }) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function*() {
+      Effect.gen({ self: this }, function* () {
         yield* Effect.logInfo(
           `submitTurn_called chat_id=${input.chatId} thread_id=${input.threadId}`,
         );
         const now = yield* Clock.currentTimeMillis;
-        this.serializedThread = input.thread;
-        this.currentTurn = {
-          channelType: input.channelType,
-          chatId: input.chatId,
-          threadId: input.threadId,
-          replyToMessageId: Number(input.messageId),
-          startTime: now,
-          traceId: input.traceId,
-        };
-
-        // Switch to per-topic session for conversation isolation
         const manager = this.getOrCreateSessionManager();
-        this.session = manager.getSession(input.threadId);
+        yield* Effect.sync(() => {
+          this.serializedThread = input.thread;
+          this.currentTurn = {
+            channelType: input.channelType,
+            chatId: input.chatId,
+            threadId: input.threadId,
+            replyToMessageId: Number(input.messageId),
+            startTime: now,
+            traceId: input.traceId,
+          };
+          // Switch to per-topic session for conversation isolation
+          this.session = manager.getSession(input.threadId);
+        });
 
         yield* Effect.logInfo(
           `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
         );
 
-        // Submit as async submission so Think persists to SQL + schedules an alarm.
-        // Mode "wait" runs the turn inline but fire-and-forget drops it after RPC returns;
-        // mode "submit" survives via alarm-driven submission drain.
+        // Process the turn inline. Mode "wait" runs inference synchronously so session
+        // switching (above) is stable — no race with an async alarm.
         yield* Effect.tryPromise({
-          try: () => this.runTurn({ mode: "submit", input: input.text }),
-          catch: (err) => Effect.logError("runTurn_failed", err),
+          try: () => this.runTurn({ mode: "wait", input: input.text }),
+          catch: (err) => new Error("runTurn_failed", { cause: err }),
         });
       }),
     );
@@ -285,7 +272,7 @@ export class MizookAgent extends Think<Env> {
 
   override beforeTurn(_ctx: TurnContext) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function*() {
+      Effect.gen({ self: this }, function* () {
         yield* Effect.logInfo(`beforeTurn_start session_id=${this.session ? "set" : "null"}`);
         const freshSystem = yield* Effect.tryPromise(() => this.session.refreshSystemPrompt());
         const turn = this.currentTurn;
@@ -298,12 +285,14 @@ export class MizookAgent extends Think<Env> {
 
         const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
         const { readable, writable } = new TransformStream<string, string>();
-        this.writer = writable.getWriter();
         const thread = ThreadImpl.fromJSON(this.serializedThread, channel.adapter);
         yield* Effect.tryPromise(() => thread.startTyping());
-        this.pendingStream = thread
-          .post(readable)
-          .catch((err) => Effect.logError("stream_failed", err));
+        yield* Effect.sync(() => {
+          this.writer = writable.getWriter();
+          this.pendingStream = thread
+            .post(readable)
+            .catch((err) => this.runtime.runFork(Effect.logError("stream_failed", err)));
+        });
         return { system: freshSystem };
       }),
     );
@@ -320,13 +309,13 @@ export class MizookAgent extends Think<Env> {
 
     if (!ctx.success) {
       const msg = ctx.error instanceof Error ? ctx.error.message : String(ctx.error);
-      Effect.logError("tool_failed", { toolName: ctx.toolName, error: msg });
+      this.runtime.runFork(Effect.logError("tool_failed", { toolName: ctx.toolName, error: msg }));
     }
 
     const status = this.getToolSuccessMessage(ctx.toolName, ctx.output);
 
     if (status) {
-      void this.runtime.runPromise(
+      this.runtime.runFork(
         ChannelRegistry.use((r) =>
           r
             .get(turn.channelType)
@@ -365,25 +354,29 @@ export class MizookAgent extends Think<Env> {
   }
 
   private cleanupStream() {
-    return Effect.gen({ self: this }, function*() {
+    return Effect.gen({ self: this }, function* () {
       const writer = this.writer;
       const pending = this.pendingStream;
       if (writer) yield* Effect.tryPromise(() => writer.close());
       if (pending) yield* Effect.tryPromise(() => pending);
-      this.writer = null;
-      this.pendingStream = null;
+      yield* Effect.sync(() => {
+        this.writer = null;
+        this.pendingStream = null;
+      });
     }).pipe(Effect.catchCause((cause) => Effect.logError("stream_cleanup_failed", cause)));
   }
 
   override onChatResponse(result: ChatResponseResult) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function*() {
+      Effect.gen({ self: this }, function* () {
         yield* Effect.logInfo(`onChatResponse_start status=${result.status}`);
         yield* this.cleanupStream();
         const turn = this.currentTurn;
         const latency = turn ? (yield* Clock.currentTimeMillis) - turn.startTime : 0;
-        this.currentTurn = null;
-        this.serializedThread = null;
+        yield* Effect.sync(() => {
+          this.currentTurn = null;
+          this.serializedThread = null;
+        });
         yield* Effect.logInfo(
           `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""} latency_ms=${latency} status=${result.status} channel=${turn?.channelType ?? "?"} trace_id=${turn?.traceId ?? "?"}`,
         );
@@ -393,12 +386,14 @@ export class MizookAgent extends Think<Env> {
 
   override onChatError(error: unknown) {
     return this.runtime.runPromise(
-      Effect.gen({ self: this }, function*() {
+      Effect.gen({ self: this }, function* () {
         yield* this.cleanupStream();
         const turn = this.currentTurn;
         const serialized = this.serializedThread;
-        this.currentTurn = null;
-        this.serializedThread = null;
+        yield* Effect.sync(() => {
+          this.currentTurn = null;
+          this.serializedThread = null;
+        });
         if (turn && serialized) {
           const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
           const thread = ThreadImpl.fromJSON(serialized, channel.adapter);

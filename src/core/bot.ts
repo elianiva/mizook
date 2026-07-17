@@ -235,40 +235,35 @@ export function createBot(runtime: AppRuntime, env: Env): Chat {
   const state = createCloudflareState({ namespace: env.CHAT_STATE });
   const chat = new Chat({ userName: "mizook", adapters, state, dedupeTtlMs: 600_000 });
 
-  const handle = (eff: Effect.Effect<void, unknown, AppServices>, label?: string) => {
-    const labeled = eff.pipe(Effect.annotateLogs({ label: label ?? "?" }));
-    return runtime.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.logInfo("handle_start");
-        yield* labeled;
-        yield* Effect.logInfo("handle_complete");
-      }).pipe(Effect.catchCause((cause) => Effect.logError("handle_failed", cause))),
+  const run = (eff: Effect.Effect<void, unknown, AppServices>) =>
+    runtime.runPromise(
+      eff.pipe(Effect.catchCause((cause) => Effect.logError("run_failed", cause))),
     );
-  };
+
   const annotate =
     (values: Record<string, unknown>) =>
     <A, E, R>(eff: Effect.Effect<A, E, R>) =>
       Effect.annotateLogs(eff, values);
 
-  chat.onDirectMessage((t, m) => {
-    const eff = Effect.gen(function* () {
-      yield* Effect.logInfo(`direct_message_received text=${m.text.slice(0, 50)}`);
-      yield* dispatchMessage({ checkAccess: true, handleStart: true })(t, m);
-    }).pipe(annotate({ thread_id: t.id, user_id: m.author.userId, handler: "dm" }));
-    return handle(eff, `dm:${t.id}`);
-  });
-  chat.onNewMention((t, m) => {
-    const eff = dispatchMessage({ checkAccess: true, handleStart: false })(t, m).pipe(
-      annotate({ thread_id: t.id, user_id: m.author.userId, handler: "mention" }),
-    );
-    return handle(eff);
-  });
-  chat.onSubscribedMessage((t, m) => {
-    const eff = dispatchMessage({ checkAccess: false, handleStart: false })(t, m).pipe(
-      annotate({ thread_id: t.id, user_id: m.author.userId, handler: "subscribed" }),
-    );
-    return handle(eff);
-  });
+  const onMessage = (mode: TurnMode, handlerName: string) => {
+    const dmLog =
+      handlerName === "dm"
+        ? (_: Thread, m: Message) =>
+            Effect.logInfo(`direct_message_received text=${m.text.slice(0, 50)}`)
+        : () => Effect.void;
+
+    return (t: Thread, m: Message) => {
+      const eff = Effect.gen(function* () {
+        yield* dmLog(t, m);
+        yield* dispatchMessage(mode)(t, m);
+      }).pipe(annotate({ thread_id: t.id, user_id: m.author.userId, handler: handlerName }));
+      return run(eff);
+    };
+  };
+
+  chat.onDirectMessage(onMessage({ checkAccess: true, handleStart: true }, "dm"));
+  chat.onNewMention(onMessage({ checkAccess: true, handleStart: false }, "mention"));
+  chat.onSubscribedMessage(onMessage({ checkAccess: false, handleStart: false }, "subscribed"));
 
   const slashNames = commands.filter((c) => c.slash).map((c) => c.name);
   chat.onSlashCommand(slashNames, (event) => {
@@ -276,7 +271,7 @@ export function createBot(runtime: AppRuntime, env: Env): Chat {
       yield* Effect.logInfo(`slash_command_received command=${event.command}`);
       yield* dispatchSlash(event);
     }).pipe(annotate({ command: event.command, user_id: event.user.userId }));
-    return handle(eff, `slash:${event.command}`);
+    return run(eff);
   });
 
   return chat;
