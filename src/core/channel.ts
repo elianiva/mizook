@@ -7,8 +7,7 @@ export interface ChatTarget {
 }
 
 // Shape a channel adapter provides. Each platform (telegram, discord, ...)
-// becomes its own Context.Service implementing this; ChannelRegistry composes
-// them into a lookup keyed by the threadId prefix.
+// becomes its own Context.Service implementing this.
 export interface Channel {
   readonly adapter: Adapter;
   readonly decodeThreadId: (threadId: string) => { readonly chatId: string };

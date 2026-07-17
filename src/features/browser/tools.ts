@@ -1,11 +1,9 @@
-import { Effect } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 import puppeteer from "@cloudflare/puppeteer";
 import type { MizookAgent } from "../../core/agent";
 import type { ChatTarget } from "../../core/channel";
 import type { Env } from "../../core/env";
-import { ChannelRegistry } from "../../core/channel-registry";
 
 async function takeScreenshot(
   env: Env,
@@ -69,13 +67,7 @@ async function storeAndSend(
 ) {
   const key = `screenshots/${crypto.randomUUID()}.png`;
   await env.MIZOOK_R2.put(key, img, { httpMetadata: { contentType: "image/png" } });
-  await agent.run(
-    ChannelRegistry.use((r) =>
-      r
-        .get(target.platform)
-        .pipe(Effect.flatMap((ch) => ch.postPhoto(target, img, caption ?? `Screenshot of ${url}`))),
-    ),
-  );
+  await agent.run(agent.channel.postPhoto(target, img, caption ?? `Screenshot of ${url}`));
   return key;
 }
 

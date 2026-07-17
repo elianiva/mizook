@@ -1,13 +1,14 @@
 import { Effect } from "effect";
 import { Chat } from "chat";
-import type { Thread, Message, SlashCommandEvent, Adapter } from "chat";
+import type { Thread, Message, SlashCommandEvent } from "chat";
 import { createCloudflareState } from "chat-state-cloudflare-do";
 import type { Env } from "./env";
 import type { AppRuntime, AppServices } from "./runtime";
-import { ChannelRegistry } from "./channel-registry";
 import { AgentGateway } from "./agent-gateway";
-import { AllowedUsers } from "./allowed-users";
 import { AgentRpcError } from "./errors";
+import type { Channel } from "./channel";
+import { parseAllowedIds } from "./allowed-users";
+import { syncCommandMenu } from "../features/telegram/channel";
 
 const rateLimits = new Map<string, { tokens: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 30;
@@ -28,13 +29,10 @@ function checkRateLimit(chatId: string): boolean {
 const AVAILABLE_MODELS = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "mimo-v2.5-pro"];
 
 // ── Command registry ────────────────────────────────────────────────────
-// Every bot command lives here. `slash: true` registers it with Telegram's
-// command menu AND the text-message path. Both entry points call the same
-// handler with the same context.
 
 interface CommandContext {
   postable: { post(message: string): Promise<unknown> };
-  threadId: string;
+  chatId: string;
   args: string;
 }
 
@@ -61,13 +59,12 @@ export const commands: CommandDef[] = [
     name: "reset",
     description: "Reset the conversation",
     slash: true,
-    handler: ({ postable, threadId }) =>
+    handler: ({ postable, chatId }) =>
       Effect.gen(function* () {
-        const { channelName, chatId } = yield* ChannelRegistry.use((r) => r.resolve(threadId));
         const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
         yield* Effect.tryPromise(() => agent.resetChat());
         yield* Effect.tryPromise(() => postable.post("Chat reset. Starting fresh."));
-        yield* Effect.logInfo(`reset_done chat_id=${chatId} channel=${channelName}`);
+        yield* Effect.logInfo(`reset_done chat_id=${chatId}`);
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
@@ -96,9 +93,8 @@ export const commands: CommandDef[] = [
     name: "status",
     description: "Show bot status",
     slash: true,
-    handler: ({ postable, threadId }) =>
+    handler: ({ postable, chatId }) =>
       Effect.gen(function* () {
-        const { chatId } = yield* ChannelRegistry.use((r) => r.resolve(threadId));
         const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
         const modelName = yield* Effect.tryPromise(() => agent.getModelName(chatId));
         const schedules = (yield* Effect.tryPromise(() => agent.listSchedules())) as Array<{
@@ -114,9 +110,8 @@ export const commands: CommandDef[] = [
     name: "model",
     description: "Show or set the current model",
     slash: true,
-    handler: ({ postable, threadId, args }) =>
+    handler: ({ postable, chatId, args }) =>
       Effect.gen(function* () {
-        const { chatId } = yield* ChannelRegistry.use((r) => r.resolve(threadId));
         const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
         if (!args) {
           const current = yield* Effect.tryPromise(() => agent.getModelName(chatId));
@@ -145,95 +140,95 @@ function findCommand(text: string): { command: CommandDef; args: string } | unde
   return undefined;
 }
 
-// ── Dispatch ────────────────────────────────────────────────────────────
+let menuSynced = false;
 
-interface TurnMode {
-  readonly checkAccess: boolean;
-  readonly handleStart: boolean;
-}
+export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat {
+  if (!menuSynced) {
+    menuSynced = true;
+    syncCommandMenu(env.BOT_TOKEN).catch(() => {});
+  }
 
-const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =>
-  Effect.gen(function* () {
-    if (mode.checkAccess) {
-      const ok = yield* AllowedUsers.use((a) =>
-        Effect.sync(() => a.has(Number(message.author.userId))),
-      );
-      if (!ok) {
+  const state = createCloudflareState({ namespace: env.CHAT_STATE });
+  const chat = new Chat({
+    userName: "mizook",
+    adapters: {
+      telegram: channel.adapter,
+    },
+    state,
+    dedupeTtlMs: 600_000,
+  });
+
+  const allowedUsers = parseAllowedIds(env.TELEGRAM_ALLOWED_USER_IDS);
+
+  const dispatchMessage = (mode: TurnMode) => (thread: Thread, message: Message) =>
+    Effect.gen(function* () {
+      if (mode.checkAccess && !allowedUsers.has(Number(message.author.userId))) {
         yield* Effect.tryPromise(() => thread.post("Access denied."));
         return;
       }
-    }
-    yield* Effect.tryPromise(() => thread.subscribe());
+      yield* Effect.tryPromise(() => thread.subscribe());
 
-    const match = findCommand(message.text);
-    if (match) {
-      const { command, args } = match;
-      if (command.requiresStart && !mode.handleStart) return;
-      yield* command.handler({ postable: thread, threadId: thread.id, args });
-      return;
-    }
+      const match = findCommand(message.text);
+      if (match) {
+        const { command, args } = match;
+        if (command.requiresStart && !mode.handleStart) return;
+        const { chatId } = channel.decodeThreadId(thread.id);
+        yield* command.handler({ postable: thread, chatId, args });
+        return;
+      }
 
-    const { chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
-    if (!checkRateLimit(chatId)) {
-      yield* Effect.tryPromise(() =>
-        thread.post("Rate limit exceeded. Please wait a moment and try again."),
-      );
-      return;
-    }
-    yield* handleTurn(thread, message);
-  });
-
-const dispatchSlash = (event: SlashCommandEvent) =>
-  Effect.gen(function* () {
-    const ok = yield* AllowedUsers.use((a) => Effect.sync(() => a.has(Number(event.user.userId))));
-    if (!ok) {
-      yield* Effect.tryPromise(() => event.channel.post("Access denied."));
-      return;
-    }
-    const match = findCommand(event.command);
-    if (match) {
-      yield* match.command.handler({
-        postable: event.channel,
-        threadId: event.channel.id,
-        args: event.text,
-      });
-    }
-  }).pipe(Effect.catchCause((cause) => Effect.logError("slash_error", cause)));
-
-const handleTurn = (thread: Thread, message: Message) =>
-  Effect.gen(function* () {
-    const traceId = crypto.randomUUID();
-    yield* Effect.logInfo(`handleTurn_start trace_id=${traceId}`);
-    const { channelName, chatId } = yield* ChannelRegistry.use((r) => r.resolve(thread.id));
-    yield* Effect.logInfo(`handleTurn_resolved_channel chat_id=${chatId} trace_id=${traceId}`);
-    const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
-    yield* Effect.logInfo(`handleTurn_got_agent trace_id=${traceId}`);
-    yield* Effect.tryPromise({
-      try: () =>
-        agent.submitTurn({
-          thread: thread.toJSON(),
-          chatId,
-          threadId: thread.id,
-          messageId: message.id,
-          text: message.text,
-          channelType: channelName,
-          traceId,
-        }),
-      catch: (cause) => new AgentRpcError({ cause }),
+      const { chatId } = channel.decodeThreadId(thread.id);
+      if (!checkRateLimit(chatId)) {
+        yield* Effect.tryPromise(() =>
+          thread.post("Rate limit exceeded. Please wait a moment and try again."),
+        );
+        return;
+      }
+      yield* handleTurn(thread, message);
     });
-    yield* Effect.logInfo(
-      `turn_submitted chat_id=${chatId} thread_id=${thread.id} channel=${channelName} trace_id=${traceId}`,
-    );
-  }).pipe(Effect.catchCause((cause) => Effect.logError("turn_error", cause)));
 
-// ── Bot wiring ──────────────────────────────────────────────────────────
+  const dispatchSlash = (event: SlashCommandEvent) =>
+    Effect.gen(function* () {
+      if (!allowedUsers.has(Number(event.user.userId))) {
+        yield* Effect.tryPromise(() => event.channel.post("Access denied."));
+        return;
+      }
+      const match = findCommand(event.command);
+      if (match) {
+        const { chatId } = channel.decodeThreadId(event.channel.id);
+        yield* match.command.handler({
+          postable: event.channel,
+          chatId,
+          args: event.text,
+        });
+      }
+    }).pipe(Effect.catchCause((cause) => Effect.logError("slash_error", cause)));
 
-export function createBot(runtime: AppRuntime, env: Env): Chat {
-  const adapters = runtime.runSync(
-    ChannelRegistry.use((r) => Effect.sync(() => r.adapters)),
-  ) as Record<string, Adapter>;
-  const state = createCloudflareState({ namespace: env.CHAT_STATE });
-  const chat = new Chat({ userName: "mizook", adapters, state, dedupeTtlMs: 600_000 });
+  const handleTurn = (thread: Thread, message: Message) =>
+    Effect.gen(function* () {
+      const traceId = crypto.randomUUID();
+      yield* Effect.logInfo(`handleTurn_start trace_id=${traceId}`);
+      const { chatId } = channel.decodeThreadId(thread.id);
+      yield* Effect.logInfo(`handleTurn_resolved_channel chat_id=${chatId} trace_id=${traceId}`);
+      const agent = yield* AgentGateway.use((g) => g.lookup(chatId));
+      yield* Effect.logInfo(`handleTurn_got_agent trace_id=${traceId}`);
+      yield* Effect.tryPromise({
+        try: () =>
+          agent.submitTurn({
+            thread: thread.toJSON(),
+            chatId,
+            threadId: thread.id,
+            messageId: message.id,
+            text: message.text,
+            channelType: "telegram",
+            traceId,
+          }),
+        catch: (cause) => new AgentRpcError({ cause }),
+      });
+      yield* Effect.logInfo(
+        `turn_submitted chat_id=${chatId} thread_id=${thread.id} trace_id=${traceId}`,
+      );
+    }).pipe(Effect.catchCause((cause) => Effect.logError("turn_error", cause)));
 
   const onMessage = (mode: TurnMode, handlerName: string) => {
     return (t: Thread, m: Message) => {
@@ -267,4 +262,9 @@ export function createBot(runtime: AppRuntime, env: Env): Chat {
   });
 
   return chat;
+}
+
+interface TurnMode {
+  readonly checkAccess: boolean;
+  readonly handleStart: boolean;
 }

@@ -22,7 +22,8 @@ import type { ToolSet } from "ai";
 import type { Env } from "./env";
 import { getRuntime, type AppServices } from "./runtime";
 import { createModel, summarize } from "./model";
-import { ChannelRegistry } from "./channel-registry";
+import { createTelegramChannel } from "../features/telegram/channel";
+import type { Channel } from "./channel";
 import { basePrompt } from "./prompts/base";
 import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
@@ -52,6 +53,15 @@ export class MizookAgent extends Think<Env> {
   private sessionManager: SessionManager | null = null;
 
   waitForMcpConnections = { timeout: 10_000 } as const;
+
+  private _channel: Channel | null = null;
+
+  get channel(): Channel {
+    if (!this._channel) {
+      this._channel = createTelegramChannel(this.env.BOT_TOKEN);
+    }
+    return this._channel;
+  }
 
   private get runtime() {
     return getRuntime(this.env);
@@ -139,15 +149,7 @@ export class MizookAgent extends Think<Env> {
 
   sendReminder(payload: ReminderPayload) {
     return this.runtime.runPromise(
-      ChannelRegistry.use((r) =>
-        r
-          .get(payload.target.platform)
-          .pipe(
-            Effect.flatMap((ch) =>
-              ch.postNotification(payload.target, `\u23f0 Reminder: ${payload.message}`),
-            ),
-          ),
-      ),
+      this.channel.postNotification(payload.target, `\u23f0 Reminder: ${payload.message}`),
     );
   }
 
@@ -296,9 +298,8 @@ export class MizookAgent extends Think<Env> {
           return { system: freshSystem };
         }
 
-        const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn!.threadId));
         const { readable, writable } = new TransformStream<string, string>();
-        const thread = ThreadImpl.fromJSON(serialized, channel.adapter);
+        const thread = ThreadImpl.fromJSON(serialized, this.channel.adapter);
         yield* Effect.tryPromise(() => thread.startTyping());
         yield* Effect.sync(() => {
           this.writer = writable.getWriter();
@@ -329,15 +330,7 @@ export class MizookAgent extends Think<Env> {
 
     if (status) {
       this.runtime.runFork(
-        ChannelRegistry.use((r) =>
-          r
-            .get(turn.channelType)
-            .pipe(
-              Effect.flatMap((ch) =>
-                ch.postNotification({ platform: turn.channelType, chatId: turn.chatId }, status),
-              ),
-            ),
-        ),
+        this.channel.postNotification({ platform: turn.channelType, chatId: turn.chatId }, status),
       );
     }
   }
@@ -428,8 +421,7 @@ export class MizookAgent extends Think<Env> {
         ).pipe(Effect.catchCause(() => Effect.void));
 
         if (turn && serialized) {
-          const { channel } = yield* ChannelRegistry.use((r) => r.resolve(turn.threadId));
-          const thread = ThreadImpl.fromJSON(serialized, channel.adapter);
+          const thread = ThreadImpl.fromJSON(serialized, this.channel.adapter);
           yield* Effect.tryPromise(() => thread.post("Sorry, something went wrong."));
         }
         yield* Effect.logError("turn_error", error);
