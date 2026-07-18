@@ -196,7 +196,12 @@ function findCommandByName(command: string): CommandDef | undefined {
   return commands.find((c) => c.name === name);
 }
 
-export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat {
+export function createBot(
+  runtime: AppRuntime,
+  env: Env,
+  channel: Channel,
+  waitUntil?: (p: Promise<unknown>) => void,
+): Chat {
   const state = createCloudflareState({ namespace: env.CHAT_STATE });
   const chat = new Chat({
     userName: "mizook",
@@ -328,9 +333,10 @@ export function createBot(runtime: AppRuntime, env: Env, channel: Channel): Chat
       }).pipe(
         Effect.annotateLogs({ thread_id: t.id, user_id: m.author.userId, handler: handlerName }),
       );
-      void runtime.runPromise(
+      const promise = runtime.runPromise(
         eff.pipe(Effect.catchCause((cause) => Effect.logError("run_failed", cause))),
       );
+      waitUntil?.(promise);
     };
   };
 

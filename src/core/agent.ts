@@ -55,7 +55,7 @@ export class MizookAgent extends Think<Env> {
   private writer: WritableStreamDefaultWriter<string> | null = null;
   private pendingStream: Promise<unknown> | null = null;
 
-  waitForMcpConnections = { timeout: 10_000 } as const;
+  waitForMcpConnections = false;
 
   private _channel: Channel | null = null;
 

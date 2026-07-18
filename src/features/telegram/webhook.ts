@@ -10,6 +10,6 @@ export async function handleTelegramWebhook(
 ): Promise<Response> {
   const runtime = getRuntime(env);
   const channel = createTelegramChannel(env.BOT_TOKEN);
-  const bot = createBot(runtime, env, channel);
-  return bot.webhooks.telegram(request, { waitUntil: (p) => ctx.waitUntil(p) });
+  const bot = createBot(runtime, env, channel, (p) => ctx.waitUntil(p));
+  return bot.webhooks.telegram(request);
 }
