@@ -217,8 +217,8 @@ export class MizookAgent extends Think<Env> {
       if (!allowed.has(Number(messenger.author?.userId))) {
         void this.deliverNotice("Access denied.");
         return {
-          system: "### System: The user is not authorized to use this bot. Do not respond.",
           maxSteps: 0,
+          maxOutputTokens: 0,
         };
       }
     }
