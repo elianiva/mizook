@@ -1,6 +1,11 @@
 import { callable } from "agents";
 import { Effect } from "effect";
-import { Think, type Session, type TurnConfig, type TurnContext } from "@cloudflare/think";
+import {
+  Think,
+  type ActionAuthorizationDecision,
+  type Session,
+  type TurnContext,
+} from "@cloudflare/think";
 import { ThinkMessengerStateAgent } from "@cloudflare/think/messengers";
 import telegramMessenger from "@cloudflare/think/messengers/telegram";
 import {
@@ -206,22 +211,17 @@ export class MizookAgent extends Think<Env> {
     );
   }
 
-  override beforeTurn(_ctx: TurnContext): TurnConfig | void | Promise<TurnConfig | void> {
+  override authorizeTurn(_ctx: TurnContext): ActionAuthorizationDecision {
     const messenger = this.getMessengerContext();
-    if (!messenger) return;
+    if (!messenger) return true;
 
-    // Access control — only applies to telegram messenger
     const allowedRaw = this.env.TELEGRAM_ALLOWED_USER_IDS;
-    if (allowedRaw) {
-      const allowed = parseAllowedIds(allowedRaw);
-      if (!allowed.has(Number(messenger.author?.userId))) {
-        void this.deliverNotice("Access denied.");
-        return {
-          maxSteps: 0,
-          maxOutputTokens: 0,
-        };
-      }
-    }
+    if (!allowedRaw) return true;
+
+    const allowed = parseAllowedIds(allowedRaw);
+    if (allowed.has(Number(messenger.author?.userId))) return true;
+
+    return { allowed: false, reason: "Access denied." };
   }
 
   private createCommandTools(): ToolSet {
