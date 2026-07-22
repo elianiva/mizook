@@ -11,6 +11,7 @@ catalog:
   vite-plus: 0.2.5
 overrides:
   vite: "catalog:"
+minimumReleaseAge: "0 days"
 peerDependencyRules:
   allowAny:
     - vite
