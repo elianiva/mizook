@@ -1,9 +1,10 @@
 import { Effect, Match } from "effect";
-import { routeAgentRequest } from "agents";
+import { getAgentByName, routeAgentRequest } from "agents";
 import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
 import { serveScreenshot } from "./features/browser/routes";
 import { ScreenshotError } from "./core/errors";
+import { MizookAgent } from "./core/agent";
 
 export { MizookAgent, ThinkMessengerStateAgent } from "./core/agent";
 
@@ -30,10 +31,20 @@ const route = Effect.fn("route")(function* (request: Request, env: Env, _ctx: Ex
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Route WebSocket /agents/... through the Agent DO (standard agents protocol)
     const routed = await routeAgentRequest(request, env);
     if (routed) return routed;
 
     const url = new URL(request.url);
+
+    // Route messenger webhook POSTs (e.g. /messengers/telegram/webhook) to
+    // the MizookAgent DO so Think's _messengerRuntime.handleRequest() can
+    // dispatch them. routeAgentRequest only handles /agents/..., so messenger
+    // paths must be routed explicitly.
+    if (url.pathname.startsWith("/messengers/")) {
+      const agent = await getAgentByName<Env, MizookAgent>(env.MIZOOK_AGENT, "default");
+      return agent.fetch(request);
+    }
 
     return getRuntime(env).runPromise(
       route(request, env, ctx).pipe(
