@@ -225,7 +225,6 @@ export class MizookAgent extends Think<Env> {
   }
 
   private createCommandTools(): ToolSet {
-    const agent = this;
     const AVAILABLE = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "mimo-v2.5-pro"];
 
     return {
@@ -234,9 +233,9 @@ export class MizookAgent extends Think<Env> {
           "Show bot status: current model and active reminders. Use when the user sends /status.",
         inputSchema: z.object({}),
         execute: async () => {
-          const chatId = agent.getChatIdForModel() ?? "";
-          const modelName = agent.getModelName(chatId);
-          const schedules = await agent.listSchedules();
+          const chatId = this.getChatIdForModel() ?? "";
+          const modelName = this.getModelName(chatId);
+          const schedules = await this.listSchedules();
           const reminders = schedules.filter((s) => s.callback === "sendReminder");
           return `Model: ${modelName}\nActive reminders: ${reminders.length}`;
         },
@@ -252,15 +251,15 @@ export class MizookAgent extends Think<Env> {
             .describe("The model name to switch to, or empty to show current"),
         }),
         execute: async ({ modelName }) => {
-          const chatId = agent.getChatIdForModel() ?? "";
+          const chatId = this.getChatIdForModel() ?? "";
           if (!modelName) {
-            const current = agent.getModelName(chatId);
+            const current = this.getModelName(chatId);
             return `Current model: ${current}\nAvailable: ${AVAILABLE.join(", ")}`;
           }
           if (!AVAILABLE.includes(modelName)) {
             return `Unknown model "${modelName}". Available: ${AVAILABLE.join(", ")}`;
           }
-          agent.setModel(chatId, modelName);
+          this.setModel(chatId, modelName);
           return `Model set to ${modelName}`;
         },
       }),
