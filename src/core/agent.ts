@@ -19,11 +19,14 @@ import type { Env } from "./env";
 import { getRuntime, type AppServices } from "./runtime";
 import { createModel, summarize } from "./model";
 import { basePrompt } from "./prompts/base";
+import { composePrompt } from "./prompts/composer";
 import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
 import { StorageError } from "./errors";
+import { remindersToolDefinition } from "./registry/builtin/reminders";
+import { browserToolDefinition } from "./registry/builtin/browser";
 
 export { ThinkMessengerStateAgent };
 
@@ -76,7 +79,19 @@ export class MizookAgent extends Think<Env> {
 
   getSystemPrompt() {
     const tz = this.getConfiguredTimezone();
-    return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
+    const fullBase = [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join(
+      "\n\n",
+    );
+
+    const mcpServers: Array<string> = [];
+    if (this.env.EXA_API_KEY) mcpServers.push("exa");
+    if (this.env.CF_API_TOKEN) mcpServers.push("cloudflare");
+
+    return composePrompt({
+      basePrompt: fullBase,
+      tools: [remindersToolDefinition, browserToolDefinition],
+      mcpServers,
+    });
   }
 
   private _applySessionConfig(builder: AgentSession): AgentSession {
