@@ -20,6 +20,10 @@ name = "MIZOOK_AGENT"
 [[migrations]]
 tag = "v1"
 
+[[migrations]]
+tag = "v2"
+deleted_classes = ["ChatStateDO"]
+
 [observability.logs]
 enabled = true
 invocation_logs = true
