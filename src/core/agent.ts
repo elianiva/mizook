@@ -131,7 +131,7 @@ export class MizookAgent extends Think<Env> {
         description: "Full-text search across your conversation history with this assistant.",
       })
       .onCompaction(createCompactFunction({ summarize: summarizer }))
-      .compactAfter(40_000)
+      .compactAfter(80_000)
       .withCachedPrompt();
   }
 
