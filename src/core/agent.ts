@@ -1,11 +1,6 @@
 import { callable } from "agents";
 import { Effect } from "effect";
-import {
-  Think,
-  type Session,
-  type TurnConfig,
-  type TurnContext,
-} from "@cloudflare/think";
+import { Think, type Session, type TurnConfig, type TurnContext } from "@cloudflare/think";
 import { ThinkMessengerStateAgent } from "@cloudflare/think/messengers";
 import telegramMessenger from "@cloudflare/think/messengers/telegram";
 import {
@@ -99,6 +94,7 @@ export class MizookAgent extends Think<Env> {
         token: this.env.BOT_TOKEN,
         userName: "mizook",
         secretToken: this.env.MIZOOK_WEBHOOK_SECRET,
+        respondTo: ["direct-message", "mention", "subscribed-thread", "action"],
       }),
     };
   }
@@ -156,17 +152,14 @@ export class MizookAgent extends Think<Env> {
     return this.runtime.runPromise(
       Effect.tryPromise({
         try: async () => {
-          const res = await fetch(
-            `https://api.telegram.org/bot${botToken}/sendMessage`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chat_id: chatId,
-                text: `\u23f0 Reminder: ${payload.message}`,
-              }),
-            },
-          );
+          const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `\u23f0 Reminder: ${payload.message}`,
+            }),
+          });
           if (!res.ok) throw new Error(`sendMessage failed: ${res.status}`);
         },
         catch: (cause) => new StorageError({ cause }),
@@ -236,7 +229,8 @@ export class MizookAgent extends Think<Env> {
 
     return {
       get_status: tool({
-        description: "Show bot status: current model and active reminders. Use when the user sends /status.",
+        description:
+          "Show bot status: current model and active reminders. Use when the user sends /status.",
         inputSchema: z.object({}),
         execute: async () => {
           const chatId = agent.getChatIdForModel() ?? "";
@@ -253,7 +247,10 @@ export class MizookAgent extends Think<Env> {
           "Show or set the AI model. Without modelName, returns the current model and available options. " +
           "With modelName, switches to that model. Use when the user sends /model.",
         inputSchema: z.object({
-          modelName: z.string().optional().describe("The model name to switch to, or empty to show current"),
+          modelName: z
+            .string()
+            .optional()
+            .describe("The model name to switch to, or empty to show current"),
         }),
         execute: async ({ modelName }) => {
           const chatId = agent.getChatIdForModel() ?? "";
@@ -270,5 +267,4 @@ export class MizookAgent extends Think<Env> {
       }),
     };
   }
-
 }
