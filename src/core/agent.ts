@@ -98,7 +98,7 @@ export class MizookAgent extends Think<Env> {
       telegram: telegramMessenger({
         token: this.env.BOT_TOKEN,
         userName: "mizook",
-        secretToken: this.env.TELEGRAM_WEBHOOK_SECRET_TOKEN,
+        secretToken: this.env.MIZOOK_WEBHOOK_SECRET,
       }),
     };
   }

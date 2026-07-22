@@ -31,5 +31,3 @@ invocation_logs = true
 [vars]
 OPENCODE_GO_MODEL = "mimo-v2.5-pro"
 TIMEZONE = "Asia/Jakarta"
-TELEGRAM_WEBHOOK_SECRET_TOKEN = "set-me-in-production"
-# EXA_API_KEY = "your-exa-api-key"
