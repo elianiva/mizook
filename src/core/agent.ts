@@ -1,5 +1,4 @@
-import { callable } from "agents";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import {
   Think,
   type ActionAuthorizationDecision,
@@ -14,9 +13,7 @@ import {
   Session as AgentSession,
 } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
-import { tool, type ToolSet } from "ai";
-import { z } from "zod";
-import { Schema } from "effect";
+import { type ToolSet } from "ai";
 
 import type { Env } from "./env";
 import { getRuntime, type AppServices } from "./runtime";
@@ -30,8 +27,6 @@ import { StorageError } from "./errors";
 
 export { ThinkMessengerStateAgent };
 
-const modelOverrides = new Map<string, string>();
-
 function parseAllowedIds(raw: string): Set<number> {
   try {
     return new Set(
@@ -43,13 +38,6 @@ function parseAllowedIds(raw: string): Set<number> {
     return new Set<number>();
   }
 }
-
-const COMMAND_INSTRUCTIONS =
-  "You respond to Telegram slash commands. When the user sends:\n" +
-  "  /help — List available commands\n" +
-  "  /status — Call get_status to show current model and reminders\n" +
-  "  /model [name] — Call set_model to show or switch the model\n" +
-  "Respond concisely. Use the appropriate tool and report the result naturally.";
 
 export class MizookAgent extends Think<Env> {
   waitForMcpConnections = false;
@@ -71,26 +59,7 @@ export class MizookAgent extends Think<Env> {
   }
 
   getModel() {
-    return createModel(this.env, this.getModelName(this.getChatIdForModel()));
-  }
-
-  /** Derive the chat id for model-override lookup from the active context. */
-  private getChatIdForModel(): string | undefined {
-    const ctx = this.getMessengerContext();
-    if (ctx) return ctx.thread.id;
-    return undefined;
-  }
-
-  @callable()
-  getModelName(chatId?: string): string {
-    const id = chatId ?? this.getChatIdForModel();
-    const override = id ? modelOverrides.get(id) : undefined;
-    return override ?? this.env.OPENCODE_GO_MODEL ?? "mimo-v2.5-pro";
-  }
-
-  @callable()
-  setModel(chatId: string, modelName: string) {
-    modelOverrides.set(chatId, modelName);
+    return createModel(this.env, this.env.OPENCODE_GO_MODEL ?? "mimo-v2.5-pro");
   }
 
   getMessengers() {
@@ -107,12 +76,7 @@ export class MizookAgent extends Think<Env> {
 
   getSystemPrompt() {
     const tz = this.getConfiguredTimezone();
-    return [
-      basePrompt,
-      remindersPrompt.replace("{{TIMEZONE}}", tz),
-      browserPrompt,
-      COMMAND_INSTRUCTIONS,
-    ].join("\n\n");
+    return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
   }
 
   private _applySessionConfig(builder: AgentSession): AgentSession {
@@ -146,7 +110,6 @@ export class MizookAgent extends Think<Env> {
 
   getTools(): ToolSet {
     return {
-      ...this.createCommandTools(),
       ...createReminderTools(this),
       ...createBrowserTools(this),
     };
@@ -222,47 +185,5 @@ export class MizookAgent extends Think<Env> {
     if (allowed.has(Number(messenger.author?.userId))) return true;
 
     return { allowed: false, reason: "Access denied." };
-  }
-
-  private createCommandTools(): ToolSet {
-    const AVAILABLE = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "mimo-v2.5-pro"];
-
-    return {
-      get_status: tool({
-        description:
-          "Show bot status: current model and active reminders. Use when the user sends /status.",
-        inputSchema: z.object({}),
-        execute: async () => {
-          const chatId = this.getChatIdForModel() ?? "";
-          const modelName = this.getModelName(chatId);
-          const schedules = await this.listSchedules();
-          const reminders = schedules.filter((s) => s.callback === "sendReminder");
-          return `Model: ${modelName}\nActive reminders: ${reminders.length}`;
-        },
-      }),
-      set_model: tool({
-        description:
-          "Show or set the AI model. Without modelName, returns the current model and available options. " +
-          "With modelName, switches to that model. Use when the user sends /model.",
-        inputSchema: z.object({
-          modelName: z
-            .string()
-            .optional()
-            .describe("The model name to switch to, or empty to show current"),
-        }),
-        execute: async ({ modelName }) => {
-          const chatId = this.getChatIdForModel() ?? "";
-          if (!modelName) {
-            const current = this.getModelName(chatId);
-            return `Current model: ${current}\nAvailable: ${AVAILABLE.join(", ")}`;
-          }
-          if (!AVAILABLE.includes(modelName)) {
-            return `Unknown model "${modelName}". Available: ${AVAILABLE.join(", ")}`;
-          }
-          this.setModel(chatId, modelName);
-          return `Model set to ${modelName}`;
-        },
-      }),
-    };
   }
 }
