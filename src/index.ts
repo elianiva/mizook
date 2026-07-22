@@ -28,26 +28,12 @@ const route = Effect.fn("route")(function* (request: Request, env: Env, _ctx: Ex
   );
 });
 
-function routeMessengerWebhook(request: Request, env: Env): Promise<Response> {
-  // Route messenger webhooks (e.g. /messengers/telegram/webhook) to the
-  // MizookAgent DO where Think's internal messenger runtime handles them.
-  const name = env.MIZOOK_AGENT.idFromName("default");
-  const stub = env.MIZOOK_AGENT.get(name);
-  return stub.fetch(request);
-}
-
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const routed = await routeAgentRequest(request, env);
     if (routed) return routed;
 
     const url = new URL(request.url);
-
-    // Messenger webhooks need to reach the MizookAgent DO so Think's
-    // messenger runtime (ThinkMessengerRuntime.handleRequest) can process them.
-    if (url.pathname.startsWith("/messengers/")) {
-      return routeMessengerWebhook(request, env);
-    }
 
     return getRuntime(env).runPromise(
       route(request, env, ctx).pipe(

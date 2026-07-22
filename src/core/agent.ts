@@ -236,10 +236,8 @@ export class MizookAgent extends Think<Env> {
           const chatId = agent.getChatIdForModel() ?? "";
           const modelName = agent.getModelName(chatId);
           const schedules = await agent.listSchedules();
-          const reminderCount = schedules.filter(
-            (s: { callback: string }) => s.callback === "sendReminder",
-          ).length;
-          return `Model: ${modelName}\nActive reminders: ${reminderCount}`;
+          const reminders = schedules.filter((s) => s.callback === "sendReminder");
+          return `Model: ${modelName}\nActive reminders: ${reminders.length}`;
         },
       }),
       set_model: tool({
