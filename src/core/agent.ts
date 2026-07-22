@@ -1,70 +1,58 @@
 import { callable } from "agents";
-import { Effect, Clock } from "effect";
+import { Effect } from "effect";
 import {
   Think,
-  type ChunkContext,
-  type ChatResponseResult,
   type Session,
+  type TurnConfig,
   type TurnContext,
-  type ToolCallResultContext,
 } from "@cloudflare/think";
+import { ThinkMessengerStateAgent } from "@cloudflare/think/messengers";
+import telegramMessenger from "@cloudflare/think/messengers/telegram";
 import {
   AgentContextProvider,
   AgentSearchProvider,
   Session as AgentSession,
 } from "agents/experimental/memory/session";
 import { createCompactFunction } from "agents/experimental/memory/utils";
-import type { SerializedThread } from "chat";
-import { ThreadImpl } from "chat";
-import type { ToolSet } from "ai";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
+import { Schema } from "effect";
 
 import type { Env } from "./env";
 import { getRuntime, type AppServices } from "./runtime";
 import { createModel, summarize } from "./model";
-import { createTelegramChannel } from "../features/telegram/channel";
-import type { Channel } from "./channel";
 import { basePrompt } from "./prompts/base";
 import { remindersPrompt } from "../features/reminders/prompts/reminders";
 import { browserPrompt } from "../features/browser/prompts/browser";
 import { createReminderTools, type ReminderPayload } from "../features/reminders/tools";
 import { createBrowserTools } from "../features/browser/tools";
-import {
-  ChatActionError,
-  SessionError,
-  StorageError,
-} from "./errors";
+import { StorageError } from "./errors";
+
+export { ThinkMessengerStateAgent };
 
 const modelOverrides = new Map<string, string>();
 
-interface TurnState {
-  readonly channelType: string;
-  readonly chatId: string;
-  readonly threadId: string;
-  readonly replyToMessageId: number;
-  readonly startTime: number;
-  readonly traceId: string;
+function parseAllowedIds(raw: string): Set<number> {
+  try {
+    return new Set(
+      Schema.decodeSync(Schema.Array(Schema.NumberFromString))(
+        raw.split(/[\s,]+/).filter(Boolean),
+      ).filter(Number.isSafeInteger),
+    );
+  } catch {
+    return new Set<number>();
+  }
 }
 
+const COMMAND_INSTRUCTIONS =
+  "You respond to Telegram slash commands. When the user sends:\n" +
+  "  /help — List available commands\n" +
+  "  /status — Call get_status to show current model and reminders\n" +
+  "  /model [name] — Call set_model to show or switch the model\n" +
+  "Respond concisely. Use the appropriate tool and report the result naturally.";
+
 export class MizookAgent extends Think<Env> {
-  // Framework-driven mutable turn state. Think's lifecycle is a sequence of
-  // independent callbacks (submitTurn → beforeTurn → onChunk* → onChat*),
-  // so the turn context must persist on the instance between them. Kept to the
-  // minimum the streaming wiring needs.
-  private currentTurn: TurnState | null = null;
-  private serializedThread: SerializedThread | null = null;
-  private writer: WritableStreamDefaultWriter<string> | null = null;
-  private pendingStream: Promise<unknown> | null = null;
-
   waitForMcpConnections = false;
-
-  private _channel: Channel | null = null;
-
-  get channel(): Channel {
-    if (!this._channel) {
-      this._channel = createTelegramChannel(this.env.BOT_TOKEN);
-    }
-    return this._channel;
-  }
 
   private get runtime() {
     return getRuntime(this.env);
@@ -78,23 +66,26 @@ export class MizookAgent extends Think<Env> {
     return this.env;
   }
 
-  getTurnState(): TurnState | null {
-    return this.currentTurn;
-  }
-
   getConfiguredTimezone(): string {
     return this.env.TIMEZONE ?? "Asia/Jakarta";
   }
 
   getModel() {
-    return createModel(this.env, this.getModelName(this.currentTurn?.chatId));
+    return createModel(this.env, this.getModelName(this.getChatIdForModel()));
+  }
+
+  /** Derive the chat id for model-override lookup from the active context. */
+  private getChatIdForModel(): string | undefined {
+    const ctx = this.getMessengerContext();
+    if (ctx) return ctx.thread.id;
+    return undefined;
   }
 
   @callable()
   getModelName(chatId?: string): string {
-    const id = chatId ?? this.currentTurn?.chatId;
+    const id = chatId ?? this.getChatIdForModel();
     const override = id ? modelOverrides.get(id) : undefined;
-    return override ?? this.env.OPENCODE_GO_MODEL ?? "mimo-v2.5";
+    return override ?? this.env.OPENCODE_GO_MODEL ?? "mimo-v2.5-pro";
   }
 
   @callable()
@@ -102,9 +93,24 @@ export class MizookAgent extends Think<Env> {
     modelOverrides.set(chatId, modelName);
   }
 
+  getMessengers() {
+    return {
+      telegram: telegramMessenger({
+        token: this.env.BOT_TOKEN,
+        userName: "mizook",
+        secretToken: this.env.TELEGRAM_WEBHOOK_SECRET_TOKEN,
+      }),
+    };
+  }
+
   getSystemPrompt() {
     const tz = this.getConfiguredTimezone();
-    return [basePrompt, remindersPrompt.replace("{{TIMEZONE}}", tz), browserPrompt].join("\n\n");
+    return [
+      basePrompt,
+      remindersPrompt.replace("{{TIMEZONE}}", tz),
+      browserPrompt,
+      COMMAND_INSTRUCTIONS,
+    ].join("\n\n");
   }
 
   private _applySessionConfig(builder: AgentSession): AgentSession {
@@ -138,14 +144,33 @@ export class MizookAgent extends Think<Env> {
 
   getTools(): ToolSet {
     return {
+      ...this.createCommandTools(),
       ...createReminderTools(this),
       ...createBrowserTools(this),
     };
   }
 
   sendReminder(payload: ReminderPayload) {
+    const botToken = this.env.BOT_TOKEN;
+    const chatId = payload.target.chatId;
     return this.runtime.runPromise(
-      this.channel.postNotification(payload.target, `\u23f0 Reminder: ${payload.message}`),
+      Effect.tryPromise({
+        try: async () => {
+          const res = await fetch(
+            `https://api.telegram.org/bot${botToken}/sendMessage`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: `\u23f0 Reminder: ${payload.message}`,
+              }),
+            },
+          );
+          if (!res.ok) throw new Error(`sendMessage failed: ${res.status}`);
+        },
+        catch: (cause) => new StorageError({ cause }),
+      }),
     );
   }
 
@@ -187,268 +212,63 @@ export class MizookAgent extends Think<Env> {
     );
   }
 
-  @callable()
-  resetChat() {
-    return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
-        this.resetTurnState();
-        this.currentTurn = null;
-        yield* Effect.tryPromise({
-          try: () => this.clearMessages(),
-          catch: (cause) => new SessionError({ cause }),
-        });
-        yield* Effect.tryPromise({
-          try: () => this.session.refreshSystemPrompt(),
-          catch: (cause) => new SessionError({ cause }),
-        });
-        yield* Effect.logInfo("reset_chat_done");
-      }),
-    );
-  }
+  override beforeTurn(_ctx: TurnContext): TurnConfig | void | Promise<TurnConfig | void> {
+    const messenger = this.getMessengerContext();
+    if (!messenger) return;
 
-  @callable()
-  submitTurn(input: {
-    thread: SerializedThread;
-    chatId: string;
-    threadId: string;
-    messageId: string;
-    text: string;
-    channelType: string;
-    traceId: string;
-  }) {
-    return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
-        yield* Effect.logInfo(
-          `submitTurn_called chat_id=${input.chatId} thread_id=${input.threadId}`,
-        );
-
-        const now = yield* Clock.currentTimeMillis;
-        this.serializedThread = input.thread;
-        this.currentTurn = {
-          channelType: input.channelType,
-          chatId: input.chatId,
-          threadId: input.threadId,
-          replyToMessageId: Number(input.messageId),
-          startTime: now,
-          traceId: input.traceId,
+    // Access control — only applies to telegram messenger
+    const allowedRaw = this.env.TELEGRAM_ALLOWED_USER_IDS;
+    if (allowedRaw) {
+      const allowed = parseAllowedIds(allowedRaw);
+      if (!allowed.has(Number(messenger.author?.userId))) {
+        void this.deliverNotice("Access denied.");
+        return {
+          system: "### System: The user is not authorized to use this bot. Do not respond.",
+          maxSteps: 0,
         };
-
-        // Persist turn state so beforeTurn/onChatError can recover it
-        // after eviction. The serialized thread and chat target live here
-        // so the response can still be delivered even if the DO cold-starts.
-        yield* Effect.tryPromise({
-          try: () =>
-            this.ctx.storage.put({
-              __turn: this.currentTurn,
-              __serializedThread: this.serializedThread,
-            }),
-          catch: (cause) => new StorageError({ cause }),
-        });
-
-        yield* Effect.logInfo(
-          `turn_received chat_id=${input.chatId} thread_id=${input.threadId} channel=${input.channelType}`,
-        );
-
-        yield* Effect.tryPromise({
-          try: () => this.runTurn({ mode: "wait", input: input.text }),
-          catch: (cause) => new StorageError({ cause }),
-        });
-      }),
-    );
-  }
-
-  override beforeTurn(_ctx: TurnContext) {
-    return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
-        yield* Effect.logInfo(`beforeTurn_start session_id=${this.session ? "set" : "null"}`);
-        const freshSystem = yield* Effect.tryPromise({
-          try: () => this.session.refreshSystemPrompt(),
-          catch: (cause) => new SessionError({ cause }),
-        });
-        let turn = this.currentTurn;
-        let serialized = this.serializedThread;
-
-        // Recover from DO storage if cold-started after eviction
-        if (!turn || !serialized) {
-          const stored = yield* Effect.tryPromise({
-            try: () => this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
-            catch: (cause) => new StorageError({ cause }),
-          }).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
-          if (stored instanceof Map) {
-            const st = stored as Map<string, unknown>;
-            const recoveredTurn = st.get("__turn") as TurnState | undefined;
-            const recoveredSerialized = st.get("__serializedThread") as
-              | SerializedThread
-              | undefined;
-            if (recoveredTurn && recoveredSerialized) {
-              yield* Effect.sync(() => {
-                this.currentTurn = recoveredTurn;
-                this.serializedThread = recoveredSerialized;
-              });
-              yield* Effect.logInfo(
-                `beforeTurn_recovered_from_storage thread_id=${recoveredTurn.threadId}`,
-              );
-              turn = recoveredTurn;
-              serialized = recoveredSerialized;
-            }
-          }
-        }
-
-        if (!turn || !serialized) {
-          yield* Effect.logInfo(
-            `beforeTurn_no_turn_context turn=${!!turn} serialized=${!!serialized}`,
-          );
-          return { system: freshSystem };
-        }
-
-        const { readable, writable } = new TransformStream<string, string>();
-        const thread = ThreadImpl.fromJSON(serialized, this.channel.adapter);
-        yield* Effect.tryPromise({
-          try: () => thread.startTyping(),
-          catch: (cause) => new ChatActionError({ cause }),
-        });
-        yield* Effect.sync(() => {
-          this.writer = writable.getWriter();
-          this.pendingStream = thread
-            .post(readable)
-            .catch((err) => this.runtime.runFork(Effect.logError("stream_failed", err)));
-        });
-        return { system: freshSystem };
-      }),
-    );
-  }
-
-  override onChunk({ chunk }: ChunkContext) {
-    if (chunk.type !== "text-delta" || !chunk.text) return;
-    void this.writer?.write(chunk.text);
-  }
-
-  override afterToolCall(ctx: ToolCallResultContext) {
-    const turn = this.currentTurn;
-    if (!turn) return;
-
-    if (!ctx.success) {
-      const msg = ctx.error instanceof Error ? ctx.error.message : String(ctx.error);
-      this.runtime.runFork(Effect.logError("tool_failed", { toolName: ctx.toolName, error: msg }));
-    }
-
-    const status = this.getToolSuccessMessage(ctx.toolName, ctx.output);
-
-    if (status) {
-      this.runtime.runFork(
-        this.channel.postNotification({ platform: turn.channelType, chatId: turn.chatId }, status),
-      );
-    }
-  }
-
-  private getToolSuccessMessage(toolName: string, output: unknown): string | null {
-    const result = typeof output === "string" ? output : JSON.stringify(output);
-    switch (toolName) {
-      case "browser_screenshot_and_send":
-        return "📸 Screenshot sent";
-      case "set_reminder":
-        return result?.includes("Recurring") ? "🔁 Recurring reminder set" : "⏰ Reminder set";
-      case "list_reminders":
-        return null;
-      case "delete_reminder":
-        return "🗑️ Reminder deleted";
-      case "delete_all_reminders":
-        return "🗑️ Reminders cleared";
-
-      default:
-        return null;
-    }
-  }
-
-  private cleanupStream() {
-    return Effect.gen({ self: this }, function* () {
-      const writer = this.writer;
-      const pending = this.pendingStream;
-      if (writer) {
-        yield* Effect.tryPromise({
-          try: () => writer.close(),
-          catch: (cause) => new ChatActionError({ cause }),
-        });
       }
-      if (pending) {
-        yield* Effect.tryPromise({
-          try: () => pending,
-          catch: (cause) => new ChatActionError({ cause }),
-        });
-      }
-      yield* Effect.sync(() => {
-        this.writer = null;
-        this.pendingStream = null;
-      });
-    }).pipe(Effect.catchCause((cause) => Effect.logError("stream_cleanup_failed", cause)));
+    }
   }
 
-  override onChatResponse(result: ChatResponseResult) {
-    return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
-        yield* Effect.logInfo(`onChatResponse_start status=${result.status}`);
-        yield* this.cleanupStream();
-        // Clear both memory and storage so a stale __turn never poisons a subsequent turn
-        yield* Effect.sync(() => {
-          this.currentTurn = null;
-          this.serializedThread = null;
-        });
-        yield* Effect.tryPromise({
-          try: () => this.ctx.storage.delete(["__turn", "__serializedThread"]),
-          catch: (cause) => new StorageError({ cause }),
-        }).pipe(Effect.catchCause(() => Effect.void));
-        yield* Effect.logInfo(
-          `turn_complete request_id=${result.requestId} model=${this.env.OPENCODE_GO_MODEL ?? ""}`,
-        );
+  private createCommandTools(): ToolSet {
+    const agent = this;
+    const AVAILABLE = ["deepseek-v4-flash", "kimi-k2.6", "deepseek-v4-pro", "mimo-v2.5-pro"];
+
+    return {
+      get_status: tool({
+        description: "Show bot status: current model and active reminders. Use when the user sends /status.",
+        inputSchema: z.object({}),
+        execute: async () => {
+          const chatId = agent.getChatIdForModel() ?? "";
+          const modelName = agent.getModelName(chatId);
+          const schedules = await agent.listSchedules();
+          const reminderCount = schedules.filter(
+            (s: { callback: string }) => s.callback === "sendReminder",
+          ).length;
+          return `Model: ${modelName}\nActive reminders: ${reminderCount}`;
+        },
       }),
-    );
-  }
-
-  override onChatError(error: unknown) {
-    return this.runtime.runPromise(
-      Effect.gen({ self: this }, function* () {
-        yield* this.cleanupStream();
-        let turn = this.currentTurn;
-        let serialized = this.serializedThread;
-
-        // Recover from DO storage if cold-started
-        if (!turn || !serialized) {
-          const stored = yield* Effect.tryPromise({
-            try: () => this.ctx.storage.get<unknown>(["__turn", "__serializedThread"]),
-            catch: (cause) => new StorageError({ cause }),
-          }).pipe(Effect.catchCause(() => Effect.succeed(new Map())));
-          if (stored instanceof Map) {
-            const st = stored as Map<string, unknown>;
-            const recoveredTurn = st.get("__turn") as TurnState | undefined;
-            const recoveredSerialized = st.get("__serializedThread") as
-              | SerializedThread
-              | undefined;
-            if (recoveredTurn && recoveredSerialized) {
-              turn = recoveredTurn;
-              serialized = recoveredSerialized;
-            }
+      set_model: tool({
+        description:
+          "Show or set the AI model. Without modelName, returns the current model and available options. " +
+          "With modelName, switches to that model. Use when the user sends /model.",
+        inputSchema: z.object({
+          modelName: z.string().optional().describe("The model name to switch to, or empty to show current"),
+        }),
+        execute: async ({ modelName }) => {
+          const chatId = agent.getChatIdForModel() ?? "";
+          if (!modelName) {
+            const current = agent.getModelName(chatId);
+            return `Current model: ${current}\nAvailable: ${AVAILABLE.join(", ")}`;
           }
-        }
-
-        yield* Effect.sync(() => {
-          this.currentTurn = null;
-          this.serializedThread = null;
-        });
-        yield* Effect.tryPromise({
-          try: () => this.ctx.storage.delete(["__turn", "__serializedThread"]),
-          catch: (cause) => new StorageError({ cause }),
-        }).pipe(Effect.catchCause(() => Effect.void));
-
-        if (turn && serialized) {
-          const thread = ThreadImpl.fromJSON(serialized, this.channel.adapter);
-          yield* Effect.tryPromise({
-            try: () => thread.post("Sorry, something went wrong."),
-            catch: (cause) => new ChatActionError({ cause }),
-          });
-        }
-        yield* Effect.logError("turn_error", error);
-        return error;
+          if (!AVAILABLE.includes(modelName)) {
+            return `Unknown model "${modelName}". Available: ${AVAILABLE.join(", ")}`;
+          }
+          agent.setModel(chatId, modelName);
+          return `Model set to ${modelName}`;
+        },
       }),
-    );
+    };
   }
+
 }

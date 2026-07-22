@@ -8,12 +8,10 @@ interface __BaseEnv_Env {
   OPENCODE_GO_MODEL: "mimo-v2.5-pro";
   TIMEZONE: "Asia/Jakarta";
   MIZOOK_AGENT: DurableObjectNamespace<import("./src/index").MizookAgent>;
-  CHAT_STATE: DurableObjectNamespace<import("./src/index").ChatStateDO>;
 }
 declare namespace Cloudflare {
   interface GlobalProps {
     mainModule: typeof import("./src/index");
-    durableNamespaces: "ChatStateDO";
   }
   interface Env extends __BaseEnv_Env {}
 }

@@ -17,22 +17,8 @@ bucket_name = "mizook-r2"
 class_name = "MizookAgent"
 name = "MIZOOK_AGENT"
 
-[[durable_objects.bindings]]
-class_name = "ChatStateDO"
-name = "CHAT_STATE"
-
 [[migrations]]
 tag = "v1"
-
-[[migrations]]
-new_sqlite_classes = ["ChatStateDO"]
-tag = "v2"
-
-[[migrations]]
-tag = "v3"
-
-[[migrations]]
-tag = "v4"
 
 [observability.logs]
 enabled = true
@@ -41,4 +27,5 @@ invocation_logs = true
 [vars]
 OPENCODE_GO_MODEL = "mimo-v2.5-pro"
 TIMEZONE = "Asia/Jakarta"
+TELEGRAM_WEBHOOK_SECRET_TOKEN = "set-me-in-production"
 # EXA_API_KEY = "your-exa-api-key"

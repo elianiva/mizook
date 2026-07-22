@@ -2,24 +2,16 @@ import { Effect, Match } from "effect";
 import { routeAgentRequest } from "agents";
 import type { Env } from "./core/env";
 import { getRuntime } from "./core/runtime";
-import { handleTelegramWebhook } from "./features/telegram/webhook";
 import { serveScreenshot } from "./features/browser/routes";
-import { ScreenshotError, WebhookError } from "./core/errors";
+import { ScreenshotError } from "./core/errors";
 
-export { MizookAgent } from "./core/agent";
-export { ChatStateDO } from "chat-state-cloudflare-do";
+export { MizookAgent, ThinkMessengerStateAgent } from "./core/agent";
 
-const route = Effect.fn("route")(function* (request: Request, env: Env, ctx: ExecutionContext) {
+const route = Effect.fn("route")(function* (request: Request, env: Env, _ctx: ExecutionContext) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
   return yield* Match.value(pathname).pipe(
-    Match.when("/telegram", () =>
-      Effect.tryPromise({
-        try: () => handleTelegramWebhook(request, env, ctx),
-        catch: (cause) => new WebhookError({ cause }),
-      }),
-    ),
     Match.when("/screenshots/", () =>
       Effect.tryPromise({
         try: () => serveScreenshot(url, env),

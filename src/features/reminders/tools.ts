@@ -1,7 +1,13 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { MizookAgent } from "../../core/agent";
-import type { ChatTarget } from "../../core/channel";
+
+// Replicated here instead of importing from the deleted core/channel to
+// keep the reminders feature self-contained and easy to relocate.
+export interface ChatTarget {
+  readonly platform: string;
+  readonly chatId: string;
+}
 
 export interface ReminderPayload {
   target: ChatTarget;
@@ -119,11 +125,11 @@ export function createReminderTools(agent: MizookAgent) {
           ),
       }),
       execute: async ({ message, duration, cron }) => {
-        const turn = agent.getTurnState();
-        if (!turn) return "Reminders are only available during a conversation turn.";
+        const ctx = agent.getMessengerContext();
+        if (!ctx) return "Reminders are only available during a conversation turn.";
 
         const payload: ReminderPayload = {
-          target: { platform: turn.channelType, chatId: turn.chatId },
+          target: { platform: ctx.provider, chatId: ctx.thread.providerThreadId },
           message,
         };
 

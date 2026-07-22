@@ -2,7 +2,6 @@ import { tool } from "ai";
 import { z } from "zod";
 import puppeteer from "@cloudflare/puppeteer";
 import type { MizookAgent } from "../../core/agent";
-import type { ChatTarget } from "../../core/channel";
 import type { Env } from "../../core/env";
 
 async function takeScreenshot(
@@ -59,24 +58,29 @@ async function takeScreenshot(
 
 async function storeAndSend(
   env: Env,
-  agent: MizookAgent,
   img: Uint8Array,
-  target: ChatTarget,
+  chatId: string,
   url: string,
   caption?: string,
 ) {
   const key = `screenshots/${crypto.randomUUID()}.png`;
   await env.MIZOOK_R2.put(key, img, { httpMetadata: { contentType: "image/png" } });
-  await agent.run(agent.channel.postPhoto(target, img, caption ?? `Screenshot of ${url}`));
+
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("photo", new Blob([img as BlobPart], { type: "image/png" }), "screenshot.png");
+  form.append("caption", (caption ?? `Screenshot of ${url}`).slice(0, 200));
+  const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) throw new Error(`sendPhoto failed: ${res.status}`);
+
   return key;
 }
 
 export function createBrowserTools(agent: MizookAgent) {
   const env = agent.appEnv;
-  const getTarget = (): ChatTarget | null => {
-    const turn = agent.getTurnState();
-    return turn ? { platform: turn.channelType, chatId: turn.chatId } : null;
-  };
 
   return {
     browser_screenshot_and_send: tool({
@@ -93,10 +97,11 @@ export function createBrowserTools(agent: MizookAgent) {
         waitUntil: z.enum(["load", "networkidle0", "networkidle2", "domcontentloaded"]).optional(),
       }),
       execute: async (params) => {
-        const target = getTarget();
-        if (!target) return "No active chat to send to.";
+        const ctx = agent.getMessengerContext();
+        if (!ctx) return "No active chat to send to.";
+        const chatId = ctx.thread.providerThreadId;
         const img = await takeScreenshot(env, params.url, params);
-        const key = await storeAndSend(env, agent, img, target, params.url, params.caption);
+        const key = await storeAndSend(env, img, chatId, params.url, params.caption);
         return `Screenshot of ${params.url} captured and sent. R2 key: ${key}`;
       },
     }),
