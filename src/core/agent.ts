@@ -94,6 +94,7 @@ export class MizookAgent extends Think<Env> {
         token: this.env.BOT_TOKEN,
         userName: "mizook",
         secretToken: this.env.MIZOOK_WEBHOOK_SECRET,
+        conversation: "self",
         respondTo: ["direct-message", "mention", "subscribed-thread", "action"],
       }),
     };
