@@ -1,147 +1,65 @@
 # Mizook
 
-Telegram personal assistant running on Cloudflare Workers, powered by Durable Objects, [Chat SDK](https://chat-sdk.dev), and [OpenCode Go](https://opencode.ai/go) for AI.
+A Telegram assistant on Cloudflare Workers. One chat that never ends: it remembers everything
+you say, and nothing needs resetting.
 
-## Prerequisites
+- **Memory** — [`@mizook/memory`](packages/memory): the whole chat is logged word for word and
+  compressed into a binary tree of one-line summaries. Each turn sees a constant-size view of it
+  and zooms where it needs more. See the [package README](packages/memory/README.md).
+- **Agent** — [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable):
+  every turn is a durable run. Model calls and tool calls are committed to the Durable Object's
+  SQLite before anything is shown, so a restart picks the turn up where it stopped.
+- **Telegram** — [Chat SDK](https://chat-sdk.dev) with the Telegram adapter.
+- **Deploy** — [Alchemy](https://alchemy.run), declared in `alchemy.run.ts`.
+- Everything is [Effect](https://effect.website): services, layers, typed errors.
 
-- [Cloudflare account](https://dash.cloudflare.com) with Workers paid plan (Durable Objects)
-- [OpenCode Go](https://opencode.ai/go) subscription (or any OpenAI-compatible API key)
-- [Telegram bot](https://t.me/BotFather) token
-- [Vite+](https://voidzero.dev/vite-plus) (`vp` CLI)
+```
+Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, then
+                       │
+                       ▼
+                    ChatAgent Durable Object (src/chat-agent.ts)       one chat = one object
+                       ├─ Bot      Chat SDK ⇄ Telegram
+                       ├─ Agent    one pi-durable conversation per turn
+                       ├─ Memory   log, tree, view, compactions         (packages/memory)
+                       └─ SQLite   pi-durable + memory + bot state, one connection
+```
 
 ## Setup
 
-### 1. Install dependencies
-
-```bash
+```sh
 vp install
+cp .env.example .env     # then fill it in
 ```
 
-### 2. Configure secrets
+| Variable                    | Required | What                                                                   |
+| --------------------------- | -------- | ---------------------------------------------------------------------- |
+| `BOT_TOKEN`                 | yes      | Telegram bot token from @BotFather                                     |
+| `MIZOOK_WEBHOOK_SECRET`     | yes      | Any random string; Telegram sends it back with every update            |
+| `OPENCODE_API_KEY`          | yes      | [OpenCode Go](https://opencode.ai/go) key                              |
+| `TELEGRAM_ALLOWED_USER_IDS` | yes      | Comma-separated Telegram user ids. Nobody else gets an answer          |
+| `MODEL`                     | no       | The agent's model (default `mimo-v2.5-pro`)                            |
+| `SUMMARY_MODEL`             | no       | The cheap model that writes the memory (default `claude-haiku-5-5`)    |
+| `MODEL_PROVIDER`            | no       | pi-ai provider id (default `opencode-go`)                              |
+| `AGENT_NAME`                | no       | What the agent calls itself (default `Mizook`)                         |
+| `INSTRUCTIONS`              | no       | Who you are and how you want work done: goes last in the system prompt |
+| `TIMEZONE`                  | no       | IANA zone for the dates the agent sees (default `Asia/Jakarta`)        |
 
-Set these with `wrangler secret put`:
+Message the bot before you know your id: it answers a stranger with their Telegram id.
 
-```bash
-# Telegram bot token (from @BotFather)
-wrangler secret put BOT_TOKEN
+## Deploy
 
-# OpenCode Go API key (from https://opencode.ai/go)
-wrangler secret put OPENCODE_GO_API_KEY
+Alchemy needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (or a profile: `alchemy profile`).
 
-# Comma-separated list of allowed Telegram user IDs
-wrangler secret put TELEGRAM_ALLOWED_USER_IDS
+```sh
+vp run deploy            # alchemy deploy: Worker + ChatAgent Durable Object
+vp run webhook https://<the url deploy printed>
 ```
 
-### 3. Local development
+`vp run dev` runs the same stack under `alchemy dev`. `vp run destroy` tears it down.
 
-```bash
-# Create .dev.vars for local secrets
-cat > .dev.vars <<EOF
-BOT_TOKEN=<your-bot-token>
-OPENCODE_GO_API_KEY=<your-opencode-go-key>
-TELEGRAM_ALLOWED_USER_IDS=<your-telegram-id>
-EOF
+## Develop
 
-# Start dev server
-vp dev
+```sh
+vp check     # format, lint, types
+vp test      # the memory package's tests and the Telegram chunker
 ```
-
-### 4. Deploy
-
-```bash
-vp deploy
-
-# Set secrets in production
-wrangler secret put BOT_TOKEN
-wrangler secret put OPENCODE_GO_API_KEY
-wrangler secret put TELEGRAM_ALLOWED_USER_IDS
-```
-
-## Configuration
-
-| Variable                    | Required | Description                                                |
-| --------------------------- | -------- | ---------------------------------------------------------- |
-| `BOT_TOKEN`                 | Yes      | Telegram bot token from @BotFather                         |
-| `OPENCODE_GO_API_KEY`       | Yes      | OpenCode Go API key                                        |
-| `TELEGRAM_ALLOWED_USER_IDS` | Yes      | Comma-separated Telegram user IDs allowed to use the bot   |
-| `OPENCODE_GO_MODEL`         | No       | Model ID (default: `mimo-v2.5`)                            |
-| `TIMEZONE`                  | No       | IANA timezone for the user (default: `Asia/Jakarta`/UTC+7) |
-| `EXA_API_KEY`               | No       | Exa API key for web search (MCP integration)               |
-| `CF_API_TOKEN`              | No       | Cloudflare API token for resource management               |
-| `BASE_URL`                  | No       | Base URL for links (default: `https://mzk.elianiva.com`)   |
-
-## Available models
-
-The full model list is at `https://opencode.ai/zen/go/v1/models`. Popular defaults:
-
-- `mimo-v2.5` — Fast, cheap (default)
-- `deepseek-v4-flash` — Fast, cheap
-- `kimi-k2.6` — Stronger reasoning
-- `deepseek-v4-pro` — Most capable
-
-## Features
-
-### AI Chat
-
-- Conversational AI powered by OpenCode Go (DeepSeek, Kimi, etc.)
-- Streaming responses with real-time updates
-- Persistent memory for user preferences and context
-- Full-text search across conversation history
-- Automatic context compaction for long conversations
-
-### Web Search & Fetch
-
-- Search the internet for current information via Exa MCP
-- Fetch full content from any URL for detailed analysis
-
-### Cloudflare API
-
-- Full access to your Cloudflare resources (domains, DNS, Workers, KV, R2, D1, etc.)
-- Query and manage resources via natural language
-
-### Reminders
-
-- One-time reminders with duration (e.g. "30m", "2h", "1d")
-- Recurring reminders with cron expressions (e.g. "daily at 8am")
-- List and cancel active reminders
-
-### Browser Screenshots
-
-- Capture screenshots of any website using headless browser
-- Send screenshots directly to chat
-- Viewport and wait options for accurate captures
-
-### Commands
-
-| Command  | Description                        |
-| -------- | ---------------------------------- |
-| `/start` | Greeting message                   |
-| `/reset` | Clear conversation and start fresh |
-
-## Architecture
-
-```
-Telegram → Webhook → Chat SDK → Cloudflare Worker → Durable Object (per chat)
-                                                            ↓
-                                                  OpenCode Go API (AI)
-```
-
-- [Chat SDK](https://chat-sdk.dev) handles Telegram webhook handling and event routing
-- Each Telegram chat gets its own Durable Object for isolated AI conversation state
-- Messages stream from the model to Telegram via post+edit (500ms throttle)
-- Webhook secret verification is handled by the Telegram adapter
-- [Think](https://developers.cloudflare.com/agents/) (Cloudflare Agents) manages tool orchestration and streaming
-
-### MCP Integrations
-
-| MCP Server | Purpose                     | Required |
-| ---------- | --------------------------- | -------- |
-| Exa        | Web search and URL fetching | No       |
-| Cloudflare | Cloudflare API access       | No       |
-
-### Storage
-
-| Bucket | Purpose                        |
-| ------ | ------------------------------ |
-| R2     | Screenshots                    |
-| DO     | Conversation state and history |

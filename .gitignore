@@ -23,6 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
-.wrangler
 
 .amp/portals/*
+
+.env
+.dev.vars
+.alchemy
+.amp/in/

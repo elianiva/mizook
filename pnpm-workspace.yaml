@@ -1,9 +1,13 @@
+packages:
+  - packages/*
 allowBuilds:
+  "@google/genai": false
   "@mongodb-js/zstd": true
   core-js-pure: true
   esbuild: true
   msgpackr-extract: true
   node-liblzma: true
+  protobufjs: false
   sharp: true
   workerd: true
 catalog:
@@ -20,3 +24,5 @@ peerDependencyRules:
 trustPolicyExclude:
   - "effect@4.0.0-beta.62"
   - "semver@6.3.1"
+patchedDependencies:
+  chat@4.41.1: patches/chat@4.41.1.patch

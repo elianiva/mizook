@@ -4,31 +4,33 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "types": "wrangler types",
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "webhook": "node --env-file=.env scripts/set-webhook.ts",
+    "test": "vp test",
     "check": "vp check",
     "fmt": "vp check --fix",
     "lint": "vp lint"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^3.0.9",
-    "@chat-adapter/telegram": "^4.34.0",
-    "@cloudflare/puppeteer": "^1.1.0",
-    "@cloudflare/think": "^0.13.0",
-    "agents": "^0.17.4",
-    "ai": "^7.0.26",
-    "chat": "^4.34.0",
-    "effect": "4.0.0-beta.62",
-    "workers-ai-provider": "^3.3.1",
-    "zod": "^4.4.3"
+    "@chat-adapter/state-memory": "^4.41.1",
+    "@chat-adapter/telegram": "^4.41.1",
+    "@earendil-works/chord": "^1.2.0",
+    "@earendil-works/pi-ai": "^1.2.0",
+    "@earendil-works/pi-durable": "^1.2.0",
+    "@effect/platform-node": "^4.0.4",
+    "@mizook/memory": "workspace:*",
+    "alchemy": "2.0.0-beta.83",
+    "chat": "^4.41.1",
+    "effect": "^4.0.4"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1",
+    "@cloudflare/workers-types": "^5.20261013.1",
+    "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
     "vite": "catalog:",
-    "vite-plus": "catalog:",
-    "wrangler": "^4.110.0"
+    "vite-plus": "catalog:"
   },
   "packageManager": "pnpm@11.15.1"
 }
