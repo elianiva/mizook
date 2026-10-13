@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> corepack/pnpm"
+if ! command -v pnpm >/dev/null 2>&1; then
+  corepack enable || npm install -g corepack && corepack enable
+fi
+corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
+
+echo "==> pnpm install"
+time pnpm install --frozen-lockfile
