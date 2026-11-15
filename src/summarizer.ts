@@ -2,7 +2,7 @@ import type { AssistantMessage, Message, Model, Api } from "@earendil-works/pi-a
 import { CompletionError, Summarizer, type CompletionRequest } from "@mizook/memory";
 import { Effect, Layer } from "effect";
 import { Models } from "./models.ts";
-import { memoryTools } from "./tools.ts";
+import { agentTools } from "./tools.ts";
 
 const ZERO_USAGE = {
   input: 0,
@@ -45,7 +45,7 @@ export const SummarizerLive = Layer.effect(
                 systemPrompt: request.system,
                 messages: toMessages(request, summary),
                 // Same tools as the turns, never called: the call then reads their cache entry.
-                tools: memoryTools,
+                tools: agentTools,
               },
               { reasoning: summary.reasoning ? "xhigh" : undefined, signal, sessionId: "memory" },
             );

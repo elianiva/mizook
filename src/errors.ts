@@ -48,3 +48,13 @@ export class ScheduleError extends Data.TaggedError("ScheduleError")<{
     return this.reason;
   }
 }
+
+/** A web request failed, or the page was refused. */
+export class WebError extends Data.TaggedError("WebError")<{
+  readonly url: string;
+  readonly reason: string;
+}> {
+  override get message() {
+    return `${this.url}: ${this.reason}`;
+  }
+}

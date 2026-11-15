@@ -1,5 +1,5 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Semaphore } from "effect";
 import { ScheduleError, StateError } from "./errors.ts";
 import { invalid, nextFire, type Spec } from "./schedule.ts";
 
@@ -60,7 +60,11 @@ export class Schedules extends Context.Service<
     readonly nextAt: Effect.Effect<number | undefined, StateError>;
   }
 >()("mizook/Schedules") {
-  static readonly layer = (sql: SqlDriver) =>
+  /**
+   * `arm(at)` is told when a new schedule is due, so the Durable Object can move its alarm
+   * earlier. It never moves it later: the alarm handler sets the exact time after each wake.
+   */
+  static readonly layer = (sql: SqlDriver, arm: (at: number) => Promise<void> = async () => {}) =>
     Layer.effect(
       Schedules,
       Effect.gen(function* () {
@@ -79,6 +83,9 @@ export class Schedules extends Context.Service<
           );
           await sql.all(`CREATE TABLE IF NOT EXISTS app_fires (at INTEGER NOT NULL)`);
         });
+
+        // Two wakes must not take the same due schedule: the reads and writes below interleave.
+        const lock = (yield* Semaphore.make(1)).withPermits(1);
 
         const active = () =>
           sql.all<Row>(
@@ -101,6 +108,7 @@ export class Schedules extends Context.Service<
                   now.getTime(),
                 ),
               );
+              yield* run("arm", () => arm(at));
               return toSchedule(rows[0]!);
             }),
           list: run("list schedules", async () => (await active()).map(toSchedule)),
@@ -113,23 +121,27 @@ export class Schedules extends Context.Service<
               return rows.length > 0;
             }),
           claim: (now) =>
-            run("claim schedules", async () => {
-              const due = (await active()).map(toSchedule).filter((s) => s.nextAt <= now.getTime());
-              for (const s of due) {
-                // Always the next time after now: a cron that missed several slots fires once.
-                const next = nextFire(s.spec, now);
-                if (next) {
-                  await sql.all(
-                    `UPDATE app_schedules SET next_at = ? WHERE id = ?`,
-                    next.getTime(),
-                    s.id,
-                  );
-                } else {
-                  await sql.all(`UPDATE app_schedules SET active = 0 WHERE id = ?`, s.id);
+            lock(
+              run("claim schedules", async () => {
+                const due = (await active())
+                  .map(toSchedule)
+                  .filter((s) => s.nextAt <= now.getTime());
+                for (const s of due) {
+                  // Always the next time after now: a cron that missed several slots fires once.
+                  const next = nextFire(s.spec, now);
+                  if (next) {
+                    await sql.all(
+                      `UPDATE app_schedules SET next_at = ? WHERE id = ?`,
+                      next.getTime(),
+                      s.id,
+                    );
+                  } else {
+                    await sql.all(`UPDATE app_schedules SET active = 0 WHERE id = ?`, s.id);
+                  }
                 }
-              }
-              return due;
-            }),
+                return due;
+              }),
+            ),
           watchChanged: (id, hash) =>
             run("watch", async () => {
               const row = (

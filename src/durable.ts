@@ -16,7 +16,8 @@ import { Memory } from "@mizook/memory";
 import { Context, Effect, Layer } from "effect";
 import { DurableError } from "./errors.ts";
 import { Models } from "./models.ts";
-import { dateParameters, DATE_DESCRIPTION, zoomParameters, ZOOM_DESCRIPTION } from "./tools.ts";
+import { Handlers } from "./handlers.ts";
+import { toolSpecs } from "./tools.ts";
 
 export class Durable extends Context.Service<
   Durable,
@@ -38,26 +39,23 @@ export class Durable extends Context.Service<
       Effect.gen(function* () {
         const { models, main } = yield* Models;
         const memory = yield* Memory;
+        const handlers = yield* Handlers;
         const services = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(services);
         const turnInputs = new Map<ConversationId, string>();
 
         const text = (output: string) => ({ output: [{ type: "text" as const, text: output }] });
 
-        const zoom = defineTool({
-          name: "zoom",
-          description: ZOOM_DESCRIPTION,
-          parameters: zoomParameters,
-          replay: "safe",
-          execute: async (args) => text(await run(memory.zoom(args.id, args.n).pipe(Effect.orDie))),
-        });
-        const date = defineTool({
-          name: "date",
-          description: DATE_DESCRIPTION,
-          parameters: dateParameters,
-          replay: "safe",
-          execute: async (args) => text(await run(memory.date(args.id).pipe(Effect.orDie))),
-        });
+        const tools = toolSpecs.map((spec) =>
+          defineTool({
+            name: spec.name,
+            description: spec.description,
+            parameters: spec.parameters,
+            replay: spec.replay,
+            execute: async (args) =>
+              text(await run(handlers.call(spec.name, args as Record<string, unknown>))),
+          }),
+        );
 
         const contentText = (content: Message["content"]): string =>
           typeof content === "string"
@@ -68,7 +66,7 @@ export class Durable extends Context.Service<
           name: "memory",
           // The one system prompt, for turns and compactions alike: never dates or state in it.
           sections: [section("prompt", () => memory.systemPrompt, { tag: false })],
-          tools: [zoom, date],
+          tools,
           hooks: [
             hook(GenerationTask, {
               beforeRequest: async (request, api) => {

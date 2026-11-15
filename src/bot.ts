@@ -1,12 +1,20 @@
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { Chat, type Message, type Thread } from "chat";
-import { Context, Duration, Effect, Layer, Redacted, Schedule } from "effect";
+import { clipToolOutput } from "@mizook/memory";
+import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
 import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
-import { TelegramError } from "./errors.ts";
+import { TelegramError, type StateError } from "./errors.ts";
+import { Schedules, type Schedule as Scheduled } from "./schedules.ts";
 import { State } from "./state.ts";
+import { fetchPage, sha256 } from "./web.ts";
+
+/** How long an interrupted turn waits for the next alarm before something picks it up. */
+export const RECOVER_AFTER_MS = 30_000;
+/** Most turns schedules may start in an hour: a bad watch must not flood the chat or the budget. */
+const FIRES_PER_HOUR = 20;
 
 const GREETING = (name: string) =>
   `Hi, I'm ${name}. This is one chat that never ends: I remember everything we say, so there is nothing to reset. What shall we do?`;
@@ -21,6 +29,10 @@ export class Bot extends Context.Service<
     ): Effect.Effect<Response, TelegramError>;
     /** Deliver the replies of turns a restart interrupted. Returns how many turns are still pending. */
     readonly recover: Effect.Effect<number, AgentError | TelegramError>;
+    /** Start a turn for each schedule that is due. */
+    readonly wake: Effect.Effect<void, AgentError | StateError>;
+    /** When the Durable Object's alarm should ring next: a pending turn's recovery or the next schedule. */
+    readonly nextWake: Effect.Effect<number | undefined, AgentError | StateError>;
   }
 >()("mizook/Bot") {
   static readonly layer = Layer.effect(
@@ -29,6 +41,7 @@ export class Bot extends Context.Service<
       const settings = yield* Settings;
       const agent = yield* Agent;
       const state = yield* State;
+      const schedules = yield* Schedules;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
 
@@ -121,6 +134,8 @@ export class Bot extends Context.Service<
 
         // The thread id names the forum topic too; `channelId` is only the group.
         const chatId = thread.id;
+        // Schedules of this channel post here.
+        yield* state.setMeta("thread", thread.id);
         yield* hold(chatId);
         const started = yield* agent.begin({
           chatId,
@@ -131,6 +146,68 @@ export class Bot extends Context.Service<
         if (started === "folded") return;
         yield* deliver(chatId, thread.id);
       }, Effect.scoped);
+
+      const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
+
+      /** The message a due schedule starts a turn with, or nothing when it stays silent. */
+      const textOf = (s: Scheduled) =>
+        Effect.gen(function* () {
+          if (s.spec.kind !== "watch") return `[scheduled #${s.id}] ${s.prompt}`;
+          const page = yield* fetchPage(s.spec.url).pipe(
+            Effect.map((p) => p.text),
+            Effect.catch((error) =>
+              Effect.logWarning(`watch #${s.id} failed: ${error.message}`).pipe(
+                Effect.as(undefined),
+              ),
+            ),
+          );
+          if (page === undefined) return undefined;
+          const changed = yield* schedules.watchChanged(
+            s.id,
+            yield* Effect.promise(() => sha256(page)),
+          );
+          return changed
+            ? `[watch #${s.id} changed] ${s.prompt}\n\n${s.spec.url} now reads:\n${clipToolOutput(page)}`
+            : undefined;
+        });
+
+      const wake = Effect.gen(function* () {
+        const now = yield* nowDate;
+        const due = yield* schedules.claim(now);
+        const threadId = yield* state.meta("thread");
+        // Nothing has been said in this channel yet, so there is nowhere to post.
+        if (due.length === 0 || !threadId) return;
+        for (const s of due) {
+          const text = yield* textOf(s);
+          if (text === undefined) continue;
+          if (!(yield* schedules.allow(now, FIRES_PER_HOUR))) {
+            yield* Effect.logWarning(
+              `schedule #${s.id} skipped: over ${FIRES_PER_HOUR} fires an hour`,
+            );
+            continue;
+          }
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* hold(threadId);
+              const started = yield* agent.begin({
+                chatId: threadId,
+                threadId,
+                text,
+                requestId: `sched:${s.id}:${s.nextAt}`,
+              });
+              if (started === "started") yield* deliver(threadId, threadId);
+            }),
+          ).pipe(Effect.catchCause((cause) => Effect.logError(`schedule #${s.id} failed`, cause)));
+        }
+      });
+
+      const nextWake = Effect.gen(function* () {
+        const pending =
+          (yield* agent.pending).length > 0 ? Date.now() + RECOVER_AFTER_MS : undefined;
+        const scheduled = yield* schedules.nextAt;
+        const times = [pending, scheduled].filter((t): t is number => t !== undefined);
+        return times.length === 0 ? undefined : Math.min(...times);
+      });
 
       const onMessage = (thread: Thread, message: Message) =>
         run(
@@ -152,6 +229,8 @@ export class Bot extends Context.Service<
       chat.onNewMention(onMessage);
 
       return Bot.of({
+        wake,
+        nextWake,
         webhook: (request, waitUntil) =>
           Effect.tryPromise({
             try: () => chat.webhooks.telegram(request, { waitUntil }),

@@ -48,6 +48,9 @@ export class State extends Context.Service<
     readonly turns: Effect.Effect<ReadonlyArray<PendingTurn>, StateError>;
     putTurn(turn: PendingTurn): Effect.Effect<void, StateError>;
     deleteTurn(chatId: string): Effect.Effect<void, StateError>;
+    /** A small named value of the chat, such as the thread schedules post to. */
+    meta(key: string): Effect.Effect<string | undefined, StateError>;
+    setMeta(key: string, value: string): Effect.Effect<void, StateError>;
     /** True the first time it sees `id`: Telegram redelivers an update that was not answered in time. */
     firstSeen(id: string): Effect.Effect<boolean, StateError>;
   }
@@ -68,6 +71,9 @@ export class State extends Context.Service<
                chat_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, conversation_id INTEGER NOT NULL,
                request_id TEXT NOT NULL, text TEXT NOT NULL, submissions TEXT NOT NULL,
                logged INTEGER NOT NULL DEFAULT 0)`,
+          );
+          await sql.all(
+            `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
           );
           await sql.all(
             `CREATE TABLE IF NOT EXISTS app_seen (id TEXT PRIMARY KEY, at INTEGER NOT NULL)`,
@@ -104,6 +110,23 @@ export class State extends Context.Service<
           deleteTurn: (chatId) =>
             run("deleteTurn", async () => {
               await sql.all(`DELETE FROM app_turns WHERE chat_id = ?`, chatId);
+            }),
+          meta: (key) =>
+            run("meta", async () => {
+              const rows = await sql.all<{ value: string }>(
+                `SELECT value FROM app_meta WHERE key = ?`,
+                key,
+              );
+              return rows[0]?.value;
+            }),
+          setMeta: (key, value) =>
+            run("setMeta", async () => {
+              await sql.all(
+                `INSERT INTO app_meta (key, value) VALUES (?, ?)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+                key,
+                value,
+              );
             }),
           firstSeen: (id) =>
             run("firstSeen", async () => {

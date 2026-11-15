@@ -10,7 +10,10 @@ import type { Env } from "./env.ts";
 import { formatDate } from "./format.ts";
 import { Models } from "./models.ts";
 import { State } from "./state.ts";
+import { Handlers } from "./handlers.ts";
+import { Schedules } from "./schedules.ts";
 import { SummarizerLive } from "./summarizer.ts";
+import { TOOL_GUIDE } from "./tools.ts";
 
 /**
  * Everything the Durable Object runs, as one layer over its own storage.
@@ -20,6 +23,11 @@ import { SummarizerLive } from "./summarizer.ts";
  * same database object, so none of their writes can land inside one of its transactions.
  */
 export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
+  /** Move the alarm earlier, never later. */
+  const arm = async (at: number) => {
+    const current = await storage.getAlarm();
+    if (current === null || at < current) await storage.setAlarm(at);
+  };
   const database = new DurableObjectSqliteDatabase(storage);
   const sql: SqlDriver = {
     all: <T>(query: string, ...params: unknown[]) =>
@@ -37,7 +45,7 @@ export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
       const { agentName, instructions, timezone } = yield* Settings;
       return Memory.layer({
         name: agentName,
-        instructions,
+        instructions: instructions === "" ? TOOL_GUIDE : `${TOOL_GUIDE}\n\n${instructions}`,
         formatDate: (date) => formatDate(date, timezone),
       });
     }),
@@ -46,6 +54,8 @@ export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
   const app = Bot.layer.pipe(
     Layer.provideMerge(Agent.layer),
     Layer.provideMerge(Durable.layer(database)),
+    Layer.provideMerge(Handlers.layer),
+    Layer.provideMerge(Schedules.layer(sql, arm)),
     Layer.provideMerge(State.layer(sql)),
     Layer.provideMerge(memory),
   );
