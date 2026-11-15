@@ -39,3 +39,12 @@ export class TelegramError extends Data.TaggedError("TelegramError")<{
     return `telegram ${this.operation} failed: ${String(this.cause)}`;
   }
 }
+
+/** A schedule the agent asked for cannot be made. The reason goes back to the agent. */
+export class ScheduleError extends Data.TaggedError("ScheduleError")<{
+  readonly reason: string;
+}> {
+  override get message() {
+    return this.reason;
+  }
+}
