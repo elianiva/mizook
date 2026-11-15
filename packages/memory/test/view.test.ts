@@ -91,3 +91,34 @@ test("coarsenTo collapses finer lines into the coarser lines of another view", (
     [5, 1],
   ]);
 });
+
+test("over 5,000 messages the view stays between lo and hi and only grows at its end between batches", () => {
+  const built = new BuiltIndex();
+  // Every node is built, with a text of 200 bytes, so only the sawtooth is under test.
+  for (let l = 0; l < 14; l++) for (let i = 0; i < 2 ** (14 - l); i++) built.set(l, i, 200);
+  const view = new View(built, { hi: 128_000, lo: 64_000 });
+  let batches = 0;
+  let previous: Array<readonly [number, number]> = [];
+  for (let t = 0; t < 5_000; t++) {
+    view.append(0, t);
+    const merged = view.shrink(t + 1);
+    const now = view.lines.map(({ l, i }) => [l, i] as const);
+    if (merged.length > 0) {
+      batches++;
+      expect(view.bytes(), `t=${t}`).toBeLessThanOrEqual(64_000);
+    } else {
+      // No batch: every earlier line is unchanged, so the prompt cache holds.
+      expect(now.slice(0, previous.length), `t=${t}`).toEqual(previous);
+    }
+    expect(view.bytes()).toBeLessThanOrEqual(128_000 + 300);
+    previous = now;
+  }
+  expect(batches).toBeGreaterThan(3);
+  // The view covers the whole chat once, in order.
+  let next = 0;
+  for (const { l, i } of view.lines) {
+    expect(first(l, i)).toBe(next);
+    next = last(l, i) + 1;
+  }
+  expect(next).toBe(5_000);
+});

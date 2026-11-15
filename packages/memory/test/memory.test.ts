@@ -4,7 +4,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { Memory, Scheduler, Store, ZoomError, byteLength, sqliteStore } from "../src/index.ts";
+import {
+  Memory,
+  Scheduler,
+  Store,
+  ZoomError,
+  byteLength,
+  clipToolOutput,
+  sqliteStore,
+} from "../src/index.ts";
 import { BuiltIndex } from "../src/built.ts";
 import { fakeSummarizer, inputOf, long, newModel, run } from "./helpers.ts";
 
@@ -360,4 +368,13 @@ test("the scheduler starts a message's node only while fewer than 8 lines before
   expect(scheduler.next()).toEqual({ kind: "leaf", i: 9 });
   total = 10;
   expect(scheduler.next()).toEqual({ kind: "merge", l: 1, i: 1 });
+});
+
+test("a tool's output is clipped to its head and tail, 30,000 characters in all", () => {
+  const output = `${"a".repeat(20_000)}${"b".repeat(20_000)}`;
+  const clipped = clipToolOutput(output);
+  expect(clipped.startsWith("a".repeat(15_000))).toBe(true);
+  expect(clipped.endsWith("b".repeat(15_000))).toBe(true);
+  expect(clipped).toContain("10000 characters clipped");
+  expect(clipToolOutput("short")).toBe("short");
 });
