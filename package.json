@@ -16,6 +16,7 @@
     "typecheck": "tsrs --noEmit -p tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
     "@chat-adapter/state-memory": "^4.41.1",
     "@chat-adapter/telegram": "^4.41.1",
     "@earendil-works/chord": "^1.2.0",
@@ -23,7 +24,7 @@
     "@earendil-works/pi-durable": "^1.2.0",
     "@effect/platform-node": "^4.0.4",
     "@mizook/memory": "workspace:*",
-    "alchemy": "2.0.0-beta.83",
+    "alchemy": "2.0.0-beta.85",
     "chat": "^4.41.1",
     "croner": "^11.0.1",
     "effect": "^4.0.4"
