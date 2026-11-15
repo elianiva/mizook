@@ -1,7 +1,7 @@
 # Mizook
 
-A Telegram assistant on Cloudflare Workers. One chat that never ends: it remembers everything
-you say, and nothing needs resetting.
+A personal assistant in Telegram, on Cloudflare Workers. Every forum topic of your group is its own
+chat that never ends: it remembers everything you say there, and nothing needs resetting.
 
 - **Memory** — [`@mizook/memory`](packages/memory): the whole chat is logged word for word and
   compressed into a binary tree of one-line summaries. Each turn sees a constant-size view of it
@@ -24,6 +24,17 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
                        └─ SQLite   pi-durable + memory + bot state, one connection
 ```
 
+## Features
+
+- **Channels:** each forum topic, General topic and DM is one Durable Object with its own memory, schedules and settings. `/channels` lists them; `ask_channel` reads another one, read-only.
+- **Schedules:** `once`, `cron` and `watch` (polls a URL, wakes the agent only when it changes), plus `webhook_link` for services that notify you. Capped at 20 turns an hour.
+- **Artifacts:** pages and files at `https://mzk.elianiva.com/a/<token>/<name>`, sandboxed. Versions are kept in R2.
+- **Web:** `web_search` (Parallel, then Exa; set `SEARCH_PROVIDERS`) and `web_fetch`.
+- **Executor:** one `executor` tool over MCP. Approvals go through the agent: it asks you in the chat, then resumes.
+- **Files:** attachments are stored; `file_read` reads text files. Images, voice and PDF content are not read yet.
+- **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /schedules /export`.
+- **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
+
 ## Setup
 
 ```sh
@@ -31,17 +42,20 @@ vp install
 cp .env.example .env     # then fill it in
 ```
 
-| Variable                    | Required | What                                                                   |
-| --------------------------- | -------- | ---------------------------------------------------------------------- |
-| `BOT_TOKEN`                 | yes      | Telegram bot token from @BotFather                                     |
-| `MIZOOK_WEBHOOK_SECRET`     | yes      | Any random string; Telegram sends it back with every update            |
-| `DEEPSEEK_API_KEY`          | yes      | [DeepSeek](https://platform.deepseek.com) API key                      |
-| `TELEGRAM_ALLOWED_USER_IDS` | yes      | Comma-separated Telegram user ids. Nobody else gets an answer          |
-| `MODEL`                     | no       | The agent's model (default `deepseek-flash`)                           |
-| `SUMMARY_MODEL`             | no       | The cheap model that writes the memory (default `deepseek-flash`)      |
-| `AGENT_NAME`                | no       | What the agent calls itself (default `Mizook`)                         |
-| `INSTRUCTIONS`              | no       | Who you are and how you want work done: goes last in the system prompt |
-| `TIMEZONE`                  | no       | IANA zone for the dates the agent sees (default `Asia/Jakarta`)        |
+| Variable                          | Required | What                                                                              |
+| --------------------------------- | -------- | --------------------------------------------------------------------------------- |
+| `BOT_TOKEN`                       | yes      | Telegram bot token from @BotFather                                                |
+| `MIZOOK_WEBHOOK_SECRET`           | yes      | Any random string; Telegram sends it back with every update                       |
+| `DEEPSEEK_API_KEY`                | yes      | [DeepSeek](https://platform.deepseek.com) API key                                 |
+| `PARALLEL_API_KEY`, `EXA_API_KEY` | no       | Web search keys, tried in `SEARCH_PROVIDERS` order (default `parallel,exa`)       |
+| `EXECUTOR_URL`, `EXECUTOR_TOKEN`  | no       | Executor MCP endpoint (`https://mcp.executor.sh/mcp`) and a personal access token |
+| `BUDGET_DAILY`                    | no       | Dollars a channel may spend in 24 hours; 0 or unset is no limit                   |
+| `TELEGRAM_ALLOWED_USER_IDS`       | yes      | Comma-separated Telegram user ids. Nobody else gets an answer                     |
+| `MODEL`                           | no       | The agent's model (default `deepseek-flash`)                                      |
+| `SUMMARY_MODEL`                   | no       | The cheap model that writes the memory (default `deepseek-flash`)                 |
+| `AGENT_NAME`                      | no       | What the agent calls itself (default `Mizook`)                                    |
+| `INSTRUCTIONS`                    | no       | Who you are and how you want work done: goes last in the system prompt            |
+| `TIMEZONE`                        | no       | IANA zone for the dates the agent sees (default `Asia/Jakarta`)                   |
 
 Message the bot before you know your id: it answers a stranger with their Telegram id.
 
