@@ -88,4 +88,6 @@ vp test      # the memory package's tests and the Telegram chunker
 | Secrets   | `CLOUDFLARE_API_TOKEN`, `BOT_TOKEN`, `MIZOOK_WEBHOOK_SECRET`, `DEEPSEEK_API_KEY`, `PARALLEL_API_KEY`, `EXA_API_KEY`, `EXECUTOR_TOKEN` |
 | Variables | `CLOUDFLARE_ACCOUNT_ID`, `TELEGRAM_ALLOWED_USER_IDS`, `EXECUTOR_URL`, `INSTRUCTIONS`, `BUDGET_DAILY`                                  |
 
+Each name may be a secret or a variable; the workflow reads both.
+
 After the first deploy, point Telegram at it once: `vp run webhook https://mzk.elianiva.com`.

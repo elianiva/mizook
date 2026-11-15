@@ -67,11 +67,11 @@ jobs:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       PARALLEL_API_KEY: ${{ secrets.PARALLEL_API_KEY }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
-      EXECUTOR_URL: ${{ vars.EXECUTOR_URL }}
+      EXECUTOR_URL: ${{ secrets.EXECUTOR_URL || vars.EXECUTOR_URL }}
       EXECUTOR_TOKEN: ${{ secrets.EXECUTOR_TOKEN }}
-      TELEGRAM_ALLOWED_USER_IDS: ${{ vars.TELEGRAM_ALLOWED_USER_IDS }}
-      INSTRUCTIONS: ${{ vars.INSTRUCTIONS }}
-      BUDGET_DAILY: ${{ vars.BUDGET_DAILY }}
+      TELEGRAM_ALLOWED_USER_IDS: ${{ secrets.TELEGRAM_ALLOWED_USER_IDS || vars.TELEGRAM_ALLOWED_USER_IDS }}
+      INSTRUCTIONS: ${{ secrets.INSTRUCTIONS || vars.INSTRUCTIONS }}
+      BUDGET_DAILY: ${{ secrets.BUDGET_DAILY || vars.BUDGET_DAILY }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
