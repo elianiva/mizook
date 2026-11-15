@@ -5,22 +5,15 @@ allowBuilds:
   "@mongodb-js/zstd": true
   core-js-pure: true
   esbuild: true
+  lefthook: true
   msgpackr-extract: true
   node-liblzma: true
   protobufjs: false
   sharp: true
   workerd: true
-catalog:
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.4
-  vite-plus: 0.2.5
 overrides:
-  vite: "catalog:"
+  oxlint-tsgolint: 7.0.2005
 minimumReleaseAge: 0
-peerDependencyRules:
-  allowAny:
-    - vite
-  allowedVersions:
-    vite: "*"
 trustPolicyExclude:
   - "effect@4.0.0-beta.62"
   - "semver@6.3.1"

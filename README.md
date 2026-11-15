@@ -60,6 +60,7 @@ vp run webhook https://<the url deploy printed>
 ## Develop
 
 ```sh
-vp check     # format, lint, types
+vp check          # format, lint (Effect rules included)
+pnpm typecheck    # tsrs and effect-tsrs
 vp test      # the memory package's tests and the Telegram chunker
 ```

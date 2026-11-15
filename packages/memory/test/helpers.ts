@@ -6,7 +6,7 @@ import {
   Summarizer,
   type CompletionRequest,
 } from "../src/index.ts";
-import { CompletionError } from "../src/errors.ts";
+import { CompletionError, type StoreError } from "../src/errors.ts";
 
 export const inputOf = (request: CompletionRequest): string => {
   const last = request.messages.at(-1)!.parts.join("");
@@ -66,7 +66,7 @@ export const run = <A, E>(
   effect: Effect.Effect<A, E, Memory | Store>,
   options: {
     model: Layer.Layer<Summarizer>;
-    store?: Layer.Layer<Store, any>;
+    store?: Layer.Layer<Store, StoreError>;
     config?: Partial<MemoryConfig>;
   },
 ): Promise<A> => {
@@ -74,7 +74,7 @@ export const run = <A, E>(
   const memory = Memory.layer(config(options.config)).pipe(
     Layer.provideMerge(Layer.merge(store, options.model)),
   );
-  return Effect.runPromise(Effect.provide(effect, memory) as Effect.Effect<A, E>);
+  return Effect.runPromise(Effect.provide(effect, memory) as Effect.Effect<A, E | StoreError>);
 };
 
 /** A message of `n` bytes that is too long for a node, so it needs the model. */

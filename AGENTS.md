@@ -1,3 +1,15 @@
+# Mizook
+
+- Read `CONTEXT.md` for the vocabulary code and copy use.
+- Verify with `vp check`, `pnpm typecheck`, and `vp test`.
+- Write commit subjects as plain sentences, with no `feat:` or `chore:` prefix.
+- Never run `alchemy deploy` or `alchemy destroy` without explicit approval.
+- Use only `tsrs` and `effect-tsrs` for type checks. Never run `tsc`, and do not add `typescript` or turn on `typeCheck` in `vite.config.ts`.
+- If `vp lint` fails after an install that skipped scripts, run `pnpm exec effect-tsrs patch --oxlint`.
+- Alchemy and infrastructure live only in the root `alchemy.run.ts`; `src/` never imports Alchemy.
+- `packages/memory` knows nothing about Cloudflare, Telegram, or any model.
+- Failures are tagged errors (`Data.TaggedError`), never a bare `Error` in an Effect failure channel.
+
 <!--VITE PLUS START-->
 
 # Using Vite+, the Unified Toolchain for the Web

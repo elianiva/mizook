@@ -49,22 +49,14 @@ export class Durable extends Context.Service<
           description: ZOOM_DESCRIPTION,
           parameters: zoomParameters,
           replay: "safe",
-          execute: async (args) =>
-            text(
-              await run(
-                memory.zoom(args.id, args.n).pipe(Effect.mapError((e) => new Error(e.message))),
-              ),
-            ),
+          execute: async (args) => text(await run(memory.zoom(args.id, args.n).pipe(Effect.orDie))),
         });
         const date = defineTool({
           name: "date",
           description: DATE_DESCRIPTION,
           parameters: dateParameters,
           replay: "safe",
-          execute: async (args) =>
-            text(
-              await run(memory.date(args.id).pipe(Effect.mapError((e) => new Error(e.message)))),
-            ),
+          execute: async (args) => text(await run(memory.date(args.id).pipe(Effect.orDie))),
         });
 
         const contentText = (content: Message["content"]): string =>
