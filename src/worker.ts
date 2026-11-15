@@ -1,4 +1,5 @@
 import type { Env } from "./env.ts";
+import { channelOf } from "./route.ts";
 
 export { ChatAgent } from "./chat-agent.ts";
 
@@ -21,7 +22,17 @@ export default {
       if (!(await sameSecret(secret, env.MIZOOK_WEBHOOK_SECRET))) {
         return new Response("Unauthorized", { status: 401 });
       }
-      return env.ChatAgent.getByName("main").fetch(request);
+      // One Durable Object per forum topic: each topic is its own endless chat.
+      const body = await request.text();
+      let update: unknown;
+      try {
+        update = JSON.parse(body);
+      } catch {
+        return new Response("Bad request", { status: 400 });
+      }
+      return env.ChatAgent.getByName(channelOf(update)).fetch(
+        new Request(request.url, { method: "POST", headers: request.headers, body }),
+      );
     }
 
     if (pathname === "/") return new Response("mizook");

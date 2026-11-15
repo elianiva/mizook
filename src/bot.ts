@@ -119,7 +119,8 @@ export class Bot extends Context.Service<
         // Telegram redelivers an update it did not get an answer to in time.
         if (!(yield* state.firstSeen(`${thread.id}:${message.id}`))) return;
 
-        const chatId = thread.channelId;
+        // The thread id names the forum topic too; `channelId` is only the group.
+        const chatId = thread.id;
         yield* hold(chatId);
         const started = yield* agent.begin({
           chatId,
