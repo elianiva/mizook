@@ -15,7 +15,7 @@ export const AppConfig = Config.all({
   agentName: withDefault(Config.String("AGENT_NAME"), "Mizook"),
   /** The user's own instructions: who they are and how they want work done. */
   instructions: withDefault(Config.String("INSTRUCTIONS"), ""),
-  model: withDefault(Config.String("MODEL"), "deepseek-v4-pro"),
+  model: withDefault(Config.String("MODEL"), "deepseek-flash"),
   /** The cheap model that writes the memory. */
   summaryModel: withDefault(Config.String("SUMMARY_MODEL"), "deepseek-flash"),
   timezone: withDefault(Config.String("TIMEZONE"), "Asia/Jakarta"),

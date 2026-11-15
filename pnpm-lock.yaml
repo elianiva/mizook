@@ -41,6 +41,9 @@ importers:
       chat:
         specifier: ^4.41.1
         version: 4.41.1(patch_hash=821bf2af8653732a92340a5165cf939acaeb739bcce0f1abd9fdd5a590b7d8b9)(ai@7.0.34(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)
+      croner:
+        specifier: ^11.0.1
+        version: 11.0.1
       effect:
         specifier: ^4.0.4
         version: 4.0.4
@@ -1902,6 +1905,10 @@ packages:
   cors@2.8.6:
     resolution: {integrity: sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==}
     engines: {node: '>= 0.10'}
+
+  croner@11.0.1:
+    resolution: {integrity: sha512-/fmHcoczPy5cMcmJ6ex7J7LAwb545V1dNmRrdDGP3hwStg/06IYP56YgBySCSdWGDz2PJYQyDukaR8b8R5o2HA==}
+    engines: {node: '>=18.0'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -4746,6 +4753,8 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
     optional: true
+
+  croner@11.0.1: {}
 
   cross-spawn@7.0.6:
     dependencies:

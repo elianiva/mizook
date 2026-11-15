@@ -37,7 +37,7 @@ cp .env.example .env     # then fill it in
 | `MIZOOK_WEBHOOK_SECRET`     | yes      | Any random string; Telegram sends it back with every update            |
 | `DEEPSEEK_API_KEY`          | yes      | [DeepSeek](https://platform.deepseek.com) API key                      |
 | `TELEGRAM_ALLOWED_USER_IDS` | yes      | Comma-separated Telegram user ids. Nobody else gets an answer          |
-| `MODEL`                     | no       | The agent's model (default `deepseek-v4-pro`)                          |
+| `MODEL`                     | no       | The agent's model (default `deepseek-flash`)                           |
 | `SUMMARY_MODEL`             | no       | The cheap model that writes the memory (default `deepseek-flash`)      |
 | `AGENT_NAME`                | no       | What the agent calls itself (default `Mizook`)                         |
 | `INSTRUCTIONS`              | no       | Who you are and how you want work done: goes last in the system prompt |
