@@ -4,6 +4,7 @@ import { artifactHeaders } from "./artifacts.ts";
 import { channelOf } from "./route.ts";
 
 export { ChatAgent } from "./chat-agent.ts";
+export { Hub } from "./hub.ts";
 
 /** Constant-time comparison of two secrets of any length. */
 const sameSecret = async (a: string, b: string): Promise<boolean> => {
@@ -41,6 +42,24 @@ export default {
       if (!object) return new Response("Not found", { status: 404 });
       return new Response(object.body, {
         headers: artifactHeaders(object.httpMetadata?.contentType),
+      });
+    }
+
+    // Exports: a one-hour link. The key is the secret, and the file goes when the hour is up.
+    const exported = /^\/x\/([\w-]{16,64})$/.exec(pathname);
+    if (exported && request.method === "GET") {
+      const object = await env.Files.get(`x/${exported[1]}`);
+      const expires = Number(object?.customMetadata?.expires ?? 0);
+      if (!object || Date.now() > expires) {
+        if (object) await env.Files.delete(`x/${exported[1]}`);
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(object.body, {
+        headers: {
+          "content-type": "application/x-tar",
+          "content-disposition": `attachment; filename="${object.customMetadata?.filename ?? "export"}"`,
+          "cache-control": "no-store",
+        },
       });
     }
 

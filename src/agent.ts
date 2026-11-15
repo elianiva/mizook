@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Conversation, EntryRecord, SubmissionId } from "@earendil-works/pi-durable";
 import { clipToolOutput, Memory, type StoreError } from "@mizook/memory";
 import { Context, DateTime, Effect, Layer } from "effect";
@@ -6,7 +6,10 @@ import { Settings } from "./config.ts";
 import { Durable } from "./durable.ts";
 import { DurableError, type StateError } from "./errors.ts";
 import { formatDate } from "./format.ts";
+import { Handlers } from "./handlers.ts";
 import { Models } from "./models.ts";
+import { agentTools } from "./tools.ts";
+import { Usage } from "./usage.ts";
 import { State, type PendingTurn } from "./state.ts";
 
 export type AgentError = DurableError | StoreError | StateError;
@@ -34,6 +37,13 @@ export class Agent extends Context.Service<
     begin(incoming: Incoming): Effect.Effect<"started" | "folded", AgentError>;
     /** Wait for the chat's turn to be answered, log it in the memory, and give the reply to post. */
     finish(chatId: string): Effect.Effect<string, AgentError>;
+    /** Stop the chat's running turn. False when nothing is running. */
+    stop(chatId: string): Effect.Effect<boolean, AgentError>;
+    /**
+     * Answer a question from another channel out of this chat's memory, read-only: nothing is
+     * logged, and the only tools are zoom and date.
+     */
+    ask(question: string): Effect.Effect<string, AgentError>;
     /** Turns that were started and not delivered: after a restart, these are finished again. */
     readonly pending: Effect.Effect<ReadonlyArray<PendingTurn>, AgentError>;
   }
@@ -45,6 +55,8 @@ export class Agent extends Context.Service<
       const state = yield* State;
       const settings = yield* Settings;
       const durable = yield* Durable;
+      const handlers = yield* Handlers;
+      const usage = yield* Usage;
       const { main } = yield* Models;
       const { harness, context, turnInputs } = durable;
 
@@ -84,6 +96,7 @@ export class Agent extends Context.Service<
         for (const entry of entries) {
           const message = entry.model?.[0];
           if (entry.kind === "pi.assistant" && message?.role === "assistant") {
+            yield* usage.record("turn", main.id, message.usage);
             let reply = "";
             const flush = Effect.suspend(() => {
               const text = reply.trim();
@@ -215,7 +228,60 @@ export class Agent extends Context.Service<
         return reply === "" ? "(no reply)" : reply;
       });
 
-      return Agent.of({ begin, finish, pending: state.turns });
+      const stop = Effect.fn("Agent.stop")(function* (chatId: string) {
+        const running = yield* state.turn(chatId);
+        if (!running) return false;
+        const conversation = yield* conversationOf(running);
+        yield* call("abort", () => conversation.abort(context));
+        return true;
+      });
+
+      const askTools = agentTools.filter((tool) => tool.name === "zoom" || tool.name === "date");
+      const ask = Effect.fn("Agent.ask")(function* (question: string) {
+        const view = yield* memory.renderView;
+        const messages: Message[] = [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `${view.text}\n\nNow: ${yield* now}\n\nAnother channel of the same user asks you a question. Answer from your memory only, and say so if you do not know.\n\n${question}`,
+              },
+            ],
+            timestamp: Date.now(),
+          },
+        ];
+        for (let step = 0; step < 8; step++) {
+          const reply = yield* call("ask", () =>
+            durable.models.completeSimple(
+              main,
+              { systemPrompt: memory.systemPrompt, messages, tools: askTools },
+              { sessionId: "ask" },
+            ),
+          );
+          yield* usage.record("ask", main.id, reply.usage);
+          messages.push(reply);
+          const calls = reply.content.flatMap((b) => (b.type === "toolCall" ? [b] : []));
+          if (calls.length === 0) return textOf(reply).trim() || "(no answer)";
+          for (const toolCall of calls) {
+            const output =
+              toolCall.name === "zoom" || toolCall.name === "date"
+                ? yield* handlers.call(toolCall.name, toolCall.arguments)
+                : `No tool ${toolCall.name} here.`;
+            messages.push({
+              role: "toolResult",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              content: [{ type: "text", text: output }],
+              isError: false,
+              timestamp: Date.now(),
+            });
+          }
+        }
+        return "(I could not settle on an answer in time.)";
+      });
+
+      return Agent.of({ begin, finish, stop, ask, pending: state.turns });
     }),
   );
 }

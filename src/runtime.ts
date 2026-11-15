@@ -2,7 +2,7 @@ import { DurableObjectSqliteDatabase } from "@earendil-works/pi-durable/storage/
 import { Memory } from "@mizook/memory";
 import { sqliteStore, type SqlDriver } from "@mizook/memory/sqlite";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
+import { ConfigProvider, type Context, Effect, Layer, ManagedRuntime } from "effect";
 import { Agent } from "./agent.ts";
 import { Bot } from "./bot.ts";
 import { Settings } from "./config.ts";
@@ -10,9 +10,12 @@ import { Durable } from "./durable.ts";
 import type { Env } from "./env.ts";
 import { formatDate } from "./format.ts";
 import { Models } from "./models.ts";
-import { State } from "./state.ts";
+import { Host } from "./host.ts";
+import { Usage } from "./usage.ts";
+import { readSettings, State } from "./state.ts";
 import { Handlers } from "./handlers.ts";
 import { Artifacts } from "./artifacts.ts";
+import { Backup } from "./backup.ts";
 import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
 import { Schedules } from "./schedules.ts";
@@ -26,7 +29,11 @@ import { TOOL_GUIDE } from "./tools.ts";
  * queue so a transaction excludes everything else; the memory and the bot's state go through the
  * same database object, so none of their writes can land inside one of its transactions.
  */
-export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
+export const makeRuntime = (
+  storage: DurableObjectStorage,
+  env: Env,
+  host: Context.Service.Shape<typeof Host>,
+) => {
   /** Move the alarm earlier, never later. */
   const arm = async (at: number) => {
     const current = await storage.getAlarm();
@@ -40,8 +47,24 @@ export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
 
   // A variable left empty in the stack means "use the default".
   const vars = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
-  const settings = Settings.layer.pipe(
+  const fromEnv = Settings.layer.pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(vars))),
+  );
+  // The channel's own settings (`/model`, `/instructions`, …) win over the environment.
+  const settings = Layer.effect(
+    Settings,
+    Effect.gen(function* () {
+      const base = yield* Settings;
+      const own = yield* readSettings(sql);
+      const budget = Number(own.budget);
+      return Settings.of({
+        ...base,
+        ...(own.instructions !== undefined && { instructions: own.instructions }),
+        ...(own.model !== undefined && { model: own.model }),
+        ...(own.timezone !== undefined && { timezone: own.timezone }),
+        ...(own.budget !== undefined && Number.isFinite(budget) && { budgetDaily: budget }),
+      });
+    }).pipe(Effect.provide(fromEnv)),
   );
   const models = Models.layer.pipe(Layer.provideMerge(settings));
   const memory = Layer.unwrap(
@@ -53,18 +76,27 @@ export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
         formatDate: (date) => formatDate(date, timezone),
       });
     }),
-  ).pipe(Layer.provide(Layer.merge(sqliteStore(sql), SummarizerLive)), Layer.provideMerge(models));
+  ).pipe(
+    Layer.provide(
+      Layer.merge(sqliteStore(sql), SummarizerLive.pipe(Layer.provide(Usage.layer(sql)))),
+    ),
+    Layer.provideMerge(models),
+  );
 
   const app = Bot.layer.pipe(
     Layer.provideMerge(Agent.layer),
     Layer.provideMerge(Durable.layer(database)),
     Layer.provideMerge(Handlers.layer),
+    Layer.provideMerge(Backup.layer),
+    Layer.provideMerge(Usage.layer(sql)),
+    Layer.provideMerge(Layer.succeed(Host, host)),
     Layer.provideMerge(Artifacts.layer(sql)),
     Layer.provideMerge(Blobs.r2(env.Files)),
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Schedules.layer(sql, arm)),
     Layer.provideMerge(State.layer(sql)),
+    Layer.provideMerge(sqliteStore(sql)),
     Layer.provideMerge(memory),
   );
   return ManagedRuntime.make(app);

@@ -1,25 +1,116 @@
 import { DurableObject } from "cloudflare:workers";
-import { Effect } from "effect";
+import { type Context, Effect } from "effect";
+import { Agent } from "./agent.ts";
+import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
 import type { Env } from "./env.ts";
+import { ToolError } from "./errors.ts";
+import type { ChannelInfo } from "./host.ts";
+import { Host } from "./host.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
+import { Usage, type Spend } from "./usage.ts";
+
+type Hosted = Context.Service.Shape<typeof Host>;
+
+/** The Hub's methods, spelled out: its stub type loops back through `Env`. */
+interface HubApi {
+  register(doName: string, threadId: string, name: string | undefined): Promise<void>;
+  list(): Promise<ChannelInfo[]>;
+}
+
+interface ChannelApi {
+  ask(question: string): Promise<string>;
+  spend(): Promise<Spend>;
+}
 
 /**
- * The one Durable Object that is the chat: it owns the memory, pi-durable, and the Telegram bot.
- * A Durable Object is a single process with transactional storage, which is what "one process
- * owns a chat" asks for.
+ * One channel: a Telegram forum topic, a group's General topic or a DM. It owns the memory,
+ * pi-durable, the schedules and the bot for that channel, in one Durable Object with one SQLite.
  */
 export class ChatAgent extends DurableObject<Env> {
-  private readonly runtime: AppRuntime;
+  private runtime: AppRuntime;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.runtime = makeRuntime(ctx.storage, env, this.host());
     // Build the layers (open the storage, resume what a restart interrupted) before any request.
     // Delivering a turn can take minutes, so work starts after this, not inside it: the gate has 30 seconds.
     void ctx
       .blockConcurrencyWhile(() => this.runtime.runPromise(Effect.void))
       .then(() => this.alarm());
+  }
+
+  private get doName(): string {
+    return this.ctx.id.name ?? "main";
+  }
+
+  private hub(): HubApi {
+    return this.env.Hub.getByName("hub") as unknown as HubApi;
+  }
+
+  /** What this channel can ask of the world outside it. */
+  private host(): Hosted {
+    const self = this;
+    const stub = (doName: string) => self.env.ChatAgent.getByName(doName) as unknown as ChannelApi;
+    return {
+      reload: Effect.sync(() => {
+        const old = self.runtime;
+        // The reply that asked for this is on its way: swap the runtime once it is out.
+        self.ctx.waitUntil(
+          (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 1_500));
+            await old.dispose();
+            self.runtime = makeRuntime(self.ctx.storage, self.env, self.host());
+            await self.runtime.runPromise(Effect.void);
+          })(),
+        );
+      }),
+      register: (threadId, name) =>
+        Effect.promise(() => self.hub().register(self.doName, threadId, name)),
+      channels: Effect.promise(() => self.hub().list()),
+      ask: (channel, question) =>
+        Effect.gen(function* () {
+          const all = yield* Effect.promise(() => self.hub().list());
+          const wanted = channel.trim().toLowerCase();
+          const found = all.find((c) => c.name.toLowerCase() === wanted || c.doName === channel);
+          if (!found) {
+            return yield* new ToolError({
+              reason: `no channel "${channel}". Channels: ${all.map((c) => c.name).join(", ") || "none yet"}`,
+            });
+          }
+          if (found.doName === self.doName) {
+            return yield* new ToolError({ reason: "that is this channel: use your own memory" });
+          }
+          return yield* Effect.tryPromise({
+            try: () => stub(found.doName).ask(question),
+            catch: (cause) =>
+              new ToolError({ reason: `asking ${found.name} failed: ${String(cause)}` }),
+          });
+        }),
+      spendAll: Effect.gen(function* () {
+        const all: ChannelInfo[] = yield* Effect.promise(() => self.hub().list());
+        return yield* Effect.forEach(all, (c) =>
+          Effect.promise(() => stub(c.doName).spend()).pipe(
+            Effect.map((spend) => ({ name: c.name, spend })),
+          ),
+        );
+      }),
+      exportNow: self.runtimeEffect(Backup.use((backup) => backup.exportLink)),
+    };
+  }
+
+  private runtimeEffect<A, E>(effect: Effect.Effect<A, E, Backup>): Effect.Effect<A> {
+    return Effect.promise(() => this.runtime.runPromise(effect as never) as Promise<A>);
+  }
+
+  /** Called by another channel through `ask_channel`: read-only, nothing is logged here. */
+  async ask(question: string): Promise<string> {
+    return this.runtime.runPromise(Agent.use((agent) => agent.ask(question)));
+  }
+
+  /** What this channel has spent, for `/cost`. */
+  async spend(): Promise<Spend> {
+    return this.runtime.runPromise(Usage.use((usage) => usage.spend));
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -31,21 +122,35 @@ export class ChatAgent extends DurableObject<Env> {
     return response;
   }
 
-  /** The one alarm serves recovery of interrupted turns and the schedules; each wake sets it again. */
+  /** The one alarm serves recovery of interrupted turns, schedules and the nightly backup. */
   override async alarm(): Promise<void> {
-    await this.runtime.runPromise(Bot.use((bot) => bot.recover)).catch((error) => {
-      console.error("recovery failed", error);
-    });
-    await this.runtime.runPromise(Bot.use((bot) => bot.wake)).catch((error) => {
-      console.error("schedules failed", error);
-    });
+    const attempt = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
+      this.runtime.runPromise(effect as never).catch((error) => {
+        console.error(`${label} failed`, error);
+      });
+    await attempt(
+      "recovery",
+      Bot.use((bot) => bot.recover),
+    );
+    await attempt(
+      "schedules",
+      Bot.use((bot) => bot.wake),
+    );
+    await attempt(
+      "backup",
+      Backup.use((backup) => backup.backupIfDue(Date.now())),
+    );
     await this.rearm();
   }
 
   private async rearm(): Promise<void> {
-    const at = await this.runtime
-      .runPromise(Bot.use((bot) => bot.nextWake))
-      .catch(() => Date.now() + RECOVER_AFTER_MS);
-    if (at !== undefined) await this.ctx.storage.setAlarm(at);
+    const times = await Promise.all([
+      this.runtime
+        .runPromise(Bot.use((bot) => bot.nextWake))
+        .catch(() => Date.now() + RECOVER_AFTER_MS),
+      this.runtime.runPromise(Backup.use((backup) => backup.nextBackupAt)).catch(() => undefined),
+    ]);
+    const at = times.filter((t): t is number => t !== undefined);
+    if (at.length > 0) await this.ctx.storage.setAlarm(Math.min(...at));
   }
 }

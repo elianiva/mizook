@@ -57,6 +57,8 @@ export class State extends Context.Service<
     /** A small named value of the chat, such as the thread schedules post to. */
     meta(key: string): Effect.Effect<string | undefined, StateError>;
     setMeta(key: string, value: string): Effect.Effect<void, StateError>;
+    /** The channel's own settings: `setting:<name>` rows of the meta table, by name. */
+    readonly settings: Effect.Effect<Record<string, string>, StateError>;
     /** True the first time it sees `id`: Telegram redelivers an update that was not answered in time. */
     firstSeen(id: string): Effect.Effect<boolean, StateError>;
   }
@@ -137,6 +139,7 @@ export class State extends Context.Service<
                 value,
               );
             }),
+          settings: readSettings(sql),
           firstSeen: (id) =>
             run("firstSeen", async () => {
               const now = Date.now();
@@ -152,3 +155,33 @@ export class State extends Context.Service<
       }),
     );
 }
+
+/** The channel's own settings (`/model`, `/instructions`, …): rows `setting:<name>` of `app_meta`. */
+export const readSettings = (sql: SqlDriver) =>
+  Effect.tryPromise({
+    try: async () => {
+      await sql.all(
+        `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+      );
+      return sql.all<{ key: string; value: string }>(
+        `SELECT key, value FROM app_meta WHERE key LIKE 'setting:%'`,
+      );
+    },
+    catch: (cause) => new StateError({ operation: "read settings", cause }),
+  }).pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.String })),
+      ),
+    ),
+    Effect.mapError((cause) =>
+      cause instanceof StateError ? cause : new StateError({ operation: "read settings", cause }),
+    ),
+    Effect.map((rows) =>
+      Object.fromEntries(rows.map((r) => [r.key.slice("setting:".length), r.value])),
+    ),
+  );
+
+/** The key a channel's files go under: its thread id, safe in a path. */
+export const channelKey = (state: Context.Service.Shape<typeof State>) =>
+  Effect.map(state.meta("thread"), (id) => (id ?? "main").replaceAll(/[^a-zA-Z0-9:_-]/g, "_"));

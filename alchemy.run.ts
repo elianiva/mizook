@@ -4,6 +4,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type { ChatAgent } from "./src/chat-agent.ts";
+import type { Hub } from "./src/hub.ts";
 
 /** A plain variable the bot reads at runtime. Left empty it is ignored, and the bot uses its own default. */
 const optional = (name: string) => Config.String(name).pipe(Config.withDefault(""));
@@ -23,6 +24,8 @@ export default Alchemy.Stack(
       env: {
         // The chat: one Durable Object owns the memory, pi-durable, and the bot.
         ChatAgent: Cloudflare.DurableObject<ChatAgent>("ChatAgent"),
+        // The registry of channels.
+        Hub: Cloudflare.DurableObject<Hub>("Hub"),
         // Artifacts, exports and backups.
         Files: files,
         PUBLIC_URL: `https://${DOMAIN}`,
@@ -38,8 +41,13 @@ export default Alchemy.Stack(
         MODEL: optional("MODEL"),
         SUMMARY_MODEL: optional("SUMMARY_MODEL"),
         TIMEZONE: optional("TIMEZONE"),
+        BUDGET_DAILY: optional("BUDGET_DAILY"),
         SEARCH_PROVIDERS: optional("SEARCH_PROVIDERS"),
         PARALLEL_API_KEY: Config.Redacted("PARALLEL_API_KEY").pipe(
+          Config.withDefault(Redacted.make("")),
+        ),
+        EXECUTOR_URL: optional("EXECUTOR_URL"),
+        EXECUTOR_TOKEN: Config.Redacted("EXECUTOR_TOKEN").pipe(
           Config.withDefault(Redacted.make("")),
         ),
         EXA_API_KEY: Config.Redacted("EXA_API_KEY").pipe(Config.withDefault(Redacted.make(""))),

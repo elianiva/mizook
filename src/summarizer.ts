@@ -3,6 +3,7 @@ import { CompletionError, Summarizer, type CompletionRequest } from "@mizook/mem
 import { Effect, Layer } from "effect";
 import { Models } from "./models.ts";
 import { agentTools } from "./tools.ts";
+import { Usage } from "./usage.ts";
 
 const ZERO_USAGE = {
   input: 0,
@@ -35,6 +36,7 @@ export const SummarizerLive = Layer.effect(
   Summarizer,
   Effect.gen(function* () {
     const { models, summary } = yield* Models;
+    const usage = yield* Usage;
     return Summarizer.of({
       complete: (request) =>
         Effect.tryPromise({
@@ -57,6 +59,9 @@ export const SummarizerLive = Layer.effect(
               new CompletionError({
                 cause: reply.errorMessage ?? `model stopped: ${reply.stopReason}`,
               }),
+          ),
+          Effect.tap((reply) =>
+            usage.record("memory", summary.id, reply.usage).pipe(Effect.ignore),
           ),
           Effect.map((reply) =>
             reply.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),

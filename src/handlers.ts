@@ -6,7 +6,7 @@ import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
 import { Artifacts } from "./artifacts.ts";
-import { State } from "./state.ts";
+import { channelKey, State } from "./state.ts";
 import { Web } from "./search.ts";
 import {
   ArtifactDeleteArgs,
@@ -32,9 +32,7 @@ export class Handlers extends Context.Service<
       const web = yield* Web;
       const artifacts = yield* Artifacts;
       const state = yield* State;
-      const channel = Effect.map(state.meta("thread"), (id) =>
-        (id ?? "main").replaceAll(/[^a-zA-Z0-9:_-]/g, "_"),
-      );
+      const channel = channelKey(state);
       const { timezone } = yield* Settings;
 
       const describe = (s: Schedule) => {

@@ -12,6 +12,7 @@ import {
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import type { DurableObjectSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import type { Message } from "@earendil-works/pi-ai";
+import type { Models as PiModels } from "@earendil-works/pi-ai/models";
 import { Memory } from "@mizook/memory";
 import { Context, Effect, Layer } from "effect";
 import { DurableError } from "./errors.ts";
@@ -23,6 +24,8 @@ export class Durable extends Context.Service<
   Durable,
   {
     readonly harness: Harness;
+    /** pi-ai's models, for calls that are not turns. */
+    readonly models: PiModels;
     readonly context: ChordContext;
     /**
      * The view and the new message of each running turn, by conversation. The turn's own entry
@@ -125,7 +128,7 @@ export class Durable extends Context.Service<
         // Continue any run the last process left unfinished.
         harness.resume();
         void main;
-        return Durable.of({ harness, context: BACKGROUND_CONTEXT, turnInputs });
+        return Durable.of({ harness, models, context: BACKGROUND_CONTEXT, turnInputs });
       }),
     );
 }

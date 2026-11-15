@@ -22,6 +22,8 @@ export const AppConfig = Config.all({
   /** Search backends, in the order they are tried. */
   /** Where the Worker is reachable, for artifact links. */
   publicUrl: withDefault(Config.String("PUBLIC_URL"), ""),
+  /** Most dollars the agent may spend in 24 hours in one channel; 0 is no limit. */
+  budgetDaily: withDefault(Config.Number("BUDGET_DAILY"), 0),
   searchProviders: withDefault(Config.String("SEARCH_PROVIDERS"), "parallel,exa"),
   parallelKey: withDefault(Config.Redacted("PARALLEL_API_KEY"), Redacted.make("")),
   exaKey: withDefault(Config.Redacted("EXA_API_KEY"), Redacted.make("")),
@@ -41,6 +43,7 @@ export class Settings extends Context.Service<
     readonly summaryModel: string;
     readonly timezone: string;
     readonly publicUrl: string;
+    readonly budgetDaily: number;
     readonly searchProviders: ReadonlyArray<string>;
     /** The API key of each search provider, by name. */
     readonly searchKeys: Readonly<Record<string, Redacted.Redacted<string>>>;
