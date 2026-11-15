@@ -90,4 +90,4 @@ vp test      # the memory package's tests and the Telegram chunker
 
 Each name may be a secret or a variable; the workflow reads both.
 
-After the first deploy, point Telegram at it once: `vp run webhook https://mzk.elianiva.com`.
+The deploy job points Telegram at the Worker after each deploy. To do it by hand: `vp run webhook https://mzk.elianiva.com`.

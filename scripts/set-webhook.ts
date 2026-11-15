@@ -23,7 +23,11 @@ const url = `${base.replace(/\/$/, "")}/telegram/webhook`;
 const response = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ url, secret_token: secret, allowed_updates: ["message"] }),
+  body: JSON.stringify({
+    url,
+    secret_token: secret,
+    allowed_updates: ["message", "callback_query"],
+  }),
 });
 const result = (await response.json()) as { ok: boolean; description?: string };
 if (!result.ok) {
