@@ -7,6 +7,7 @@ import { Agent, type AgentError } from "./agent.ts";
 import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
+import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
 import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
@@ -49,6 +50,7 @@ export class Bot extends Context.Service<
       const state = yield* State;
       const schedules = yield* Schedules;
       const commands = yield* Commands;
+      const blobs = yield* Blobs;
       const usage = yield* Usage;
       const host = yield* Host;
       const web = yield* Web;
@@ -133,7 +135,31 @@ export class Bot extends Context.Service<
           );
           return;
         }
-        const text = message.text.trim();
+        const typed = message.text.trim();
+        // Files the user sends are kept in the blob store; the agent is told their names and keys.
+        const saved: string[] = [];
+        for (const file of message.attachments) {
+          const bytes = yield* Effect.tryPromise(async () => {
+            const data = file.data ?? (await file.fetchData?.());
+            if (data === undefined) return undefined;
+            return new Uint8Array(data instanceof Blob ? await data.arrayBuffer() : data);
+          }).pipe(Effect.orElseSucceed(() => undefined));
+          if (bytes === undefined) continue;
+          const name = (file.name ?? `${file.type}-${message.id}`).replaceAll(/[^\w.-]/g, "_");
+          const key = `inbox/${thread.id.replaceAll(/[^\w:-]/g, "_")}/${message.id}-${name}`;
+          const stored = yield* blobs
+            .put(key, bytes, { contentType: file.mimeType ?? "application/octet-stream" })
+            .pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+          if (stored) {
+            saved.push(
+              `[attached ${file.type}: ${name}, ${file.mimeType ?? "unknown type"}, ${bytes.length} bytes, key ${key}]`,
+            );
+          }
+        }
+        const text = [typed, ...saved].filter((part) => part !== "").join("\n");
         if (text === "") return;
         if (text === "/start") {
           yield* post(thread.id, GREETING(settings.agentName));

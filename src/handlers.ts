@@ -6,6 +6,7 @@ import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
 import { Artifacts } from "./artifacts.ts";
+import { Blobs } from "./blobs.ts";
 import { Executor } from "./executor.ts";
 import { Host } from "./host.ts";
 import { ToolError } from "./errors.ts";
@@ -13,6 +14,7 @@ import { channelKey, State } from "./state.ts";
 import { Web } from "./search.ts";
 import {
   AskChannelArgs,
+  FileReadArgs,
   ExecutorArgs,
   ArtifactDeleteArgs,
   ArtifactPublishArgs,
@@ -37,6 +39,7 @@ export class Handlers extends Context.Service<
       const web = yield* Web;
       const executor = yield* Executor;
       const host = yield* Host;
+      const blobs = yield* Blobs;
       const artifacts = yield* Artifacts;
       const state = yield* State;
       const channel = channelKey(state);
@@ -81,6 +84,21 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
             return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
+          case "file_read":
+            return Effect.gen(function* () {
+              const a = yield* decode(FileReadArgs, args);
+              if (!a.key.startsWith("inbox/")) {
+                return yield* new ToolError({ reason: "only attached files can be read" });
+              }
+              const blob = yield* blobs.get(a.key);
+              if (!blob) return yield* new ToolError({ reason: `no file ${a.key}` });
+              const textual = /^(text\/|application\/(json|xml|x-yaml|javascript))/.test(
+                blob.contentType,
+              );
+              return textual
+                ? clipToolOutput(new TextDecoder().decode(blob.body))
+                : `Binary file: ${blob.contentType}, ${blob.body.length} bytes. I cannot read its content.`;
+            });
           case "webhook_link":
             return host.hookUrl;
           case "ask_channel":

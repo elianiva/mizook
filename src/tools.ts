@@ -104,6 +104,10 @@ export const ExecutorArgs = Schema.Struct({
   ),
 });
 
+export const FileReadArgs = Schema.Struct({
+  key: described(Schema.String, "The key from an [attached …] note in a message."),
+});
+
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
@@ -186,6 +190,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     description:
       "The link other services (GitHub, Executor workflows, a phone shortcut) can POST to, to start a turn in this channel with the request body. Treat it as a secret.",
     parameters: parametersOf(Schema.Struct({})),
+    replay: "safe",
+  },
+  {
+    name: "file_read",
+    description:
+      "Read a file the user attached, as text. Works for text, markdown, JSON, CSV and code; binary files (images, audio, PDF) come back as a size and type only.",
+    parameters: parametersOf(FileReadArgs),
     replay: "safe",
   },
   {
