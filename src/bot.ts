@@ -1,12 +1,14 @@
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
-import { Chat, type Message, type Thread } from "chat";
+import { Actions, Button, Card, CardText, Chat, type Message, type Thread } from "chat";
 import { clipToolOutput } from "@mizook/memory";
 import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
 import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
+import { Approvals } from "./approvals.ts";
+import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
 import { Host } from "./host.ts";
@@ -50,6 +52,8 @@ export class Bot extends Context.Service<
       const state = yield* State;
       const schedules = yield* Schedules;
       const commands = yield* Commands;
+      const approvals = yield* Approvals;
+      const executor = yield* Executor;
       const blobs = yield* Blobs;
       const usage = yield* Usage;
       const host = yield* Host;
@@ -117,12 +121,39 @@ export class Bot extends Context.Service<
           Effect.forkScoped,
         );
 
+      /** Show each question Executor paused on as a card with Approve and Deny. */
+      const postApprovals = (threadId: string) =>
+        Effect.gen(function* () {
+          for (const a of yield* approvals.unposted) {
+            yield* Effect.tryPromise({
+              try: async () => {
+                await chat.initialize();
+                await chat.thread(threadId).post({
+                  card: Card({
+                    title: "Approval needed",
+                    children: [
+                      CardText(a.summary),
+                      Actions([
+                        Button({ id: `approve:${a.id}`, label: "Approve", style: "primary" }),
+                        Button({ id: `deny:${a.id}`, label: "Deny", style: "danger" }),
+                      ]),
+                    ],
+                  }),
+                });
+              },
+              catch: (cause) => new TelegramError({ operation: "approval card", cause }),
+            });
+            yield* approvals.markPosted(a.id);
+          }
+        });
+
       /** Wait for a started turn's answer and post it. */
       const deliver = (chatId: string, threadId: string) =>
         Effect.gen(function* () {
           yield* typing(threadId);
           const reply = yield* agent.finish(chatId);
           yield* post(threadId, reply);
+          yield* postApprovals(threadId);
         }).pipe(Effect.scoped);
 
       const handleMessage = Effect.fn("Bot.message")(function* (thread: Thread, message: Message) {
@@ -280,6 +311,39 @@ export class Bot extends Context.Service<
         const times = [pending, scheduled].filter((t): t is number => t !== undefined);
         return times.length === 0 ? undefined : Math.min(...times);
       });
+
+      const answer = (actionId: string, userId: string, threadId: string) =>
+        Effect.gen(function* () {
+          if (!settings.allowedUserIds.has(userId)) return;
+          const [verb, rawId] = actionId.split(":");
+          const approved = verb === "approve";
+          if ((!approved && verb !== "deny") || rawId === undefined) return;
+          const taken = yield* approvals.take(Number(rawId));
+          if (!taken) {
+            yield* post(threadId, "That question was already answered.");
+            return;
+          }
+          const result = yield* executor
+            .call("resume", {
+              executionId: taken.executionId,
+              action: approved ? "accept" : "decline",
+            })
+            .pipe(Effect.catch((error) => Effect.succeed(`Error: ${error.message}`)));
+          yield* fire(
+            approved
+              ? `[approval] The user approved. Executor's result:\n${clipToolOutput(result)}`
+              : `[approval] The user denied it. Do not try again or work around it. Executor said:\n${clipToolOutput(result, 2_000)}`,
+            `approval:${rawId}`,
+          );
+        });
+
+      chat.onAction((event) =>
+        run(
+          answer(event.actionId, String(event.user.userId), event.threadId).pipe(
+            Effect.catchCause((cause) => Effect.logError("approval failed", cause)),
+          ),
+        ),
+      );
 
       const onMessage = (thread: Thread, message: Message) =>
         run(

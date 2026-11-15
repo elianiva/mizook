@@ -7,7 +7,8 @@ import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
-import { Executor } from "./executor.ts";
+import { Approvals } from "./approvals.ts";
+import { Executor, pausedExecution } from "./executor.ts";
 import { Host } from "./host.ts";
 import { ToolError } from "./errors.ts";
 import { channelKey, State } from "./state.ts";
@@ -39,6 +40,7 @@ export class Handlers extends Context.Service<
       const web = yield* Web;
       const executor = yield* Executor;
       const host = yield* Host;
+      const approvals = yield* Approvals;
       const blobs = yield* Blobs;
       const artifacts = yield* Artifacts;
       const state = yield* State;
@@ -115,7 +117,11 @@ export class Handlers extends Context.Service<
               if (typeof input !== "object" || input === null || Array.isArray(input)) {
                 return yield* new ToolError({ reason: "input must be a JSON object" });
               }
-              return clipToolOutput(yield* executor.call(a.tool, input as Record<string, unknown>));
+              const out = yield* executor.call(a.tool, input as Record<string, unknown>);
+              const paused = pausedExecution(out);
+              if (!paused) return clipToolOutput(out);
+              yield* approvals.add(paused.executionId, paused.summary);
+              return "Waiting for the user's approval. They have been shown Approve and Deny buttons.";
             });
           case "artifact_publish":
             return Effect.gen(function* () {

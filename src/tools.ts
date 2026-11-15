@@ -95,8 +95,8 @@ export const AskChannelArgs = Schema.Struct({
 
 export const ExecutorArgs = Schema.Struct({
   tool: described(
-    Schema.Literals(["skills", "search", "describe", "call", "execute", "resume"]),
-    "Which Executor tool. skills: read how to use an app. search: find app tools. describe: a tool's signature. call: run tools by path. execute: run a JavaScript program over the tools. resume: continue a call that paused for approval or input.",
+    Schema.Literals(["skills", "search", "describe", "call", "execute"]),
+    "Which Executor tool. skills: read how to use an app. search: find app tools. describe: a tool's signature. call: run tools by path. execute: run a JavaScript program over the tools. A call that needs approval pauses and the user is shown Approve and Deny buttons.",
   ),
   input: described(
     Schema.String,
@@ -223,8 +223,9 @@ export const agentTools: Tool[] = toolSpecs.map(({ name, description, parameters
 export const TOOL_GUIDE = `# Executor
 
 executor reaches the user's connected accounts. Start with skills, then search and describe, then call
-or execute. When a result says it paused for approval or input, tell the user exactly what is about
-to happen and ask; only after they agree, run resume with the answer. Never approve for them.
+or execute. A call that needs approval returns "Waiting for the user's approval": the user gets
+Approve and Deny buttons in the chat. Say in one line what you are waiting for and end your turn. The
+answer arrives as a message starting [approval]. Never run the call again to get past a refusal.
 
 # Other channels
 

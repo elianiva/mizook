@@ -38,6 +38,27 @@ export const parseRpcBody = (body: string): unknown => {
   return JSON.parse(data.at(-1) ?? "null");
 };
 
+const Paused = Schema.Struct({ executionId: Schema.String });
+const decodePaused = Schema.decodeUnknownOption(Paused);
+
+/**
+ * A result that paused for approval or input carries the `executionId` to resume. Returns it with
+ * the result text, which says what is being asked. A finished result has no such id.
+ */
+export const pausedExecution = (
+  text: string,
+): { readonly executionId: string; readonly summary: string } | undefined => {
+  const json = Effect.runSync(
+    Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => undefined }).pipe(
+      Effect.orElseSucceed(() => undefined),
+    ),
+  );
+  const found = decodePaused(json);
+  return found._tag === "Some"
+    ? { executionId: found.value.executionId, summary: text.slice(0, 1_500) }
+    : undefined;
+};
+
 /**
  * Executor over MCP (streamable HTTP): the connectors, credentials and approvals live there, and
  * the agent reaches them through its six fixed tools.
