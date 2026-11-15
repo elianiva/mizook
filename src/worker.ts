@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import type { Env } from "./env.ts";
 import { artifactHeaders } from "./artifacts.ts";
+import { hookTokenValid } from "./hooks.ts";
 import { channelOf } from "./route.ts";
 
 export { ChatAgent } from "./chat-agent.ts";
@@ -61,6 +62,20 @@ export default {
           "cache-control": "no-store",
         },
       });
+    }
+
+    // Webhooks: the token is an HMAC of the channel name, so a link works for one channel only.
+    const hooked = /^\/hook\/([^/]+)\/([\w-]{16,64})$/.exec(pathname);
+    if (hooked && request.method === "POST") {
+      const channel = decodeURIComponent(hooked[1]!);
+      if (!(await hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, channel, hooked[2]!))) {
+        return new Response("Not found", { status: 404 });
+      }
+      const body = (await request.text()).slice(0, 100_000);
+      const stub = env.ChatAgent.getByName(channel) as unknown as {
+        hook(body: string): Promise<boolean>;
+      };
+      return new Response((await stub.hook(body)) ? "ok" : "ignored", { status: 202 });
     }
 
     if (pathname === "/") return new Response("mizook");

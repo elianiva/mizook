@@ -17,6 +17,8 @@ export interface ChannelInfo {
 export class Host extends Context.Service<
   Host,
   {
+    /** The link other services call to start a turn in this channel. */
+    readonly hookUrl: Effect.Effect<string>;
     /** Rebuild this channel's runtime, so new settings take effect. */
     readonly reload: Effect.Effect<void>;
     /** Tell the Hub this channel exists and was just used. */

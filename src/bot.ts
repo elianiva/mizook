@@ -33,6 +33,8 @@ export class Bot extends Context.Service<
     ): Effect.Effect<Response, TelegramError>;
     /** Deliver the replies of turns a restart interrupted. Returns how many turns are still pending. */
     readonly recover: Effect.Effect<number, AgentError | TelegramError>;
+    /** A webhook call: start a turn with its body. False when the channel is silent or over its hourly limit. */
+    hook(body: string): Effect.Effect<boolean, AgentError | StateError | TelegramError>;
     /** Start a turn for each schedule that is due. */
     readonly wake: Effect.Effect<void, AgentError | StateError>;
     /** When the Durable Object's alarm should ring next: a pending turn's recovery or the next schedule. */
@@ -226,6 +228,25 @@ export class Bot extends Context.Service<
         }
       });
 
+      /** Start a turn from something that is not a Telegram message. Silent when nothing was said here yet. */
+      const fire = (text: string, requestId: string) =>
+        Effect.gen(function* () {
+          const threadId = yield* state.meta("thread");
+          if (!threadId) return false;
+          if (!(yield* schedules.allow(yield* nowDate, FIRES_PER_HOUR))) return false;
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* hold(threadId);
+              const started = yield* agent.begin({ chatId: threadId, threadId, text, requestId });
+              if (started === "started") yield* deliver(threadId, threadId);
+            }),
+          );
+          return true;
+        });
+
+      const hook = (body: string) =>
+        fire(`[webhook] ${clipToolOutput(body, 8_000)}`, `hook:${crypto.randomUUID()}`);
+
       const nextWake = Effect.gen(function* () {
         const pending =
           (yield* agent.pending).length > 0 ? Date.now() + RECOVER_AFTER_MS : undefined;
@@ -255,6 +276,7 @@ export class Bot extends Context.Service<
 
       return Bot.of({
         wake,
+        hook,
         nextWake,
         webhook: (request, waitUntil) =>
           Effect.tryPromise({

@@ -182,6 +182,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "unsafe",
   },
   {
+    name: "webhook_link",
+    description:
+      "The link other services (GitHub, Executor workflows, a phone shortcut) can POST to, to start a turn in this channel with the request body. Treat it as a secret.",
+    parameters: parametersOf(Schema.Struct({})),
+    replay: "safe",
+  },
+  {
     name: "schedule_list",
     description: "List this chat's active schedules with their numbers and next times.",
     parameters: parametersOf(Schema.Struct({})),
@@ -209,6 +216,8 @@ or execute. When a result says it paused for approval or input, tell the user ex
 to happen and ask; only after they agree, run resume with the answer. Never approve for them.
 
 # Other channels
+
+webhook_link gives a URL that starts a turn here when called; give it to services that should notify the user.
 
 ask_channel reads another channel's memory. Use it only when the user's question is about that channel.
 

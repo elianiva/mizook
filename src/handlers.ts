@@ -81,6 +81,8 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
             return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
+          case "webhook_link":
+            return host.hookUrl;
           case "ask_channel":
             return Effect.flatMap(decode(AskChannelArgs, args), (a) =>
               host.ask(a.channel, a.question),

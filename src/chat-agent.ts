@@ -8,6 +8,7 @@ import { ToolError } from "./errors.ts";
 import type { ChannelInfo } from "./host.ts";
 import { Host } from "./host.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
+import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
 
 type Hosted = Context.Service.Shape<typeof Host>;
@@ -70,6 +71,10 @@ export class ChatAgent extends DurableObject<Env> {
     const peer = (name: string) => this.env.ChatAgent.getByName(name) as unknown as ChannelApi;
     return {
       reload: Effect.sync(reload),
+      hookUrl: Effect.promise(async () => {
+        const token = await hookToken(this.env.MIZOOK_WEBHOOK_SECRET, doName);
+        return `${this.env.PUBLIC_URL ?? ""}/hook/${encodeURIComponent(doName)}/${token}`;
+      }),
       register: (threadId, name) => Effect.promise(() => hub().register(doName, threadId, name)),
       channels: Effect.promise(() => hub().list()),
       ask: (channel, question) =>
@@ -110,6 +115,11 @@ export class ChatAgent extends DurableObject<Env> {
   /** Called by another channel through `ask_channel`: read-only, nothing is logged here. */
   async ask(question: string): Promise<string> {
     return this.runtime.runPromise(Agent.use((agent) => agent.ask(question)));
+  }
+
+  /** A webhook call, already checked by the Worker. */
+  async hook(body: string): Promise<boolean> {
+    return this.runtime.runPromise(Bot.use((bot) => bot.hook(body)));
   }
 
   /** What this channel has spent, for `/cost`. */
