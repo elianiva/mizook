@@ -1,22 +1,16 @@
-import type { Static } from "@earendil-works/pi-ai";
 import { Memory } from "@mizook/memory";
-import { Context, DateTime, Effect, Layer } from "effect";
+import { Context, DateTime, Effect, Layer, Schema } from "effect";
 import { Settings } from "./config.ts";
 import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
-import {
-  dateParameters,
-  scheduleCancelParameters,
-  scheduleCreateParameters,
-  zoomParameters,
-} from "./tools.ts";
+import { DateArgs, ScheduleCancelArgs, ScheduleCreateArgs, ZoomArgs } from "./tools.ts";
 
 /** What a tool does, by name. The arguments were already checked against the tool's schema. */
 export class Handlers extends Context.Service<
   Handlers,
-  { call(name: string, args: Record<string, unknown>): Effect.Effect<string> }
+  { call(name: string, args: unknown): Effect.Effect<string> }
 >()("mizook/Handlers") {
   static readonly layer = Layer.effect(
     Handlers,
@@ -36,51 +30,51 @@ export class Handlers extends Context.Service<
         return `#${s.id} ${what}; next ${formatDate(new Date(s.nextAt), timezone)}; ${s.prompt}`;
       };
 
-      const specOf = (a: Static<typeof scheduleCreateParameters>): Spec | string => {
+      const specOf = (a: typeof ScheduleCreateArgs.Type): Effect.Effect<Spec, ScheduleError> => {
+        const missing = (what: string) => Effect.fail(new ScheduleError({ reason: what }));
         switch (a.kind) {
           case "once":
-            return a.at ? { kind: "once", at: a.at } : "once needs `at`";
+            return a.at ? Effect.succeed({ kind: "once", at: a.at }) : missing("once needs `at`");
           case "cron":
-            return a.cron ? { kind: "cron", expr: a.cron, timezone } : "cron needs `cron`";
+            return a.cron
+              ? Effect.succeed({ kind: "cron", expr: a.cron, timezone })
+              : missing("cron needs `cron`");
           case "watch":
             return a.url && a.every_minutes
-              ? { kind: "watch", url: a.url, everyMinutes: a.every_minutes }
-              : "watch needs `url` and `every_minutes`";
-          default:
-            return `unknown kind ${String(a.kind)}`;
+              ? Effect.succeed({ kind: "watch", url: a.url, everyMinutes: a.every_minutes })
+              : missing("watch needs `url` and `every_minutes`");
         }
       };
 
-      const run = (name: string, args: Record<string, unknown>): Effect.Effect<string, unknown> => {
+      const decode = <S extends Schema.Decoder<unknown>>(schema: S, args: unknown) =>
+        Schema.decodeUnknownEffect(schema)(args);
+
+      const run = (
+        name: string,
+        args: unknown,
+      ): Effect.Effect<string, { readonly message: string }> => {
         switch (name) {
-          case "zoom": {
-            const a = args as Static<typeof zoomParameters>;
-            return memory.zoom(a.id, a.n);
-          }
+          case "zoom":
+            return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
-            return memory.date((args as Static<typeof dateParameters>).id);
+            return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
           case "schedule_create":
             return Effect.gen(function* () {
-              const spec = specOf(args as Static<typeof scheduleCreateParameters>);
-              if (typeof spec === "string") return yield* new ScheduleError({ reason: spec });
+              const a = yield* decode(ScheduleCreateArgs, args);
+              const spec = yield* specOf(a);
               const now = new Date(DateTime.toEpochMillis(yield* DateTime.now));
-              const made = yield* schedules.create(
-                spec,
-                (args as Static<typeof scheduleCreateParameters>).prompt,
-                now,
-              );
-              return `Scheduled. ${describe(made)}`;
+              return `Scheduled. ${describe(yield* schedules.create(spec, a.prompt, now))}`;
             });
           case "schedule_list":
             return Effect.map(schedules.list, (all) =>
               all.length === 0 ? "No schedules." : all.map(describe).join("\n"),
             );
-          case "schedule_cancel": {
-            const id = (args as Static<typeof scheduleCancelParameters>).id;
-            return Effect.map(schedules.cancel(id), (done) =>
-              done ? `Cancelled #${id}.` : `No active schedule #${id}.`,
+          case "schedule_cancel":
+            return Effect.flatMap(decode(ScheduleCancelArgs, args), ({ id }) =>
+              Effect.map(schedules.cancel(id), (done) =>
+                done ? `Cancelled #${id}.` : `No active schedule #${id}.`,
+              ),
             );
-          }
           default:
             return Effect.succeed(`No tool ${name}.`);
         }
@@ -89,11 +83,7 @@ export class Handlers extends Context.Service<
       // A failure becomes text the agent reads and can act on; it never fails the turn.
       return Handlers.of({
         call: (name, args) =>
-          run(name, args).pipe(
-            Effect.catch((error) =>
-              Effect.succeed(`Error: ${error instanceof Error ? error.message : String(error)}`),
-            ),
-          ),
+          run(name, args).pipe(Effect.catch((error) => Effect.succeed(`Error: ${error.message}`))),
       });
     }),
   );

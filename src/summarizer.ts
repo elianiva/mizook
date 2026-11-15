@@ -38,8 +38,8 @@ export const SummarizerLive = Layer.effect(
     return Summarizer.of({
       complete: (request) =>
         Effect.tryPromise({
-          try: async (signal) => {
-            const reply = await models.completeSimple(
+          try: (signal) =>
+            models.completeSimple(
               summary,
               {
                 systemPrompt: request.system,
@@ -48,16 +48,20 @@ export const SummarizerLive = Layer.effect(
                 tools: agentTools,
               },
               { reasoning: summary.reasoning ? "xhigh" : undefined, signal, sessionId: "memory" },
-            );
-            if (reply.stopReason === "error" || reply.stopReason === "aborted") {
-              throw new Error(reply.errorMessage ?? `model stopped: ${reply.stopReason}`);
-            }
-            return reply.content
-              .flatMap((block) => (block.type === "text" ? [block.text] : []))
-              .join("");
-          },
+            ),
           catch: (cause) => new CompletionError({ cause }),
-        }),
+        }).pipe(
+          Effect.filterOrFail(
+            (reply) => reply.stopReason !== "error" && reply.stopReason !== "aborted",
+            (reply) =>
+              new CompletionError({
+                cause: reply.errorMessage ?? `model stopped: ${reply.stopReason}`,
+              }),
+          ),
+          Effect.map((reply) =>
+            reply.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
+          ),
+        ),
     });
   }),
 );

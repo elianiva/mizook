@@ -52,8 +52,7 @@ export class Durable extends Context.Service<
             description: spec.description,
             parameters: spec.parameters,
             replay: spec.replay,
-            execute: async (args) =>
-              text(await run(handlers.call(spec.name, args as Record<string, unknown>))),
+            execute: async (args) => text(await run(handlers.call(spec.name, args))),
           }),
         );
 

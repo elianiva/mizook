@@ -1,57 +1,74 @@
-import { StringEnum } from "@earendil-works/pi-ai/utils/typebox-helpers";
-import { Type, type Tool } from "@earendil-works/pi-ai";
+import type { Tool, TSchema } from "@earendil-works/pi-ai";
+import { Schema } from "effect";
 
 /**
  * Every tool the agent has. Compactions send the same list (never called) so they read the turns'
  * prompt cache: tools and system prompt must be the same bytes in both. Add a tool here, give it a
  * handler in `handlers.ts`, and both see it.
  */
-export const zoomParameters = Type.Object({
-  id: Type.Integer({ minimum: 0, description: "First message of the line, as in id+n." }),
-  n: Type.Integer({
-    minimum: 1,
-    description: "Messages the line covers: a power of 2, and id a multiple of it.",
-  }),
-});
+const described = <S extends Schema.Top>(schema: S, description: string): S["Rebuild"] =>
+  schema.annotate({ description });
 
-export const dateParameters = Type.Object({
-  id: Type.Integer({ minimum: 0, description: "The message id." }),
-});
-
-export const scheduleCreateParameters = Type.Object({
-  kind: StringEnum(["once", "cron", "watch"], {
-    description:
-      "once: fire one time. cron: fire on a recurring schedule. watch: poll a URL and fire only when its content changes.",
-  }),
-  prompt: Type.String({
-    description:
-      "What to do when it fires, written as an instruction to yourself. You will see it as a message starting [scheduled #id].",
-  }),
-  at: Type.Optional(
-    Type.String({
-      description:
-        "once: the time, ISO 8601 with the UTC offset, e.g. 2026-11-16T09:00:00+07:00. Work it out from Now.",
-    }),
+export const ZoomArgs = Schema.Struct({
+  id: described(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    "First message of the line, as in id+n.",
   ),
-  cron: Type.Optional(
-    Type.String({
-      description: "cron: a 5-field cron expression in the chat's time zone, e.g. 0 9 * * 1-5.",
-    }),
-  ),
-  url: Type.Optional(Type.String({ description: "watch: the http(s) URL to poll." })),
-  every_minutes: Type.Optional(
-    Type.Integer({ minimum: 5, description: "watch: minutes between polls, at least 5." }),
+  n: described(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    "Messages the line covers: a power of 2, and id a multiple of it.",
   ),
 });
 
-export const scheduleCancelParameters = Type.Object({
-  id: Type.Integer({ minimum: 1, description: "The schedule number, from schedule_list." }),
+export const DateArgs = Schema.Struct({
+  id: described(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), "The message id."),
 });
+
+export const ScheduleCreateArgs = Schema.Struct({
+  kind: described(
+    Schema.Literals(["once", "cron", "watch"]),
+    "once: fire one time. cron: fire on a recurring schedule. watch: poll a URL and fire only when its content changes.",
+  ),
+  prompt: described(
+    Schema.String,
+    "What to do when it fires, written as an instruction to yourself. You will see it as a message starting [scheduled #id].",
+  ),
+  at: Schema.optionalKey(
+    described(
+      Schema.String,
+      "once: the time, ISO 8601 with the UTC offset, e.g. 2026-11-16T09:00:00+07:00. Work it out from Now.",
+    ),
+  ),
+  cron: Schema.optionalKey(
+    described(
+      Schema.String,
+      "cron: a 5-field cron expression in the chat's time zone, e.g. 0 9 * * 1-5.",
+    ),
+  ),
+  url: Schema.optionalKey(described(Schema.String, "watch: the http(s) URL to poll.")),
+  every_minutes: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(5)),
+      "watch: minutes between polls, at least 5.",
+    ),
+  ),
+});
+
+export const ScheduleCancelArgs = Schema.Struct({
+  id: described(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    "The schedule number, from schedule_list.",
+  ),
+});
+
+/** pi-ai takes a JSON Schema: the Effect schema is the one source of truth for it and the types. */
+const parametersOf = (schema: Schema.Constraint): TSchema =>
+  Schema.toJsonSchemaDocument(schema).schema as TSchema;
 
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
-  readonly parameters: Tool["parameters"];
+  readonly parameters: TSchema;
   /** `unsafe`: running it twice has an effect, so a restart must not replay it. */
   readonly replay: "safe" | "unsafe";
 }
@@ -61,25 +78,35 @@ export const ZOOM_DESCRIPTION =
 export const DATE_DESCRIPTION = "The date and time of message id.";
 
 export const toolSpecs: ReadonlyArray<ToolSpec> = [
-  { name: "zoom", description: ZOOM_DESCRIPTION, parameters: zoomParameters, replay: "safe" },
-  { name: "date", description: DATE_DESCRIPTION, parameters: dateParameters, replay: "safe" },
+  {
+    name: "zoom",
+    description: ZOOM_DESCRIPTION,
+    parameters: parametersOf(ZoomArgs),
+    replay: "safe",
+  },
+  {
+    name: "date",
+    description: DATE_DESCRIPTION,
+    parameters: parametersOf(DateArgs),
+    replay: "safe",
+  },
   {
     name: "schedule_create",
     description:
       "Wake this chat later: a one-off reminder, a recurring job, or a watch on a URL. When it fires you get a new turn with your prompt.",
-    parameters: scheduleCreateParameters,
+    parameters: parametersOf(ScheduleCreateArgs),
     replay: "unsafe",
   },
   {
     name: "schedule_list",
     description: "List this chat's active schedules with their numbers and next times.",
-    parameters: Type.Object({}),
+    parameters: parametersOf(Schema.Struct({})),
     replay: "safe",
   },
   {
     name: "schedule_cancel",
     description: "Cancel a schedule by its number.",
-    parameters: scheduleCancelParameters,
+    parameters: parametersOf(ScheduleCancelArgs),
     replay: "unsafe",
   },
 ];

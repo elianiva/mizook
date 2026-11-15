@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import type { Env } from "./env.ts";
 import { channelOf } from "./route.ts";
 
@@ -24,13 +25,9 @@ export default {
       }
       // One Durable Object per forum topic: each topic is its own endless chat.
       const body = await request.text();
-      let update: unknown;
-      try {
-        update = JSON.parse(body);
-      } catch {
-        return new Response("Bad request", { status: 400 });
-      }
-      return env.ChatAgent.getByName(channelOf(update)).fetch(
+      const channel = await Effect.runPromise(Effect.option(channelOf(body)));
+      if (channel._tag === "None") return new Response("Bad request", { status: 400 });
+      return env.ChatAgent.getByName(channel.value).fetch(
         new Request(request.url, { method: "POST", headers: request.headers, body }),
       );
     }

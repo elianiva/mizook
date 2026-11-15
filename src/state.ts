@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import type { ConversationId, SubmissionId } from "@earendil-works/pi-durable";
 import { StateError } from "./errors.ts";
@@ -18,25 +18,31 @@ export interface PendingTurn {
   readonly logged: boolean;
 }
 
-interface Row {
-  chat_id: string;
-  thread_id: string;
-  conversation_id: number;
-  request_id: string;
-  text: string;
-  submissions: string;
-  logged: number;
-}
+const Row = Schema.Struct({
+  chat_id: Schema.String,
+  thread_id: Schema.String,
+  conversation_id: Schema.Finite,
+  request_id: Schema.String,
+  text: Schema.String,
+  submissions: Schema.fromJsonString(Schema.Array(Schema.Finite)),
+  logged: Schema.Finite,
+});
 
-const toTurn = (row: Row): PendingTurn => ({
+const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
+
+// pi-durable's ids are branded numbers: the brand is the only cast, at the storage boundary.
+const toTurn = (row: typeof Row.Type): PendingTurn => ({
   chatId: row.chat_id,
   threadId: row.thread_id,
   conversationId: row.conversation_id as ConversationId,
   requestId: row.request_id,
   text: row.text,
-  submissions: JSON.parse(row.submissions) as SubmissionId[],
+  submissions: row.submissions as SubmissionId[],
   logged: row.logged === 1,
 });
+
+const asStateError = (operation: string) => (cause: unknown) =>
+  cause instanceof StateError ? cause : new StateError({ operation, cause });
 
 const WEEK = 7 * 24 * 3600 * 1000;
 
@@ -82,12 +88,15 @@ export class State extends Context.Service<
 
         return State.of({
           turn: (chatId) =>
-            run("turn", async () => {
-              const rows = await sql.all<Row>(`SELECT * FROM app_turns WHERE chat_id = ?`, chatId);
-              return rows[0] && toTurn(rows[0]);
-            }),
-          turns: run("turns", async () =>
-            (await sql.all<Row>(`SELECT * FROM app_turns`)).map(toTurn),
+            run("turn", () => sql.all(`SELECT * FROM app_turns WHERE chat_id = ?`, chatId)).pipe(
+              Effect.flatMap(decodeRows),
+              Effect.mapError(asStateError("turn")),
+              Effect.map((rows) => rows[0] && toTurn(rows[0])),
+            ),
+          turns: run("turns", () => sql.all(`SELECT * FROM app_turns`)).pipe(
+            Effect.flatMap(decodeRows),
+            Effect.mapError(asStateError("turns")),
+            Effect.map((rows) => rows.map(toTurn)),
           ),
           putTurn: (t) =>
             run("putTurn", async () => {
