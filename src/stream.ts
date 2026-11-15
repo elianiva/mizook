@@ -83,8 +83,14 @@ export class ReplyStream {
     | undefined;
   readonly #post: (stream: AsyncIterable<string>) => Promise<unknown>;
 
-  constructor(post: (stream: AsyncIterable<string>) => Promise<unknown>) {
+  readonly #log: (event: string) => void;
+
+  constructor(
+    post: (stream: AsyncIterable<string>) => Promise<unknown>,
+    log: (event: string) => void = () => {},
+  ) {
     this.#post = post;
+    this.#log = log;
   }
 
   /** The text of the model call `key` is now `text` (all of it, not the new part). Synchronous. */
@@ -97,9 +103,13 @@ export class ReplyStream {
     }
     if (!this.#current) {
       const sink = chunks();
+      this.#log(`started for call ${key}`);
       const done = this.#post(sink).then(
         () => true,
-        () => false,
+        (error: unknown) => {
+          this.#log(`failed: ${String(error)}`);
+          return false;
+        },
       );
       this.#current = { key, sink, done, text: "" };
     }
@@ -122,6 +132,7 @@ export class ReplyStream {
     if (!current) return reply;
     const streamed = current.text.trimEnd();
     if (!reply.startsWith(streamed)) {
+      this.#log(`the reply does not start with the ${streamed.length} streamed characters`);
       current.sink.close();
       await current.done;
       return reply;

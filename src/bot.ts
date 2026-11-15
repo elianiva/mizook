@@ -158,19 +158,25 @@ export class Bot extends Context.Service<
         });
 
       /** Wait for a started turn's answer and post it. */
-      const deliver = (chatId: string, threadId: string) =>
+      const deliver = (chatId: string, threadId: string, typingStarted = false) =>
         Effect.gen(function* () {
-          yield* typing(threadId);
+          if (!typingStarted) yield* typing(threadId);
           // The text the model writes goes to Telegram as it grows; what the stream did not carry is posted after.
-          const stream = new ReplyStream(async (chunks) => {
-            await chat.initialize();
-            await chat.thread(threadId).post(chunks);
-          });
+          const stream = new ReplyStream(
+            async (chunks) => {
+              await chat.initialize();
+              await chat.thread(threadId).post(chunks);
+            },
+            (event) => void run(Effect.logInfo(`stream ${event}`)),
+          );
           yield* agent
             .watch(chatId, (partial) => stream.update(partial))
             .pipe(Effect.catch((error) => Effect.logWarning(`not streaming: ${error.message}`)));
           const reply = yield* agent.finish(chatId);
           const rest = yield* Effect.promise(() => stream.finish(reply));
+          yield* Effect.logInfo(
+            `reply ${reply.length} chars, ${rest.length} posted after the stream`,
+          );
           if (rest.trim() !== "") yield* post(threadId, rest);
           yield* postApprovals(threadId);
         }).pipe(Effect.scoped);
@@ -242,6 +248,8 @@ export class Bot extends Context.Service<
           }
         }
         yield* hold(chatId);
+        // Beginning a turn can wait seconds for the last messages to be summarized: show typing first.
+        yield* typing(thread.id);
         const started = yield* agent.begin({
           chatId,
           threadId: thread.id,
@@ -249,7 +257,7 @@ export class Bot extends Context.Service<
           requestId: `${thread.id}:${message.id}`,
         });
         if (started === "folded") return;
-        yield* deliver(chatId, thread.id);
+        yield* deliver(chatId, thread.id, true);
       }, Effect.scoped);
 
       const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
