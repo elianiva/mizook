@@ -160,6 +160,8 @@ export class Bot extends Context.Service<
         const userId = String(message.author.userId);
         if (message.author.isMe) return;
         if (!settings.allowedUserIds.has(userId)) {
+          // In a group other members talk too: only a DM gets told its id.
+          if (!thread.isDM) return;
           yield* post(
             thread.id,
             `You're not allowed to use this bot. Your Telegram id is ${userId}.`,
@@ -363,6 +365,8 @@ export class Bot extends Context.Service<
 
       chat.onDirectMessage(onMessage);
       chat.onNewMention(onMessage);
+      // Plain messages in a group topic: not a DM, not a mention, and the thread is not subscribed.
+      chat.onNewMessage(onMessage);
 
       return Bot.of({
         wake,
