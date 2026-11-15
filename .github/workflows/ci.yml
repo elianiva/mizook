@@ -49,3 +49,35 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  # Cloudflare is the deploy target (Alchemy), as in quorum. Only a push to the default branch
+  # deploys, and only once every check has passed.
+  deploy:
+    needs: [check, typecheck, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://mzk.elianiva.com
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      MIZOOK_WEBHOOK_SECRET: ${{ secrets.MIZOOK_WEBHOOK_SECRET }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      PARALLEL_API_KEY: ${{ secrets.PARALLEL_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+      EXECUTOR_URL: ${{ vars.EXECUTOR_URL }}
+      EXECUTOR_TOKEN: ${{ secrets.EXECUTOR_TOKEN }}
+      TELEGRAM_ALLOWED_USER_IDS: ${{ vars.TELEGRAM_ALLOWED_USER_IDS }}
+      INSTRUCTIONS: ${{ vars.INSTRUCTIONS }}
+      BUDGET_DAILY: ${{ vars.BUDGET_DAILY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec alchemy deploy --stage prod --yes

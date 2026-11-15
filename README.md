@@ -30,7 +30,7 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 - **Schedules:** `once`, `cron` and `watch` (polls a URL, wakes the agent only when it changes), plus `webhook_link` for services that notify you. Capped at 20 turns an hour.
 - **Artifacts:** pages and files at `https://mzk.elianiva.com/a/<token>/<name>`, sandboxed. Versions are kept in R2.
 - **Web:** `web_search` (Parallel, then Exa; set `SEARCH_PROVIDERS`) and `web_fetch`.
-- **Executor:** one `executor` tool over MCP. Approvals go through the agent: it asks you in the chat, then resumes.
+- **Executor:** one `executor` tool over MCP. A call that needs approval shows Approve and Deny buttons in the chat; the press resumes it and the agent sees the result. Use the plain `/mcp` URL (model mode).
 - **Files:** attachments are stored; `file_read` reads text files. Images, voice and PDF content are not read yet.
 - **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /schedules /export`.
 - **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
@@ -77,3 +77,15 @@ vp check          # format, lint (Effect rules included)
 pnpm typecheck    # tsrs and effect-tsrs
 vp test      # the memory package's tests and the Telegram chunker
 ```
+
+## CI and deploy
+
+`.github/workflows/ci.yml` runs check, typecheck and test on every push. A push to `master` then runs
+`alchemy deploy --stage prod`. Set these in the repository's `production` environment:
+
+| Kind      | Names                                                                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Secrets   | `CLOUDFLARE_API_TOKEN`, `BOT_TOKEN`, `MIZOOK_WEBHOOK_SECRET`, `DEEPSEEK_API_KEY`, `PARALLEL_API_KEY`, `EXA_API_KEY`, `EXECUTOR_TOKEN` |
+| Variables | `CLOUDFLARE_ACCOUNT_ID`, `TELEGRAM_ALLOWED_USER_IDS`, `EXECUTOR_URL`, `INSTRUCTIONS`, `BUDGET_DAILY`                                  |
+
+After the first deploy, point Telegram at it once: `vp run webhook https://mzk.elianiva.com`.
