@@ -35,11 +35,10 @@ cp .env.example .env     # then fill it in
 | --------------------------- | -------- | ---------------------------------------------------------------------- |
 | `BOT_TOKEN`                 | yes      | Telegram bot token from @BotFather                                     |
 | `MIZOOK_WEBHOOK_SECRET`     | yes      | Any random string; Telegram sends it back with every update            |
-| `OPENCODE_API_KEY`          | yes      | [OpenCode Go](https://opencode.ai/go) key                              |
+| `DEEPSEEK_API_KEY`          | yes      | [DeepSeek](https://platform.deepseek.com) API key                      |
 | `TELEGRAM_ALLOWED_USER_IDS` | yes      | Comma-separated Telegram user ids. Nobody else gets an answer          |
-| `MODEL`                     | no       | The agent's model (default `mimo-v2.5-pro`)                            |
-| `SUMMARY_MODEL`             | no       | The cheap model that writes the memory (default `claude-haiku-5-5`)    |
-| `MODEL_PROVIDER`            | no       | pi-ai provider id (default `opencode-go`)                              |
+| `MODEL`                     | no       | The agent's model (default `deepseek-v4-pro`)                          |
+| `SUMMARY_MODEL`             | no       | The cheap model that writes the memory (default `deepseek-flash`)      |
 | `AGENT_NAME`                | no       | What the agent calls itself (default `Mizook`)                         |
 | `INSTRUCTIONS`              | no       | Who you are and how you want work done: goes last in the system prompt |
 | `TIMEZONE`                  | no       | IANA zone for the dates the agent sees (default `Asia/Jakarta`)        |

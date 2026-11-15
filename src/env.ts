@@ -5,12 +5,11 @@ export interface Env {
   ChatAgent: DurableObjectNamespace<ChatAgent>;
   BOT_TOKEN: string;
   MIZOOK_WEBHOOK_SECRET: string;
-  OPENCODE_API_KEY: string;
+  DEEPSEEK_API_KEY: string;
   TELEGRAM_ALLOWED_USER_IDS?: string;
   BOT_USERNAME?: string;
   AGENT_NAME?: string;
   INSTRUCTIONS?: string;
-  MODEL_PROVIDER?: string;
   MODEL?: string;
   SUMMARY_MODEL?: string;
   TIMEZONE?: string;

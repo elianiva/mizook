@@ -7,7 +7,7 @@ const withDefault = <A>(config: Config.Config<A>, value: A) =>
 export const AppConfig = Config.all({
   botToken: Config.Redacted("BOT_TOKEN"),
   webhookSecret: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),
-  apiKey: Config.Redacted("OPENCODE_API_KEY"),
+  apiKey: Config.Redacted("DEEPSEEK_API_KEY"),
   /** Comma-separated Telegram user ids. Nobody may use the bot until this is set. */
   allowedUserIds: withDefault(Config.String("TELEGRAM_ALLOWED_USER_IDS"), ""),
   botUsername: withDefault(Config.String("BOT_USERNAME"), "mizook"),
@@ -15,10 +15,9 @@ export const AppConfig = Config.all({
   agentName: withDefault(Config.String("AGENT_NAME"), "Mizook"),
   /** The user's own instructions: who they are and how they want work done. */
   instructions: withDefault(Config.String("INSTRUCTIONS"), ""),
-  provider: withDefault(Config.String("MODEL_PROVIDER"), "opencode-go"),
-  model: withDefault(Config.String("MODEL"), "mimo-v2.5-pro"),
-  /** The cheap model that writes the memory. The design uses Claude Haiku. */
-  summaryModel: withDefault(Config.String("SUMMARY_MODEL"), "claude-haiku-5-5"),
+  model: withDefault(Config.String("MODEL"), "deepseek-v4-pro"),
+  /** The cheap model that writes the memory. */
+  summaryModel: withDefault(Config.String("SUMMARY_MODEL"), "deepseek-flash"),
   timezone: withDefault(Config.String("TIMEZONE"), "Asia/Jakarta"),
 });
 
@@ -32,7 +31,6 @@ export class Settings extends Context.Service<
     readonly botUsername: string;
     readonly agentName: string;
     readonly instructions: string;
-    readonly provider: string;
     readonly model: string;
     readonly summaryModel: string;
     readonly timezone: string;

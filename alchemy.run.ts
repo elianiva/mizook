@@ -20,13 +20,12 @@ export default Alchemy.Stack(
 
         BOT_TOKEN: Config.Redacted("BOT_TOKEN"),
         MIZOOK_WEBHOOK_SECRET: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),
-        OPENCODE_API_KEY: Config.Redacted("OPENCODE_API_KEY"),
+        DEEPSEEK_API_KEY: Config.Redacted("DEEPSEEK_API_KEY"),
 
         TELEGRAM_ALLOWED_USER_IDS: Config.String("TELEGRAM_ALLOWED_USER_IDS"),
         BOT_USERNAME: optional("BOT_USERNAME"),
         AGENT_NAME: optional("AGENT_NAME"),
         INSTRUCTIONS: optional("INSTRUCTIONS"),
-        MODEL_PROVIDER: optional("MODEL_PROVIDER"),
         MODEL: optional("MODEL"),
         SUMMARY_MODEL: optional("SUMMARY_MODEL"),
         TIMEZONE: optional("TIMEZONE"),

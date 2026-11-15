@@ -1,6 +1,6 @@
 import type { Model, Api } from "@earendil-works/pi-ai";
 import { createModels, type Models as PiModels } from "@earendil-works/pi-ai/models";
-import { opencodeGoProvider } from "@earendil-works/pi-ai/providers/opencode-go";
+import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { Context, Effect, Layer, Redacted } from "effect";
 import { Settings } from "./config.ts";
 import { ModelNotFound } from "./errors.ts";
@@ -18,17 +18,17 @@ export class Models extends Context.Service<
     Models,
     Effect.gen(function* () {
       const settings = yield* Settings;
-      const env: Record<string, string> = { OPENCODE_API_KEY: Redacted.value(settings.apiKey) };
+      const env: Record<string, string> = { DEEPSEEK_API_KEY: Redacted.value(settings.apiKey) };
       const models = createModels({
         authContext: { env: async (name) => env[name], fileExists: async () => false },
       });
-      models.setProvider(opencodeGoProvider());
+      models.setProvider(deepseekProvider());
 
       const find = (id: string) => {
-        const model = models.getModel(settings.provider, id);
+        const model = models.getModel("deepseek", id);
         return model
           ? Effect.succeed(model)
-          : Effect.fail(new ModelNotFound({ provider: settings.provider, model: id }));
+          : Effect.fail(new ModelNotFound({ provider: "deepseek", model: id }));
       };
       const [main, summary] = yield* Effect.all([
         find(settings.model),

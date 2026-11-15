@@ -13,7 +13,7 @@ export interface CompletionRequest {
 }
 
 /**
- * The cheap model that writes the lines (the design uses Claude Haiku at xhigh effort). The host
+ * The cheap model that writes the lines (the design uses a cheap model at high effort). The host
  * owns the call: it should send the same tools as the turns (never called) so a compaction reads
  * their prompt cache, and return the reply's text.
  */
