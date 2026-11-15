@@ -77,3 +77,12 @@ export class ToolError extends Data.TaggedError("ToolError")<{
     return this.reason;
   }
 }
+
+/** Executor (an MCP endpoint) refused or failed. The reason goes back to the agent. */
+export class ExecutorError extends Data.TaggedError("ExecutorError")<{
+  readonly reason: string;
+}> {
+  override get message() {
+    return `executor: ${this.reason}`;
+  }
+}

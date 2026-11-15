@@ -88,6 +88,22 @@ export const ArtifactDeleteArgs = Schema.Struct({
   name: described(Schema.String, "The artifact's name, from artifact_list."),
 });
 
+export const AskChannelArgs = Schema.Struct({
+  channel: described(Schema.String, "The channel's name, from /channels."),
+  question: described(Schema.String, "What to ask. It answers from its own memory, read-only."),
+});
+
+export const ExecutorArgs = Schema.Struct({
+  tool: described(
+    Schema.Literals(["skills", "search", "describe", "call", "execute", "resume"]),
+    "Which Executor tool. skills: read how to use an app. search: find app tools. describe: a tool's signature. call: run tools by path. execute: run a JavaScript program over the tools. resume: continue a call that paused for approval or input.",
+  ),
+  input: described(
+    Schema.String,
+    'The tool\'s input as a JSON object string, e.g. {"calls":[{"path":"tools.x.y","input":{}}]}, or {"query":"gmail"} for search.',
+  ),
+});
+
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
@@ -152,6 +168,20 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "unsafe",
   },
   {
+    name: "ask_channel",
+    description:
+      "Ask another channel of the same user a question; it answers from its own memory, read-only.",
+    parameters: parametersOf(AskChannelArgs),
+    replay: "safe",
+  },
+  {
+    name: "executor",
+    description:
+      "Reach the user's connected apps and accounts (mail, calendar, code hosts, and more) through Executor.",
+    parameters: parametersOf(ExecutorArgs),
+    replay: "unsafe",
+  },
+  {
     name: "schedule_list",
     description: "List this chat's active schedules with their numbers and next times.",
     parameters: parametersOf(Schema.Struct({})),
@@ -172,7 +202,17 @@ export const agentTools: Tool[] = toolSpecs.map(({ name, description, parameters
 }));
 
 /** Appended to the system prompt, before the user's instructions. Static: no dates or state. */
-export const TOOL_GUIDE = `# Artifacts
+export const TOOL_GUIDE = `# Executor
+
+executor reaches the user's connected accounts. Start with skills, then search and describe, then call
+or execute. When a result says it paused for approval or input, tell the user exactly what is about
+to happen and ask; only after they agree, run resume with the answer. Never approve for them.
+
+# Other channels
+
+ask_channel reads another channel's memory. Use it only when the user's question is about that channel.
+
+# Artifacts
 
 For anything long or visual, publish it with artifact_publish and give the user the link. Keep the
 same name to update a page in place.

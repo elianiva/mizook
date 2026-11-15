@@ -6,9 +6,14 @@ import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
 import { Artifacts } from "./artifacts.ts";
+import { Executor } from "./executor.ts";
+import { Host } from "./host.ts";
+import { ToolError } from "./errors.ts";
 import { channelKey, State } from "./state.ts";
 import { Web } from "./search.ts";
 import {
+  AskChannelArgs,
+  ExecutorArgs,
   ArtifactDeleteArgs,
   ArtifactPublishArgs,
   DateArgs,
@@ -30,6 +35,8 @@ export class Handlers extends Context.Service<
       const memory = yield* Memory;
       const schedules = yield* Schedules;
       const web = yield* Web;
+      const executor = yield* Executor;
+      const host = yield* Host;
       const artifacts = yield* Artifacts;
       const state = yield* State;
       const channel = channelKey(state);
@@ -74,6 +81,22 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
             return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
+          case "ask_channel":
+            return Effect.flatMap(decode(AskChannelArgs, args), (a) =>
+              host.ask(a.channel, a.question),
+            );
+          case "executor":
+            return Effect.gen(function* () {
+              const a = yield* decode(ExecutorArgs, args);
+              const input = yield* Effect.try({
+                try: () => JSON.parse(a.input) as unknown,
+                catch: () => new ToolError({ reason: "input is not valid JSON" }),
+              });
+              if (typeof input !== "object" || input === null || Array.isArray(input)) {
+                return yield* new ToolError({ reason: "input must be a JSON object" });
+              }
+              return clipToolOutput(yield* executor.call(a.tool, input as Record<string, unknown>));
+            });
           case "artifact_publish":
             return Effect.gen(function* () {
               const a = yield* decode(ArtifactPublishArgs, args);

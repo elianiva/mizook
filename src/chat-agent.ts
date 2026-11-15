@@ -48,29 +48,33 @@ export class ChatAgent extends DurableObject<Env> {
     return this.env.Hub.getByName("hub") as unknown as HubApi;
   }
 
+  /** Swap in a fresh runtime so new settings take effect, once the reply that asked for it is out. */
+  private reloadRuntime(): void {
+    const old = this.runtime;
+    this.ctx.waitUntil(
+      (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await old.dispose();
+        this.runtime = makeRuntime(this.ctx.storage, this.env, this.host());
+        await this.runtime.runPromise(Effect.void);
+      })(),
+    );
+  }
+
   /** What this channel can ask of the world outside it. */
   private host(): Hosted {
-    const self = this;
-    const stub = (doName: string) => self.env.ChatAgent.getByName(doName) as unknown as ChannelApi;
+    const hub = () => this.hub();
+    const doName = this.doName;
+    const reload = () => this.reloadRuntime();
+    const exportLink = this.runtimeEffect(Backup.use((backup) => backup.exportLink));
+    const peer = (name: string) => this.env.ChatAgent.getByName(name) as unknown as ChannelApi;
     return {
-      reload: Effect.sync(() => {
-        const old = self.runtime;
-        // The reply that asked for this is on its way: swap the runtime once it is out.
-        self.ctx.waitUntil(
-          (async () => {
-            await new Promise((resolve) => setTimeout(resolve, 1_500));
-            await old.dispose();
-            self.runtime = makeRuntime(self.ctx.storage, self.env, self.host());
-            await self.runtime.runPromise(Effect.void);
-          })(),
-        );
-      }),
-      register: (threadId, name) =>
-        Effect.promise(() => self.hub().register(self.doName, threadId, name)),
-      channels: Effect.promise(() => self.hub().list()),
+      reload: Effect.sync(reload),
+      register: (threadId, name) => Effect.promise(() => hub().register(doName, threadId, name)),
+      channels: Effect.promise(() => hub().list()),
       ask: (channel, question) =>
         Effect.gen(function* () {
-          const all = yield* Effect.promise(() => self.hub().list());
+          const all = yield* Effect.promise(() => hub().list());
           const wanted = channel.trim().toLowerCase();
           const found = all.find((c) => c.name.toLowerCase() === wanted || c.doName === channel);
           if (!found) {
@@ -78,24 +82,24 @@ export class ChatAgent extends DurableObject<Env> {
               reason: `no channel "${channel}". Channels: ${all.map((c) => c.name).join(", ") || "none yet"}`,
             });
           }
-          if (found.doName === self.doName) {
+          if (found.doName === doName) {
             return yield* new ToolError({ reason: "that is this channel: use your own memory" });
           }
           return yield* Effect.tryPromise({
-            try: () => stub(found.doName).ask(question),
+            try: () => peer(found.doName).ask(question),
             catch: (cause) =>
               new ToolError({ reason: `asking ${found.name} failed: ${String(cause)}` }),
           });
         }),
       spendAll: Effect.gen(function* () {
-        const all: ChannelInfo[] = yield* Effect.promise(() => self.hub().list());
+        const all: ChannelInfo[] = yield* Effect.promise(() => hub().list());
         return yield* Effect.forEach(all, (c) =>
-          Effect.promise(() => stub(c.doName).spend()).pipe(
+          Effect.promise(() => peer(c.doName).spend()).pipe(
             Effect.map((spend) => ({ name: c.name, spend })),
           ),
         );
       }),
-      exportNow: self.runtimeEffect(Backup.use((backup) => backup.exportLink)),
+      exportNow: exportLink,
     };
   }
 

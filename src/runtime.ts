@@ -13,8 +13,10 @@ import { Models } from "./models.ts";
 import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
 import { readSettings, State } from "./state.ts";
+import { Executor } from "./executor.ts";
 import { Handlers } from "./handlers.ts";
 import { Artifacts } from "./artifacts.ts";
+import { Commands } from "./commands.ts";
 import { Backup } from "./backup.ts";
 import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
@@ -84,9 +86,11 @@ export const makeRuntime = (
   );
 
   const app = Bot.layer.pipe(
+    Layer.provideMerge(Commands.layer),
     Layer.provideMerge(Agent.layer),
     Layer.provideMerge(Durable.layer(database)),
     Layer.provideMerge(Handlers.layer),
+    Layer.provideMerge(Executor.layer),
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(Usage.layer(sql)),
     Layer.provideMerge(Layer.succeed(Host, host)),

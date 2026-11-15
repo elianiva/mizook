@@ -7,6 +7,9 @@ import { Agent, type AgentError } from "./agent.ts";
 import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
+import { Commands } from "./commands.ts";
+import { Host } from "./host.ts";
+import { Usage } from "./usage.ts";
 import { Schedules, type Schedule as Scheduled } from "./schedules.ts";
 import { State } from "./state.ts";
 import { Web } from "./search.ts";
@@ -43,6 +46,9 @@ export class Bot extends Context.Service<
       const agent = yield* Agent;
       const state = yield* State;
       const schedules = yield* Schedules;
+      const commands = yield* Commands;
+      const usage = yield* Usage;
+      const host = yield* Host;
       const web = yield* Web;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
@@ -131,6 +137,12 @@ export class Bot extends Context.Service<
           yield* post(thread.id, GREETING(settings.agentName));
           return;
         }
+        // Slash commands are the user's controls: they never reach the model.
+        const reply = yield* commands.run(thread.id, thread.id, text);
+        if (reply !== undefined) {
+          yield* post(thread.id, reply);
+          return;
+        }
         // Telegram redelivers an update it did not get an answer to in time.
         if (!(yield* state.firstSeen(`${thread.id}:${message.id}`))) return;
 
@@ -138,6 +150,17 @@ export class Bot extends Context.Service<
         const chatId = thread.id;
         // Schedules of this channel post here.
         yield* state.setMeta("thread", thread.id);
+        yield* host.register(thread.id, undefined);
+        if (settings.budgetDaily > 0) {
+          const spent = yield* usage.spentSince(Date.now() - 24 * 3_600_000);
+          if (spent >= settings.budgetDaily) {
+            yield* post(
+              thread.id,
+              `Daily budget reached (${spent.toFixed(2)} of ${settings.budgetDaily}). Raise it with /budget.`,
+            );
+            return;
+          }
+        }
         yield* hold(chatId);
         const started = yield* agent.begin({
           chatId,

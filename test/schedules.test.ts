@@ -1,4 +1,4 @@
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
 import { Schedules } from "../src/schedules.ts";

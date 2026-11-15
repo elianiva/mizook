@@ -24,6 +24,8 @@ export const AppConfig = Config.all({
   publicUrl: withDefault(Config.String("PUBLIC_URL"), ""),
   /** Most dollars the agent may spend in 24 hours in one channel; 0 is no limit. */
   budgetDaily: withDefault(Config.Number("BUDGET_DAILY"), 0),
+  executorUrl: withDefault(Config.String("EXECUTOR_URL"), ""),
+  executorToken: withDefault(Config.Redacted("EXECUTOR_TOKEN"), Redacted.make("")),
   searchProviders: withDefault(Config.String("SEARCH_PROVIDERS"), "parallel,exa"),
   parallelKey: withDefault(Config.Redacted("PARALLEL_API_KEY"), Redacted.make("")),
   exaKey: withDefault(Config.Redacted("EXA_API_KEY"), Redacted.make("")),
@@ -44,6 +46,8 @@ export class Settings extends Context.Service<
     readonly timezone: string;
     readonly publicUrl: string;
     readonly budgetDaily: number;
+    readonly executorUrl: string;
+    readonly executorToken: Redacted.Redacted<string>;
     readonly searchProviders: ReadonlyArray<string>;
     /** The API key of each search provider, by name. */
     readonly searchKeys: Readonly<Record<string, Redacted.Redacted<string>>>;
