@@ -12,6 +12,8 @@ import { formatDate } from "./format.ts";
 import { Models } from "./models.ts";
 import { State } from "./state.ts";
 import { Handlers } from "./handlers.ts";
+import { Artifacts } from "./artifacts.ts";
+import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
 import { Schedules } from "./schedules.ts";
 import { SummarizerLive } from "./summarizer.ts";
@@ -57,6 +59,8 @@ export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
     Layer.provideMerge(Agent.layer),
     Layer.provideMerge(Durable.layer(database)),
     Layer.provideMerge(Handlers.layer),
+    Layer.provideMerge(Artifacts.layer(sql)),
+    Layer.provideMerge(Blobs.r2(env.Files)),
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Schedules.layer(sql, arm)),

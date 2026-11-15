@@ -20,6 +20,8 @@ export const AppConfig = Config.all({
   summaryModel: withDefault(Config.String("SUMMARY_MODEL"), "deepseek-flash"),
   timezone: withDefault(Config.String("TIMEZONE"), "Asia/Jakarta"),
   /** Search backends, in the order they are tried. */
+  /** Where the Worker is reachable, for artifact links. */
+  publicUrl: withDefault(Config.String("PUBLIC_URL"), ""),
   searchProviders: withDefault(Config.String("SEARCH_PROVIDERS"), "parallel,exa"),
   parallelKey: withDefault(Config.Redacted("PARALLEL_API_KEY"), Redacted.make("")),
   exaKey: withDefault(Config.Redacted("EXA_API_KEY"), Redacted.make("")),
@@ -38,6 +40,7 @@ export class Settings extends Context.Service<
     readonly model: string;
     readonly summaryModel: string;
     readonly timezone: string;
+    readonly publicUrl: string;
     readonly searchProviders: ReadonlyArray<string>;
     /** The API key of each search provider, by name. */
     readonly searchKeys: Readonly<Record<string, Redacted.Redacted<string>>>;

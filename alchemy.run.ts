@@ -8,16 +8,24 @@ import type { ChatAgent } from "./src/chat-agent.ts";
 /** A plain variable the bot reads at runtime. Left empty it is ignored, and the bot uses its own default. */
 const optional = (name: string) => Config.String(name).pipe(Config.withDefault(""));
 
+/** Where the Worker is served, and where artifact links point. The zone must exist in the account. */
+const DOMAIN = "mzk.elianiva.com";
+
 export default Alchemy.Stack(
   "mizook",
   { providers: Cloudflare.providers(), state: Cloudflare.state() },
   Effect.gen(function* () {
+    const files = yield* Cloudflare.R2.Bucket("Files");
     const worker = yield* Cloudflare.Worker("Mizook", {
       main: "./src/worker.ts",
+      domain: { name: DOMAIN },
       compatibility: { date: "2026-05-08", flags: ["nodejs_compat"] },
       env: {
         // The chat: one Durable Object owns the memory, pi-durable, and the bot.
         ChatAgent: Cloudflare.DurableObject<ChatAgent>("ChatAgent"),
+        // Artifacts, exports and backups.
+        Files: files,
+        PUBLIC_URL: `https://${DOMAIN}`,
 
         BOT_TOKEN: Config.Redacted("BOT_TOKEN"),
         MIZOOK_WEBHOOK_SECRET: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),

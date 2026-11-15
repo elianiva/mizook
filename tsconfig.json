@@ -16,7 +16,7 @@
         "name": "@effect/language-service",
         "overrides": [
           {
-            "include": ["src/**/*.ts"],
+            "include": ["src/**/*.ts", "test/**/*.ts"],
             "options": {
               "allowedUnstableApis": ["effect/http"]
             }
@@ -25,6 +25,6 @@
       }
     ]
   },
-  "include": ["src", "scripts", "alchemy.run.ts"],
+  "include": ["src", "test", "scripts", "alchemy.run.ts"],
   "exclude": ["packages", "node_modules"]
 }

@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type { Env } from "./env.ts";
+import { artifactHeaders } from "./artifacts.ts";
 import { channelOf } from "./route.ts";
 
 export { ChatAgent } from "./chat-agent.ts";
@@ -30,6 +31,17 @@ export default {
       return env.ChatAgent.getByName(channel.value).fetch(
         new Request(request.url, { method: "POST", headers: request.headers, body }),
       );
+    }
+
+    // Published artifacts: the token is the secret. The policy gives the page an opaque origin, so
+    // its scripts can run but cannot read this site's storage or call it as the user.
+    const artifact = /^\/a\/([\w-]{16,64})(?:\/.*)?$/.exec(pathname);
+    if (artifact && request.method === "GET") {
+      const object = await env.Files.get(`a/${artifact[1]}`);
+      if (!object) return new Response("Not found", { status: 404 });
+      return new Response(object.body, {
+        headers: artifactHeaders(object.httpMetadata?.contentType),
+      });
     }
 
     if (pathname === "/") return new Response("mizook");

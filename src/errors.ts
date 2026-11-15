@@ -58,3 +58,22 @@ export class WebError extends Data.TaggedError("WebError")<{
     return `${this.url}: ${this.reason}`;
   }
 }
+
+/** The blob store (R2) failed. */
+export class BlobError extends Data.TaggedError("BlobError")<{
+  readonly operation: string;
+  readonly cause: unknown;
+}> {
+  override get message() {
+    return `blob ${this.operation} failed: ${String(this.cause)}`;
+  }
+}
+
+/** The agent asked for something a tool cannot do: a bad name, a file too large, nothing by that name. The reason goes back to the agent. */
+export class ToolError extends Data.TaggedError("ToolError")<{
+  readonly reason: string;
+}> {
+  override get message() {
+    return this.reason;
+  }
+}

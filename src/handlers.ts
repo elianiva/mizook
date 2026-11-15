@@ -5,8 +5,12 @@ import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
+import { Artifacts } from "./artifacts.ts";
+import { State } from "./state.ts";
 import { Web } from "./search.ts";
 import {
+  ArtifactDeleteArgs,
+  ArtifactPublishArgs,
   DateArgs,
   ScheduleCancelArgs,
   ScheduleCreateArgs,
@@ -26,6 +30,11 @@ export class Handlers extends Context.Service<
       const memory = yield* Memory;
       const schedules = yield* Schedules;
       const web = yield* Web;
+      const artifacts = yield* Artifacts;
+      const state = yield* State;
+      const channel = Effect.map(state.meta("thread"), (id) =>
+        (id ?? "main").replaceAll(/[^a-zA-Z0-9:_-]/g, "_"),
+      );
       const { timezone } = yield* Settings;
 
       const describe = (s: Schedule) => {
@@ -67,6 +76,30 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
             return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
+          case "artifact_publish":
+            return Effect.gen(function* () {
+              const a = yield* decode(ArtifactPublishArgs, args);
+              const made = yield* artifacts.publish(
+                yield* channel,
+                a.name,
+                a.content,
+                a.content_type ?? "text/html; charset=utf-8",
+              );
+              return `Published v${made.version}: ${made.url}`;
+            });
+          case "artifact_list":
+            return Effect.map(artifacts.list, (all) =>
+              all.length === 0
+                ? "No artifacts."
+                : all.map((a) => `${a.name} v${a.version} ${a.url}`).join("\n"),
+            );
+          case "artifact_delete":
+            return Effect.gen(function* () {
+              const a = yield* decode(ArtifactDeleteArgs, args);
+              return (yield* artifacts.remove(yield* channel, a.name))
+                ? `Took down ${a.name}.`
+                : `No artifact ${a.name}.`;
+            });
           case "web_search":
             return Effect.flatMap(decode(WebSearchArgs, args), (a) => web.search(a.query));
           case "web_fetch":

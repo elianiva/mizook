@@ -14,6 +14,8 @@ export interface Env {
   SUMMARY_MODEL?: string;
   TIMEZONE?: string;
   SEARCH_PROVIDERS?: string;
+  PUBLIC_URL?: string;
+  Files: R2Bucket;
   PARALLEL_API_KEY?: string;
   EXA_API_KEY?: string;
 }

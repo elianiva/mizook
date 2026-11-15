@@ -3,28 +3,20 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
 import { Schedules } from "../src/schedules.ts";
 
-const go = <A, E>(f: (s: Context) => Effect.Effect<A, E>) =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const ctx = yield* Layer.build(Schedules.layer(memory()));
-        return yield* f(ctx).pipe(Effect.provide(Layer.succeedContext(ctx)));
-      }),
-    ),
-  );
-type Context = import("effect").Context.Context<Schedules>;
-const memory = () => {
+const go = <A, E>(f: Effect.Effect<A, E, Schedules>) => {
   const db = new DatabaseSync(":memory:");
-  return {
+  const sql = {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
+  return Effect.runPromise(Effect.provide(f, Schedules.layer(sql)));
 };
+
 const t = (s: string) => new Date(s);
 const cron = { kind: "cron", expr: "*/10 * * * *", timezone: "UTC" } as const;
 
 test("a once fires once, then is finished", async () => {
-  await go(() =>
+  await go(
     Effect.gen(function* () {
       const s = yield* Schedules;
       const made = yield* s.create(
@@ -42,7 +34,7 @@ test("a once fires once, then is finished", async () => {
 });
 
 test("a cron missed for hours fires once and then waits for the next slot", async () => {
-  await go(() =>
+  await go(
     Effect.gen(function* () {
       const s = yield* Schedules;
       yield* s.create(cron, "tick", t("2026-11-15T00:00:00Z"));
@@ -55,7 +47,7 @@ test("a cron missed for hours fires once and then waits for the next slot", asyn
 });
 
 test("a bad spec is refused with its reason, and cancel stops a schedule", async () => {
-  await go(() =>
+  await go(
     Effect.gen(function* () {
       const s = yield* Schedules;
       const bad = yield* Effect.exit(
@@ -71,7 +63,7 @@ test("a bad spec is refused with its reason, and cancel stops a schedule", async
 });
 
 test("a watch is silent on the first look and on no change, and speaks on a change", async () => {
-  await go(() =>
+  await go(
     Effect.gen(function* () {
       const s = yield* Schedules;
       const w = yield* s.create(
@@ -87,7 +79,7 @@ test("a watch is silent on the first look and on no change, and speaks on a chan
 });
 
 test("the hourly limit refuses a fire past the cap and recovers after an hour", async () => {
-  await go(() =>
+  await go(
     Effect.gen(function* () {
       const s = yield* Schedules;
       const base = t("2026-11-15T00:00:00Z");
