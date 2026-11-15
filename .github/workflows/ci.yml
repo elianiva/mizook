@@ -81,5 +81,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec alchemy deploy --stage prod --yes
-      # Telegram must know where the bot lives. Setting it is idempotent, so every deploy does it.
+      # Telegram must know where the bot lives and what its menu holds. Both calls are idempotent, so every deploy repeats them.
       - run: node scripts/set-webhook.ts https://mzk.elianiva.com

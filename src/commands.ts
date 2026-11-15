@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
+import { COMMANDS } from "./command-list.ts";
 import { Settings } from "./config.ts";
 import { formatDate } from "./format.ts";
 import { Host } from "./host.ts";
@@ -116,7 +117,7 @@ export class Commands extends Context.Service<
           case "export":
             return `Your export of this channel (works for one hour): ${yield* host.exportNow}`;
           case "help":
-            return "/stop, /cost, /model, /instructions, /timezone, /budget, /name, /channels, /schedules, /export";
+            return COMMANDS.map((c) => `/${c.command}: ${c.description}`).join("\n");
           default:
             return undefined;
         }
