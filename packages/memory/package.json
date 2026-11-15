@@ -12,6 +12,6 @@
     "./sqlite": "./src/sqlite.ts"
   },
   "dependencies": {
-    "effect": "^4.0.4"
+    "effect": "4.1.4"
   }
 }

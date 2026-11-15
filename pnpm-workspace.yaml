@@ -12,10 +12,9 @@ allowBuilds:
   sharp: true
   workerd: true
 overrides:
+  effect: 4.1.4
   oxlint-tsgolint: 7.0.2005
 minimumReleaseAge: 0
 trustPolicyExclude:
   - "effect@4.0.0-beta.62"
   - "semver@6.3.1"
-patchedDependencies:
-  chat@4.41.1: patches/chat@4.41.1.patch

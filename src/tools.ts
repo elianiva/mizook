@@ -1,4 +1,4 @@
-import type { Tool, TSchema } from "@earendil-works/pi-ai";
+import type { Tool } from "@earendil-works/pi-ai";
 import { Schema } from "effect";
 
 /**
@@ -62,8 +62,8 @@ export const ScheduleCancelArgs = Schema.Struct({
 });
 
 /** pi-ai takes a JSON Schema: the Effect schema is the one source of truth for it and the types. */
-const parametersOf = (schema: Schema.Constraint): TSchema =>
-  Schema.toJsonSchemaDocument(schema).schema as TSchema;
+const parametersOf = (schema: Schema.Constraint): object =>
+  Schema.toJsonSchemaDocument(schema).schema;
 
 export const WebSearchArgs = Schema.Struct({
   query: described(Schema.String, "What to search for, as keywords or a short question."),
@@ -111,7 +111,7 @@ export const FileReadArgs = Schema.Struct({
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
-  readonly parameters: TSchema;
+  readonly parameters: object;
   /** `unsafe`: running it twice has an effect, so a restart must not replay it. */
   readonly replay: "safe" | "unsafe";
 }
