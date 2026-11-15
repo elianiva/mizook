@@ -1,6 +1,15 @@
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
-import { Actions, Button, Card, CardText, Chat, type Message, type Thread } from "chat";
+import {
+  Actions,
+  Button,
+  Card,
+  CardText,
+  Chat,
+  type Message,
+  type SlashCommandEvent,
+  type Thread,
+} from "chat";
 import { clipToolOutput } from "@mizook/memory";
 import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
@@ -346,6 +355,40 @@ export class Bot extends Context.Service<
           ),
         ),
       );
+
+      /** A `/command`: the adapter delivers these as slash-command events, not as messages. */
+      const onSlashCommand = (event: SlashCommandEvent) =>
+        run(
+          Effect.gen(function* () {
+            const threadId = event.channel.id;
+            const userId = String(event.user.userId);
+            if (!settings.allowedUserIds.has(userId)) {
+              if (!event.channel.isDM) return;
+              yield* post(
+                threadId,
+                `You're not allowed to use this bot. Your Telegram id is ${userId}.`,
+              );
+              return;
+            }
+            yield* state.setMeta("thread", threadId);
+            yield* host.register(threadId, undefined);
+            const name = event.command.replace(/^\//, "").replace(/@.*$/, "");
+            const reply =
+              name === "start"
+                ? GREETING(settings.agentName)
+                : yield* commands.run(threadId, threadId, `/${name} ${event.text}`.trim());
+            yield* post(threadId, reply ?? "That is not a command. Try /help.");
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("command failed", cause).pipe(
+                Effect.andThen(
+                  post(event.channel.id, "That command failed on my side.").pipe(Effect.ignore),
+                ),
+              ),
+            ),
+          ),
+        );
+      chat.onSlashCommand(onSlashCommand);
 
       const onMessage = (thread: Thread, message: Message) =>
         run(

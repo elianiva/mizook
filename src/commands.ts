@@ -15,7 +15,7 @@ const dollars = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 export class Commands extends Context.Service<
   Commands,
   {
-    /** The reply to a command, or `undefined` when the text is not one of ours. */
+    /** The reply to a command, or `undefined` when the text is not a command at all. Every command gets a reply. */
     run(
       chatId: string,
       threadId: string,
@@ -119,7 +119,7 @@ export class Commands extends Context.Service<
           case "help":
             return COMMANDS.map((c) => `/${c.command}: ${c.description}`).join("\n");
           default:
-            return undefined;
+            return `Unknown command /${match[1]}. Try /help.`;
         }
       });
       return Commands.of({ run });
