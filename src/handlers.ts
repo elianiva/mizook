@@ -1,11 +1,19 @@
-import { Memory } from "@mizook/memory";
+import { clipToolOutput, Memory } from "@mizook/memory";
 import { Context, DateTime, Effect, Layer, Schema } from "effect";
 import { Settings } from "./config.ts";
 import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
-import { DateArgs, ScheduleCancelArgs, ScheduleCreateArgs, ZoomArgs } from "./tools.ts";
+import { Web } from "./search.ts";
+import {
+  DateArgs,
+  ScheduleCancelArgs,
+  ScheduleCreateArgs,
+  WebFetchArgs,
+  WebSearchArgs,
+  ZoomArgs,
+} from "./tools.ts";
 
 /** What a tool does, by name. The arguments were already checked against the tool's schema. */
 export class Handlers extends Context.Service<
@@ -17,6 +25,7 @@ export class Handlers extends Context.Service<
     Effect.gen(function* () {
       const memory = yield* Memory;
       const schedules = yield* Schedules;
+      const web = yield* Web;
       const { timezone } = yield* Settings;
 
       const describe = (s: Schedule) => {
@@ -58,6 +67,16 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
             return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
+          case "web_search":
+            return Effect.flatMap(decode(WebSearchArgs, args), (a) => web.search(a.query));
+          case "web_fetch":
+            return Effect.flatMap(decode(WebFetchArgs, args), (a) =>
+              Effect.map(
+                web.fetch(a.url),
+                (page) =>
+                  `${page.status} ${page.contentType}${page.truncated ? " (cut)" : ""}\n${clipToolOutput(page.text)}`,
+              ),
+            );
           case "schedule_create":
             return Effect.gen(function* () {
               const a = yield* decode(ScheduleCreateArgs, args);

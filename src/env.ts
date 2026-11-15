@@ -13,4 +13,7 @@ export interface Env {
   MODEL?: string;
   SUMMARY_MODEL?: string;
   TIMEZONE?: string;
+  SEARCH_PROVIDERS?: string;
+  PARALLEL_API_KEY?: string;
+  EXA_API_KEY?: string;
 }

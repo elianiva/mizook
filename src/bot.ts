@@ -1,7 +1,6 @@
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { Chat, type Message, type Thread } from "chat";
-import * as HttpClient from "effect/http/HttpClient";
 import { clipToolOutput } from "@mizook/memory";
 import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
@@ -10,7 +9,8 @@ import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
 import { Schedules, type Schedule as Scheduled } from "./schedules.ts";
 import { State } from "./state.ts";
-import { fetchPage, sha256 } from "./web.ts";
+import { Web } from "./search.ts";
+import { sha256 } from "./web.ts";
 
 /** How long an interrupted turn waits for the next alarm before something picks it up. */
 export const RECOVER_AFTER_MS = 30_000;
@@ -43,7 +43,7 @@ export class Bot extends Context.Service<
       const agent = yield* Agent;
       const state = yield* State;
       const schedules = yield* Schedules;
-      const http = yield* HttpClient.HttpClient;
+      const web = yield* Web;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
 
@@ -155,8 +155,7 @@ export class Bot extends Context.Service<
       const textOf = (s: Scheduled) =>
         Effect.gen(function* () {
           if (s.spec.kind !== "watch") return `[scheduled #${s.id}] ${s.prompt}`;
-          const page = yield* fetchPage(s.spec.url).pipe(
-            Effect.provideService(HttpClient.HttpClient, http),
+          const page = yield* web.fetch(s.spec.url).pipe(
             Effect.map((p) => p.text),
             Effect.catch((error) =>
               Effect.logWarning(`watch #${s.id} failed: ${error.message}`).pipe(

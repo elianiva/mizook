@@ -19,6 +19,10 @@ export const AppConfig = Config.all({
   /** The cheap model that writes the memory. */
   summaryModel: withDefault(Config.String("SUMMARY_MODEL"), "deepseek-flash"),
   timezone: withDefault(Config.String("TIMEZONE"), "Asia/Jakarta"),
+  /** Search backends, in the order they are tried. */
+  searchProviders: withDefault(Config.String("SEARCH_PROVIDERS"), "parallel,exa"),
+  parallelKey: withDefault(Config.Redacted("PARALLEL_API_KEY"), Redacted.make("")),
+  exaKey: withDefault(Config.Redacted("EXA_API_KEY"), Redacted.make("")),
 });
 
 export class Settings extends Context.Service<
@@ -34,6 +38,9 @@ export class Settings extends Context.Service<
     readonly model: string;
     readonly summaryModel: string;
     readonly timezone: string;
+    readonly searchProviders: ReadonlyArray<string>;
+    /** The API key of each search provider, by name. */
+    readonly searchKeys: Readonly<Record<string, Redacted.Redacted<string>>>;
   }
 >()("mizook/Settings") {
   static readonly layer = Layer.effect(
@@ -46,7 +53,15 @@ export class Settings extends Context.Service<
           .map((id) => id.trim())
           .filter(Boolean),
       );
-      return Settings.of({ ...config, allowedUserIds });
+      return Settings.of({
+        ...config,
+        allowedUserIds,
+        searchProviders: config.searchProviders
+          .split(/[\s,]+/)
+          .map((name) => name.trim())
+          .filter(Boolean),
+        searchKeys: { parallel: config.parallelKey, exa: config.exaKey },
+      });
     }),
   );
 }

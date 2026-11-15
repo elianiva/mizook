@@ -2,6 +2,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import type { ChatAgent } from "./src/chat-agent.ts";
 
 /** A plain variable the bot reads at runtime. Left empty it is ignored, and the bot uses its own default. */
@@ -29,6 +30,11 @@ export default Alchemy.Stack(
         MODEL: optional("MODEL"),
         SUMMARY_MODEL: optional("SUMMARY_MODEL"),
         TIMEZONE: optional("TIMEZONE"),
+        SEARCH_PROVIDERS: optional("SEARCH_PROVIDERS"),
+        PARALLEL_API_KEY: Config.Redacted("PARALLEL_API_KEY").pipe(
+          Config.withDefault(Redacted.make("")),
+        ),
+        EXA_API_KEY: Config.Redacted("EXA_API_KEY").pipe(Config.withDefault(Redacted.make(""))),
       },
     });
 
