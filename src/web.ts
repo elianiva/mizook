@@ -1,4 +1,5 @@
-import { Effect } from "effect";
+import { type Duration, Effect } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
 import { WebError } from "./errors.ts";
 
 const ENTITIES: Record<string, string> = {
@@ -43,55 +44,39 @@ export interface Page {
   readonly truncated: boolean;
 }
 
-/** Fetch a page as text. Bounded in time and size; never follows more than 5 redirects. */
+/** Fetch a page as text with Effect's HTTP client. Bounded in time and size. */
 export const fetchPage = (
   url: string,
-  options: { readonly maxBytes?: number; readonly timeoutMs?: number } = {},
-): Effect.Effect<Page, WebError> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      if (!/^https?:\/\//i.test(url)) throw new Error("only http(s) urls");
-      const maxBytes = options.maxBytes ?? 1_000_000;
-      const response = await fetch(url, {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 15_000)]),
-        headers: {
-          "user-agent": "Mozilla/5.0 (compatible; Mizook/1.0)",
-          accept: "text/html,*/*;q=0.5",
-        },
-      });
-      const reader = response.body?.getReader();
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      let truncated = false;
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        size += value.length;
-        if (size > maxBytes) {
-          truncated = true;
-          await reader.cancel();
-          break;
-        }
-      }
-      const bytes = new Uint8Array(size);
-      let at = 0;
-      for (const part of chunks) {
-        bytes.set(part, at);
-        at += part.length;
-      }
-      const body = new TextDecoder().decode(bytes.subarray(0, maxBytes));
-      const contentType = response.headers.get("content-type") ?? "";
-      return {
-        status: response.status,
-        contentType,
-        text: /html/i.test(contentType) ? htmlToText(body) : body,
-        truncated,
-      };
-    },
-    catch: (cause) =>
-      new WebError({ url, reason: cause instanceof Error ? cause.message : String(cause) }),
-  });
+  options: { readonly maxBytes?: number; readonly timeout?: Duration.Input } = {},
+): Effect.Effect<Page, WebError, HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    if (!/^https?:\/\//i.test(url))
+      return yield* new WebError({ url, reason: "only http(s) urls" });
+    const maxBytes = options.maxBytes ?? 1_000_000;
+    const response = yield* HttpClient.get(url, {
+      headers: {
+        "user-agent": "Mozilla/5.0 (compatible; Mizook/1.0)",
+        accept: "text/html,*/*;q=0.5",
+      },
+    });
+    const body = yield* response.text;
+    const truncated = body.length > maxBytes;
+    const text = truncated ? body.slice(0, maxBytes) : body;
+    const contentType = response.headers["content-type"] ?? "";
+    return {
+      status: response.status,
+      contentType,
+      text: /html/i.test(contentType) ? htmlToText(text) : text,
+      truncated,
+    };
+  }).pipe(
+    Effect.timeout(options.timeout ?? "15 seconds"),
+    Effect.mapError((cause) =>
+      cause instanceof WebError
+        ? cause
+        : new WebError({ url, reason: String(cause.message ?? cause) }),
+    ),
+  );
 
 /** A hex SHA-256 of a text, to tell whether a page changed. */
 export const sha256 = async (text: string): Promise<string> => {

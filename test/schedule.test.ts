@@ -1,5 +1,9 @@
 import { expect, test } from "vite-plus/test";
-import { invalid, nextFire } from "../src/schedule.ts";
+import { Effect, Exit } from "effect";
+import { firstFire, nextFire as nextFireEffect } from "../src/schedule.ts";
+import type { Spec } from "../src/schedule.ts";
+
+const nextFire = (spec: Spec, after: Date) => Effect.runSync(nextFireEffect(spec, after));
 
 const at = (s: string) => new Date(s);
 
@@ -42,13 +46,17 @@ test("a once in the past never fires; a watch is spaced by its period", () => {
   );
 });
 
-test("invalid specs are named, valid ones pass", () => {
+test("unusable specs fail with their reason, usable ones pass", () => {
   const now = at("2026-11-15T00:00:00Z");
-  expect(invalid({ kind: "once", at: "soon" }, now)).toContain("not a date");
-  expect(invalid({ kind: "once", at: "2026-01-01T00:00:00Z" }, now)).toContain("past");
-  expect(invalid({ kind: "cron", expr: "nope", timezone: "UTC" }, now)).toBeTruthy();
-  expect(invalid({ kind: "cron", expr: "0 9 * * *", timezone: "Nowhere/City" }, now)).toBeTruthy();
-  expect(invalid({ kind: "watch", url: "ftp://x", everyMinutes: 30 }, now)).toBeTruthy();
-  expect(invalid({ kind: "watch", url: "https://x.y", everyMinutes: 1 }, now)).toContain("5");
-  expect(invalid({ kind: "cron", expr: "0 9 * * 1", timezone: "UTC" }, now)).toBeUndefined();
+  const reason = (spec: Spec) => {
+    const exit = Effect.runSyncExit(firstFire(spec, now));
+    return Exit.isFailure(exit) ? String(exit.cause) : undefined;
+  };
+  expect(reason({ kind: "once", at: "soon" })).toContain("not a date");
+  expect(reason({ kind: "once", at: "2026-01-01T00:00:00Z" })).toContain("past");
+  expect(reason({ kind: "cron", expr: "nope", timezone: "UTC" })).toBeTruthy();
+  expect(reason({ kind: "cron", expr: "0 9 * * *", timezone: "Nowhere/City" })).toBeTruthy();
+  expect(reason({ kind: "watch", url: "ftp://x", everyMinutes: 30 })).toBeTruthy();
+  expect(reason({ kind: "watch", url: "https://x.y", everyMinutes: 1 })).toContain("5");
+  expect(reason({ kind: "cron", expr: "0 9 * * 1", timezone: "UTC" })).toBeUndefined();
 });

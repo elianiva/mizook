@@ -1,6 +1,7 @@
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { Chat, type Message, type Thread } from "chat";
+import * as HttpClient from "effect/http/HttpClient";
 import { clipToolOutput } from "@mizook/memory";
 import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
@@ -42,6 +43,7 @@ export class Bot extends Context.Service<
       const agent = yield* Agent;
       const state = yield* State;
       const schedules = yield* Schedules;
+      const http = yield* HttpClient.HttpClient;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
 
@@ -154,6 +156,7 @@ export class Bot extends Context.Service<
         Effect.gen(function* () {
           if (s.spec.kind !== "watch") return `[scheduled #${s.id}] ${s.prompt}`;
           const page = yield* fetchPage(s.spec.url).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
             Effect.map((p) => p.text),
             Effect.catch((error) =>
               Effect.logWarning(`watch #${s.id} failed: ${error.message}`).pipe(

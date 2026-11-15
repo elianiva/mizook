@@ -1,6 +1,7 @@
 import { DurableObjectSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { Memory } from "@mizook/memory";
 import { sqliteStore, type SqlDriver } from "@mizook/memory/sqlite";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
 import { Agent } from "./agent.ts";
 import { Bot } from "./bot.ts";
@@ -52,6 +53,7 @@ export const makeRuntime = (storage: DurableObjectStorage, env: Env) => {
   ).pipe(Layer.provide(Layer.merge(sqliteStore(sql), SummarizerLive)), Layer.provideMerge(models));
 
   const app = Bot.layer.pipe(
+    Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Agent.layer),
     Layer.provideMerge(Durable.layer(database)),
     Layer.provideMerge(Handlers.layer),

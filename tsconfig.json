@@ -13,7 +13,15 @@
     "skipLibCheck": true,
     "plugins": [
       {
-        "name": "@effect/language-service"
+        "name": "@effect/language-service",
+        "overrides": [
+          {
+            "include": ["src/bot.ts", "src/web.ts", "src/runtime.ts"],
+            "options": {
+              "allowedUnstableApis": ["effect/http"]
+            }
+          }
+        ]
       }
     ]
   },
