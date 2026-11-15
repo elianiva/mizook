@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
-import type { StoreError } from "./errors.ts";
-import type { Message, Node, PersistedViews } from "./types.ts";
+import { StoreError } from "./errors.ts";
+import type { Message, Node, PersistedViews, Snapshot } from "./types.ts";
 
 /**
  * Where the log lives. Append only: messages and nodes are written once and never edited. Only
@@ -21,6 +21,10 @@ export class Store extends Context.Service<
     readonly nodeSizes: Effect.Effect<Array<{ l: number; i: number; size: number }>, StoreError>;
     readonly loadViews: Effect.Effect<PersistedViews | undefined, StoreError>;
     saveViews(views: PersistedViews): Effect.Effect<void, StoreError>;
+    /** Everything the store holds, for an export. */
+    readonly snapshot: Effect.Effect<Snapshot, StoreError>;
+    /** Load a snapshot into an empty store. Fails when the store already has messages. */
+    restore(snapshot: Snapshot): Effect.Effect<void, StoreError>;
   }
 >()("@mizook/memory/Store") {
   /** A store in memory, for tests and scratch use. */
@@ -31,11 +35,14 @@ export class Store extends Context.Service<
     return Store.of({
       messageCount: Effect.sync(() => messages.length),
       appendMessage: (message) =>
-        Effect.sync(() => {
-          if (message.i !== messages.length)
-            throw new Error(`message ${message.i} is out of order`);
-          messages.push(message);
-        }),
+        message.i === messages.length
+          ? Effect.sync(() => void messages.push(message))
+          : Effect.fail(
+              new StoreError({
+                operation: "appendMessage",
+                cause: `message ${message.i} is out of order`,
+              }),
+            ),
       getMessage: (i) => Effect.sync(() => messages[i]),
       putNode: (node) =>
         Effect.sync(() => {
@@ -49,6 +56,20 @@ export class Store extends Context.Service<
         Effect.sync(() => {
           views = structuredClone(next);
         }),
+      snapshot: Effect.sync(() => ({
+        messages: structuredClone(messages),
+        nodes: structuredClone([...nodes.values()]),
+        views: views && structuredClone(views),
+      })),
+      restore: (snapshot) =>
+        messages.length > 0
+          ? Effect.fail(new StoreError({ operation: "restore", cause: "the store is not empty" }))
+          : Effect.sync(() => {
+              messages.push(...structuredClone(snapshot.messages));
+              for (const node of snapshot.nodes)
+                nodes.set(`${node.l}:${node.i}`, structuredClone(node));
+              views = snapshot.views && structuredClone(snapshot.views);
+            }),
     });
   });
 }

@@ -2,7 +2,7 @@ import { Context, DateTime, type Duration, Effect, Layer, Semaphore } from "effe
 import { BuiltIndex } from "./built.ts";
 import { makeCompactor } from "./compactor.ts";
 import { CHAT_BUDGET, COMPACTION_BUDGET, CONCURRENCY, PLACEHOLDER } from "./constants.ts";
-import { ZoomError, type StoreError } from "./errors.ts";
+import { StoreError, ZoomError } from "./errors.ts";
 import { systemPrompt } from "./prompts.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Store } from "./store.ts";
@@ -103,7 +103,11 @@ const make = Effect.fnUntraced(function* (config: MemoryConfig) {
 
   const message = Effect.fnUntraced(function* (i: number) {
     const found = yield* store.getMessage(i);
-    if (!found) return yield* Effect.die(new Error(`message ${i} is not in the log`));
+    if (!found)
+      return yield* new StoreError({
+        operation: "getMessage",
+        cause: `message ${i} is not in the log`,
+      });
     return found;
   });
 
@@ -121,7 +125,11 @@ const make = Effect.fnUntraced(function* (config: MemoryConfig) {
 
   const nodeText = Effect.fnUntraced(function* (l: number, i: number) {
     const text = yield* maybeNodeText(l, i);
-    if (text === undefined) return yield* Effect.die(new Error(`node ${label(l, i)} is not built`));
+    if (text === undefined)
+      return yield* new StoreError({
+        operation: "getNode",
+        cause: `node ${label(l, i)} is not built`,
+      });
     return text;
   });
 
@@ -195,7 +203,8 @@ const make = Effect.fnUntraced(function* (config: MemoryConfig) {
     }
     const { l, i } = yield* Effect.try({
       try: () => parseLabel(id, n),
-      catch: (error) => new ZoomError({ reason: (error as Error).message }),
+      catch: (error) =>
+        new ZoomError({ reason: error instanceof Error ? error.message : String(error) }),
     });
     if (id + n > total) {
       return yield* new ZoomError({ reason: `zoom(${id}, ${n}): the chat has ${total} messages` });

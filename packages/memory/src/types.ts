@@ -39,6 +39,13 @@ export interface ViewState {
   pending: boolean;
 }
 
+/** All of a chat: what an export holds and an import restores. */
+export interface Snapshot {
+  messages: Message[];
+  nodes: Node[];
+  views?: PersistedViews | undefined;
+}
+
 export interface PersistedViews {
   chat: ViewState;
   compaction: ViewState;

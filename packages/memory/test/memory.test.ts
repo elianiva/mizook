@@ -11,7 +11,9 @@ import {
   ZoomError,
   byteLength,
   clipToolOutput,
+  fromFiles,
   sqliteStore,
+  toFiles,
 } from "../src/index.ts";
 import { BuiltIndex } from "../src/built.ts";
 import { fakeSummarizer, inputOf, long, newModel, run } from "./helpers.ts";
@@ -377,4 +379,63 @@ test("a tool's output is clipped to its head and tail, 30,000 characters in all"
   expect(clipped.endsWith("b".repeat(15_000))).toBe(true);
   expect(clipped).toContain("10000 characters clipped");
   expect(clipToolOutput("short")).toBe("short");
+});
+
+test("an export restores into an empty store and gives the same view, without a model call", async () => {
+  const model = newModel();
+  const exported = await run(
+    Effect.gen(function* () {
+      const memory = yield* Memory;
+      for (let i = 0; i < 90; i++) yield* memory.append(i % 2 ? "agent" : "user", long(`m${i}`));
+      yield* memory.idle;
+      const store = yield* Store;
+      return { view: (yield* memory.renderView).text, files: toFiles(yield* store.snapshot) };
+    }),
+    { model: fakeSummarizer(model) },
+  );
+  expect(Object.keys(exported.files)).toContain("view.json");
+  expect(Object.keys(exported.files).some((p) => p.startsWith("main/"))).toBe(true);
+
+  const fresh = newModel();
+  const restored = await run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      yield* store.restore(yield* fromFiles(exported.files));
+      // The memory was built over the empty store, so it is read through a second one.
+      return store;
+    }),
+    { model: fakeSummarizer(fresh) },
+  ).then((store) =>
+    run(
+      Effect.gen(function* () {
+        const memory = yield* Memory;
+        yield* memory.idle;
+        const zoomed = yield* memory.zoom(7, 1);
+        return { view: (yield* memory.renderView).text, zoomed };
+      }),
+      { model: fakeSummarizer(fresh), store: Layer.succeed(Store, store) },
+    ),
+  );
+  expect(restored.view).toBe(exported.view);
+  expect(restored.zoomed).toContain("m7");
+  expect(fresh.requests).toHaveLength(0);
+});
+
+test("a restore into a store that has messages is refused, and a log with a gap is not read", async () => {
+  const exit = await run(
+    Effect.gen(function* () {
+      const memory = yield* Memory;
+      yield* memory.append("user", "a");
+      const store = yield* Store;
+      return yield* Effect.exit(store.restore({ messages: [], nodes: [] }));
+    }),
+    { model: fakeSummarizer(newModel()) },
+  );
+  expect(Exit.isFailure(exit)).toBe(true);
+  const bad = await Effect.runPromiseExit(
+    fromFiles({
+      "main/2026-01-01.jsonl": `{"i":1,"kind":"user","text":"x","size":1,"date":"2026-01-01T00:00:00Z"}\n`,
+    }),
+  );
+  expect(Exit.isFailure(bad)).toBe(true);
 });
