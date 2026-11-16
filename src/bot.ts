@@ -92,8 +92,6 @@ export class Bot extends Context.Service<
         secretToken: Redacted.value(settings.webhookSecret),
         userName: settings.botUsername,
         mode: "webhook",
-        // In a DM the answer types out as a live draft; in a group it is edited as it grows.
-        nativeStreaming: true,
         // Who may talk to the bot is decided in the handler, which tells a stranger their id. The adapter would otherwise
         // read TELEGRAM_ALLOWED_USER_IDS from the environment and drop them without a word.
         allowedUserIds: [],
