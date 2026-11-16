@@ -32,6 +32,9 @@ import { sha256 } from "./web.ts";
 export const RECOVER_AFTER_MS = 30_000;
 /** Most turns schedules may start in an hour: a bad watch must not flood the chat or the budget. */
 const FIRES_PER_HOUR = 20;
+/** How long the user must stop typing before a run of messages is answered, and the longest a run may wait. */
+const BURST_QUIET_MS = 1_500;
+const BURST_MAX_MS = 8_000;
 
 const GREETING = (name: string) =>
   `hey, ${name} here. I remember everything said in this chat, so no resets. what are we doing?`;
@@ -87,6 +90,9 @@ export class Bot extends Context.Service<
               else active.delete(chatId);
             }),
         );
+
+      /** Messages typed in a quick run, by chat, while the first of them waits for the run to end. */
+      const bursts = new Map<string, string[]>();
 
       const telegram = createTelegramAdapter({
         botToken: Redacted.value(settings.botToken),
@@ -206,14 +212,14 @@ export class Bot extends Context.Service<
             );
           }
         }
-        const text = [typed, ...saved].filter((part) => part !== "").join("\n");
-        if (text === "") return;
-        if (text === "/start") {
+        const joined = [typed, ...saved].filter((part) => part !== "").join("\n");
+        if (joined === "") return;
+        if (joined === "/start") {
           yield* post(thread.id, GREETING(settings.agentName));
           return;
         }
         // Slash commands are the user's controls: they never reach the model.
-        const reply = yield* commands.run(thread.id, thread.id, text);
+        const reply = yield* commands.run(thread.id, thread.id, joined);
         if (reply !== undefined) {
           yield* post(thread.id, reply);
           return;
@@ -226,6 +232,29 @@ export class Bot extends Context.Service<
         // Schedules of this channel post here.
         yield* state.setMeta("thread", thread.id);
         yield* host.register(thread.id, undefined);
+        // Several short messages in a row are one thought: wait until the typing stops, then answer once.
+        // While a turn runs this is skipped, and the message is folded into it below.
+        let text = joined;
+        const burst = bursts.get(chatId);
+        if (burst) {
+          burst.push(text);
+          return;
+        }
+        if (!(yield* state.turn(chatId))) {
+          const mine = [text];
+          bursts.set(chatId, mine);
+          const began = Date.now();
+          let seen = 0;
+          yield* Effect.whileLoop({
+            while: () => mine.length !== seen && Date.now() - began < BURST_MAX_MS,
+            body: () => {
+              seen = mine.length;
+              return Effect.sleep(Duration.millis(BURST_QUIET_MS));
+            },
+            step: () => {},
+          }).pipe(Effect.ensuring(Effect.sync(() => void bursts.delete(chatId))));
+          text = mine.join("\n");
+        }
         if (settings.budgetDaily > 0) {
           const spent = yield* usage.spentSince(Date.now() - 24 * 3_600_000);
           if (spent >= settings.budgetDaily) {
