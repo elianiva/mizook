@@ -9,7 +9,7 @@ import { Spec } from "./schedule.ts";
 import { channelKey, State } from "./state.ts";
 import { packTar, unpackTar } from "./tar.ts";
 
-export type BackupError = ArchiveError | BlobError | StateError | StoreError;
+export type BackupError = ArchiveError | BlobError | StateError | StoreError | ToolError;
 
 const KEEP_BACKUPS = 14;
 const DAY = 24 * 3_600_000;
@@ -19,6 +19,7 @@ const SchedulesFile = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ spec: Spec, prompt: Schema.String })),
 );
 const SettingsFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const DataFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const ArtifactsFile = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ name: Schema.String, contentType: Schema.String })),
 );
@@ -74,7 +75,15 @@ export class Backup extends Context.Service<
             contentType: artifact.contentType,
           })),
         ).pipe(Effect.orDie);
-        for (const { artifact, body } of published) files[`artifacts/${artifact.name}`] = body;
+        for (const { artifact, body, data } of published) {
+          files[`artifacts/${artifact.name}`] = body;
+          // What a page saved goes with it.
+          if (Object.keys(data).length > 0) {
+            files[`artifacts-data/${artifact.name}.json`] = yield* Schema.encodeEffect(DataFile)(
+              data,
+            ).pipe(Effect.orDie);
+          }
+        }
         return yield* packTar(files);
       });
 
@@ -159,6 +168,13 @@ export class Backup extends Context.Service<
                     new TextDecoder().decode(body),
                     contentType,
                   );
+                  const saved = text(`artifacts-data/${name}.json`);
+                  if (saved) {
+                    const data = yield* Schema.decodeEffect(DataFile)(saved).pipe(Effect.orDie);
+                    for (const [key, json] of Object.entries(data)) {
+                      yield* artifacts.data.set(name, key, json);
+                    }
+                  }
                 }
               }
             }

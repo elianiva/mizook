@@ -2,6 +2,15 @@ import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { Blobs } from "./blobs.ts";
 import { Settings } from "./config.ts";
+import { checkContent } from "./artifact-render.ts";
+import {
+  DATA_KEY,
+  dataKey,
+  dataPrefix,
+  doNameOf,
+  MAX_KEYS,
+  MAX_VALUE_BYTES,
+} from "./artifact-data.ts";
 import { StateError, ToolError, type BlobError } from "./errors.ts";
 
 export const MAX_ARTIFACT_BYTES = 5_000_000;
@@ -27,16 +36,6 @@ export interface Artifact {
   readonly url: string;
 }
 
-export const artifactHeaders = (contentType: string | undefined): Headers =>
-  new Headers({
-    "content-type": contentType ?? "text/plain; charset=utf-8",
-    "content-security-policy":
-      "sandbox allow-scripts allow-forms allow-popups allow-modals; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; connect-src https:",
-    "x-content-type-options": "nosniff",
-    "referrer-policy": "no-referrer",
-    "cache-control": "private, no-store",
-  });
-
 const token = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
   return btoa(String.fromCharCode(...bytes))
@@ -53,18 +52,49 @@ const token = () => {
 export class Artifacts extends Context.Service<
   Artifacts,
   {
+    /** Publish a page or file under a name. The same name again adds a version and keeps the link. */
     publish(
       channel: string,
       name: string,
       content: string,
       contentType: string,
+      options?: { readonly expiresInHours?: number },
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
     readonly list: Effect.Effect<ReadonlyArray<Artifact>, StateError>;
     remove(channel: string, name: string): Effect.Effect<boolean, StateError | BlobError>;
-    /** The current content of every artifact, for an export. */
+    /** The numbers of the versions kept of an artifact, oldest first. */
+    history(
+      channel: string,
+      name: string,
+    ): Effect.Effect<ReadonlyArray<number>, StateError | BlobError>;
+    /** Publish an old version again, as a new one. */
+    restore(
+      channel: string,
+      name: string,
+      version: number,
+    ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
+    /** What the page saved with `mizook.data`, which the agent can read and write too. Values are JSON text. */
+    readonly data: {
+      list(name: string): Effect.Effect<Record<string, string>, ToolError | StateError | BlobError>;
+      get(
+        name: string,
+        key: string,
+      ): Effect.Effect<string | undefined, ToolError | StateError | BlobError>;
+      set(
+        name: string,
+        key: string,
+        json: string,
+      ): Effect.Effect<void, ToolError | StateError | BlobError>;
+      delete(name: string, key: string): Effect.Effect<void, ToolError | StateError | BlobError>;
+    };
+    /** The current content of every artifact and its saved data, for an export. */
     readonly contents: Effect.Effect<
-      ReadonlyArray<{ readonly artifact: Artifact; readonly body: Uint8Array }>,
-      StateError | BlobError
+      ReadonlyArray<{
+        readonly artifact: Artifact;
+        readonly body: Uint8Array;
+        readonly data: Record<string, string>;
+      }>,
+      ToolError | StateError | BlobError
     >;
   }
 >()("mizook/Artifacts") {
@@ -104,8 +134,17 @@ export class Artifacts extends Context.Service<
           );
         const all = query("list artifacts", `SELECT * FROM app_artifacts ORDER BY name`);
 
-        return Artifacts.of({
-          publish: (channel, name, content, contentType) =>
+        const find = (name: string) =>
+          Effect.flatMap(
+            query("find artifact", `SELECT * FROM app_artifacts WHERE name = ?`, name),
+            ([found]) =>
+              found
+                ? Effect.succeed(found)
+                : Effect.fail(new ToolError({ reason: `no artifact ${name}` })),
+          );
+
+        const self: Context.Service.Shape<typeof Artifacts> = Artifacts.of({
+          publish: (channel, name, content, contentType, options) =>
             Effect.gen(function* () {
               yield* decodeName(name).pipe(
                 Effect.mapError(
@@ -115,6 +154,8 @@ export class Artifacts extends Context.Service<
                     }),
                 ),
               );
+              const invalid = checkContent(contentType, content);
+              if (invalid) return yield* new ToolError({ reason: invalid });
               const body = new TextEncoder().encode(content);
               if (body.length > MAX_ARTIFACT_BYTES) {
                 return yield* new ToolError({ reason: `too large: ${body.length} bytes` });
@@ -128,7 +169,17 @@ export class Artifacts extends Context.Service<
               const tok = current?.token ?? token();
               yield* blobs.put(`artifacts/${channel}/${name}/${version}`, body, { contentType });
               // The public copy is the latest version, found by token alone.
-              yield* blobs.put(`a/${tok}`, body, { contentType });
+              // What serves a page needs only this: its kind, its channel (for `say`), when it lapses.
+              yield* blobs.put(`a/${tok}`, body, {
+                contentType,
+                meta: {
+                  name,
+                  do: doNameOf(channel),
+                  ...(options?.expiresInHours
+                    ? { expires: String(Date.now() + options.expiresInHours * 3_600_000) }
+                    : {}),
+                },
+              });
               const [saved] = yield* query(
                 "save artifact",
                 `INSERT INTO app_artifacts (name, token, version, content_type, updated)
@@ -155,17 +206,95 @@ export class Artifacts extends Context.Service<
               if (!found) return false;
               // Versions stay in the log of the channel; only the public link stops working.
               yield* blobs.delete(`a/${found.token}`);
+              for (const key of yield* blobs.list(dataPrefix(found.token)))
+                yield* blobs.delete(key);
               return true;
             }),
+          history: (channel, name) =>
+            Effect.map(blobs.list(`artifacts/${channel}/${name}/`), (keys) =>
+              keys
+                .map((k) => Number(k.slice(k.lastIndexOf("/") + 1)))
+                .filter(Number.isFinite)
+                .sort((a, b) => a - b),
+            ),
+          restore: (channel, name, version) =>
+            Effect.gen(function* () {
+              const blob = yield* blobs.get(`artifacts/${channel}/${name}/${version}`);
+              if (!blob)
+                return yield* new ToolError({ reason: `${name} has no version ${version}` });
+              return yield* self.publish(
+                channel,
+                name,
+                new TextDecoder().decode(blob.body),
+                blob.contentType,
+              );
+            }),
+          data: {
+            list: (name) =>
+              Effect.gen(function* () {
+                const found = yield* find(name);
+                const out: Record<string, string> = {};
+                const prefix = dataPrefix(found.token);
+                for (const key of yield* blobs.list(prefix)) {
+                  const blob = yield* blobs.get(key);
+                  if (blob) out[key.slice(prefix.length)] = new TextDecoder().decode(blob.body);
+                }
+                return out;
+              }),
+            get: (name, key) =>
+              Effect.gen(function* () {
+                const found = yield* find(name);
+                const blob = yield* blobs.get(dataKey(found.token, key));
+                return blob ? new TextDecoder().decode(blob.body) : undefined;
+              }),
+            set: (name, key, json) =>
+              Effect.gen(function* () {
+                const found = yield* find(name);
+                if (!DATA_KEY.test(key)) {
+                  return yield* new ToolError({
+                    reason: "a key is letters, digits, dots, dashes, up to 64",
+                  });
+                }
+                yield* Effect.try({
+                  try: () => JSON.parse(json) as unknown,
+                  catch: () => new ToolError({ reason: "value must be valid JSON" }),
+                });
+                if (new TextEncoder().encode(json).length > MAX_VALUE_BYTES) {
+                  return yield* new ToolError({
+                    reason: `a value is at most ${MAX_VALUE_BYTES} bytes`,
+                  });
+                }
+                const keys = yield* blobs.list(dataPrefix(found.token));
+                if (!keys.includes(dataKey(found.token, key)) && keys.length >= MAX_KEYS) {
+                  return yield* new ToolError({ reason: `at most ${MAX_KEYS} keys` });
+                }
+                yield* blobs.put(dataKey(found.token, key), json, {
+                  contentType: "application/json",
+                });
+              }),
+            delete: (name, key) =>
+              Effect.gen(function* () {
+                const found = yield* find(name);
+                yield* blobs.delete(dataKey(found.token, key));
+              }),
+          },
           contents: Effect.gen(function* () {
-            const out: Array<{ artifact: Artifact; body: Uint8Array }> = [];
+            const out: Array<{
+              artifact: Artifact;
+              body: Uint8Array;
+              data: Record<string, string>;
+            }> = [];
             for (const artifact of yield* all) {
               const blob = yield* blobs.get(`a/${artifact.token}`);
-              if (blob) out.push({ artifact, body: blob.body });
+              if (blob) {
+                const data = yield* self.data.list(artifact.name);
+                out.push({ artifact, body: blob.body, data });
+              }
             }
             return out;
           }),
         });
+        return self;
       }),
     );
 }

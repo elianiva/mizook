@@ -1,7 +1,8 @@
 import { ConfigProvider, Effect, Exit, Layer } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
-import { Artifacts, artifactHeaders } from "../src/artifacts.ts";
+import { artifactHeaders } from "../src/artifact-render.ts";
+import { Artifacts } from "../src/artifacts.ts";
 import { Blobs } from "../src/blobs.ts";
 import { Settings } from "../src/config.ts";
 
@@ -83,4 +84,23 @@ test("artifact pages are served in a sandbox that cannot reach the site", () => 
   expect(csp).not.toContain("allow-same-origin");
   expect(csp).toContain("default-src 'none'");
   expect(headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+test("kinds render into pages; bad table or chart JSON is refused at publish", async () => {
+  const { renderArtifact, KIND_TYPES, checkContent } = await import("../src/artifact-render.ts");
+  const ctx = { name: "n", origin: "https://t.test", token: "tok" };
+  const md = renderArtifact(KIND_TYPES.markdown, "# Hi\n\n- [x] done", ctx)!;
+  expect(md).toContain("<h1");
+  expect(md).toContain("og:title");
+  const html = renderArtifact(KIND_TYPES.html, "<p>x</p>", ctx)!;
+  expect(html).toContain("window.mizook");
+  expect(html).toContain("mizook-base");
+  expect(checkContent(KIND_TYPES.table, "{nope")).toBeTruthy();
+  expect(
+    checkContent(
+      KIND_TYPES.chart,
+      '{"type":"bar","labels":["a"],"datasets":[{"label":"x","data":[1]}]}',
+    ),
+  ).toBeUndefined();
+  expect(renderArtifact("image/svg+xml", "<svg/>", ctx)).toBeUndefined();
 });

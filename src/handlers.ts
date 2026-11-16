@@ -5,6 +5,7 @@ import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
+import { KIND_TYPES } from "./artifact-render.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
 import { Approvals } from "./approvals.ts";
@@ -19,7 +20,10 @@ import {
   FileReadArgs,
   SendToUserArgs,
   ExecutorArgs,
+  ArtifactDataArgs,
   ArtifactDeleteArgs,
+  ArtifactHistoryArgs,
+  ArtifactRestoreArgs,
   ArtifactPublishArgs,
   DateArgs,
   ScheduleCancelArgs,
@@ -129,13 +133,60 @@ export class Handlers extends Context.Service<
           case "artifact_publish":
             return Effect.gen(function* () {
               const a = yield* decode(ArtifactPublishArgs, args);
+              const contentType = a.content_type ?? KIND_TYPES[a.kind ?? "html"];
               const made = yield* artifacts.publish(
                 yield* channel,
                 a.name,
                 a.content,
-                a.content_type ?? "text/html; charset=utf-8",
+                contentType,
+                a.expires_in_hours ? { expiresInHours: a.expires_in_hours } : {},
               );
               return `Published v${made.version}: ${made.url}`;
+            });
+          case "artifact_data":
+            return Effect.gen(function* () {
+              const a = yield* decode(ArtifactDataArgs, args);
+              const need = (v: string | undefined, what: string) =>
+                v === undefined
+                  ? Effect.fail(new ToolError({ reason: `${a.action} needs ${what}` }))
+                  : Effect.succeed(v);
+              switch (a.action) {
+                case "list": {
+                  const all = yield* artifacts.data.list(a.name);
+                  return Object.keys(all).length === 0
+                    ? "No data saved."
+                    : clipToolOutput(JSON.stringify(all, null, 1));
+                }
+                case "get":
+                  return (
+                    (yield* artifacts.data.get(a.name, yield* need(a.key, "`key`"))) ??
+                    "No such key."
+                  );
+                case "set":
+                  yield* artifacts.data.set(
+                    a.name,
+                    yield* need(a.key, "`key`"),
+                    yield* need(a.value, "`value`"),
+                  );
+                  return "Saved.";
+                case "delete":
+                  yield* artifacts.data.delete(a.name, yield* need(a.key, "`key`"));
+                  return "Deleted.";
+              }
+            });
+          case "artifact_history":
+            return Effect.gen(function* () {
+              const a = yield* decode(ArtifactHistoryArgs, args);
+              const versions = yield* artifacts.history(yield* channel, a.name);
+              return versions.length === 0
+                ? `No versions of ${a.name}.`
+                : `${a.name}: versions ${versions.join(", ")}.`;
+            });
+          case "artifact_restore":
+            return Effect.gen(function* () {
+              const a = yield* decode(ArtifactRestoreArgs, args);
+              const made = yield* artifacts.restore(yield* channel, a.name, a.version);
+              return `Restored as v${made.version}: ${made.url}`;
             });
           case "artifact_list":
             return Effect.map(artifacts.list, (all) =>

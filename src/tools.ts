@@ -76,11 +76,48 @@ export const WebFetchArgs = Schema.Struct({
 export const ArtifactPublishArgs = Schema.Struct({
   name: described(
     Schema.String,
-    "File name: lowercase letters, digits, dots and dashes. Publishing the same name again replaces it; the link stays the same.",
+    "File name: lowercase letters, digits, dots and dashes. Publishing the same name again adds a version; the link stays the same.",
   ),
-  content: described(Schema.String, "The whole file: an HTML page, markdown, JSON, text."),
+  kind: Schema.optionalKey(
+    described(
+      Schema.Literals(["html", "markdown", "table", "chart"]),
+      "html (default): your own page. markdown: a document, drawn in our design. table: JSON {title, description, columns, rows}, drawn as a sortable, filterable table. chart: JSON {type: bar|line|pie|doughnut|radar, title, labels, datasets: [{label, data}]}.",
+    ),
+  ),
+  content: described(
+    Schema.String,
+    "The whole file: HTML, markdown, or the JSON of a table or chart.",
+  ),
   content_type: Schema.optionalKey(
-    described(Schema.String, "MIME type, default text/html; charset=utf-8."),
+    described(Schema.String, "Only for other files (svg, json, csv, text): their MIME type."),
+  ),
+  expires_in_hours: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      "Take the link down after this many hours. Leave it out for a page that stays.",
+    ),
+  ),
+});
+
+export const ArtifactDataArgs = Schema.Struct({
+  name: described(Schema.String, "The artifact's name."),
+  action: described(
+    Schema.Literals(["list", "get", "set", "delete"]),
+    "list: everything the page saved. get / set / delete: one key.",
+  ),
+  key: Schema.optionalKey(described(Schema.String, "Letters, digits, dots, dashes, up to 64.")),
+  value: Schema.optionalKey(described(Schema.String, "set: the value, as JSON text.")),
+});
+
+export const ArtifactHistoryArgs = Schema.Struct({
+  name: described(Schema.String, "The artifact's name."),
+});
+
+export const ArtifactRestoreArgs = Schema.Struct({
+  name: described(Schema.String, "The artifact's name."),
+  version: described(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    "Which version, from artifact_history.",
   ),
 });
 
@@ -169,8 +206,27 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: "artifact_publish",
     description:
-      "Publish a page or file and get a public link. Use it for HTML pages, dashboards, reports and anything too long for a chat message. The page runs sandboxed: scripts work, but it cannot reach any account or other page.",
+      "Publish a page or file and get a link. Pick a kind: markdown for documents, table and chart for data (drawn for you), html for your own interactive page. The page runs sandboxed: scripts work, but it cannot reach any account or other page.",
     parameters: parametersOf(ArtifactPublishArgs),
+    replay: "unsafe",
+  },
+  {
+    name: "artifact_data",
+    description:
+      "Read or write what an artifact's page saved with mizook.data (a tracker's entries, a checklist's state). The page and you share it.",
+    parameters: parametersOf(ArtifactDataArgs),
+    replay: "unsafe",
+  },
+  {
+    name: "artifact_history",
+    description: "List the versions kept of an artifact.",
+    parameters: parametersOf(ArtifactHistoryArgs),
+    replay: "safe",
+  },
+  {
+    name: "artifact_restore",
+    description: "Publish an earlier version of an artifact again, as a new version.",
+    parameters: parametersOf(ArtifactRestoreArgs),
     replay: "unsafe",
   },
   {
@@ -258,7 +314,20 @@ ask_channel reads another channel's memory. Use it only when the user's question
 # Artifacts
 
 For anything long or visual, publish it with artifact_publish and give the user the link. Keep the
-same name to update a page in place.
+same name to update a page in place; old versions are kept (artifact_history, artifact_restore).
+
+Pick the kind that fits: markdown for a document, table for rows of data, chart for numbers over
+categories or time. We draw those in a clean design, light and dark, built for a phone, so you write only
+the content. Use html only for something interactive, and write it plain: our base styles already style
+headings, buttons, inputs and tables. In html you may load libraries from cdn.jsdelivr.net, unpkg.com,
+cdnjs.cloudflare.com and cdn.tailwindcss.com, and nothing else.
+
+An html page can save data and talk to you. In its script: mizook.data.get(key), .set(key, value),
+.del(key), .all() keep JSON that survives reloads; mizook.say(text) starts a turn here with that text,
+so a button on the page can ask you something or log an event. You read and write the same data with
+artifact_data. That makes a tracker, a checklist or a journal that stays in step with this chat.
+To keep a page fresh, create a cron schedule whose prompt says to republish it with new data.
+Pass expires_in_hours for a link that should lapse.
 
 # The web
 
