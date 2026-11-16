@@ -18,7 +18,6 @@ import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
 import { Approvals } from "./approvals.ts";
 import { Executor } from "./executor.ts";
-import { ReplyStream } from "./stream.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
 import { Host } from "./host.ts";
@@ -161,23 +160,8 @@ export class Bot extends Context.Service<
       const deliver = (chatId: string, threadId: string, typingStarted = false) =>
         Effect.gen(function* () {
           if (!typingStarted) yield* typing(threadId);
-          // The text the model writes goes to Telegram as it grows; what the stream did not carry is posted after.
-          const stream = new ReplyStream(
-            async (chunks) => {
-              await chat.initialize();
-              await chat.thread(threadId).post(chunks);
-            },
-            (event) => void run(Effect.logInfo(`stream ${event}`)),
-          );
-          yield* agent
-            .watch(chatId, (partial) => stream.update(partial))
-            .pipe(Effect.catch((error) => Effect.logWarning(`not streaming: ${error.message}`)));
           const reply = yield* agent.finish(chatId);
-          const rest = yield* Effect.promise(() => stream.finish(reply));
-          yield* Effect.logInfo(
-            `reply ${reply.length} chars, ${rest.length} posted after the stream`,
-          );
-          if (rest.trim() !== "") yield* post(threadId, rest);
+          yield* post(threadId, reply);
           yield* postApprovals(threadId);
         }).pipe(Effect.scoped);
 

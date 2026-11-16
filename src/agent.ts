@@ -1,12 +1,7 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import type {
-  Conversation,
-  ConversationView,
-  EntryRecord,
-  SubmissionId,
-} from "@earendil-works/pi-durable";
+import type { Conversation, EntryRecord, SubmissionId } from "@earendil-works/pi-durable";
 import { clipToolOutput, Memory, type StoreError } from "@mizook/memory";
-import { Context, DateTime, Effect, Layer, type Scope } from "effect";
+import { Context, DateTime, Effect, Layer } from "effect";
 import { Settings } from "./config.ts";
 import { Durable } from "./durable.ts";
 import { DurableError, type StateError } from "./errors.ts";
@@ -14,7 +9,6 @@ import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
 import { Models } from "./models.ts";
 import { agentTools } from "./tools.ts";
-import { livePartial, type LivePartial } from "./stream.ts";
 import { Usage } from "./usage.ts";
 import { State, type PendingTurn } from "./state.ts";
 
@@ -43,14 +37,6 @@ export class Agent extends Context.Service<
     begin(incoming: Incoming): Effect.Effect<"started" | "folded", AgentError>;
     /** Wait for the chat's turn to be answered, log it in the memory, and give the reply to post. */
     finish(chatId: string): Effect.Effect<string, AgentError>;
-    /**
-     * Report the text the model is writing for the chat's turn, as it grows, until the scope
-     * closes. `listener` runs inside the storage's commit path: it must only record the value.
-     */
-    watch(
-      chatId: string,
-      listener: (partial: LivePartial) => void,
-    ): Effect.Effect<void, AgentError, Scope.Scope>;
     /** Stop the chat's running turn. False when nothing is running. */
     stop(chatId: string): Effect.Effect<boolean, AgentError>;
     /**
@@ -242,27 +228,6 @@ export class Agent extends Context.Service<
         return reply === "" ? "(no reply)" : reply;
       });
 
-      const watch = (chatId: string, listener: (partial: LivePartial) => void) =>
-        Effect.gen(function* () {
-          const running = yield* state.turn(chatId);
-          if (!running) return;
-          const report = (view: ConversationView) => {
-            const partial = livePartial(view);
-            if (partial) listener(partial);
-          };
-          yield* Effect.acquireRelease(
-            call("observe", () =>
-              harness.observeConversation(
-                running.conversationId,
-                { advance: (c) => c.kind === "value" && report(c.value), end: () => {} },
-                context,
-                { min: 1, max: 2 },
-              ),
-            ).pipe(Effect.tap((observation) => Effect.sync(() => report(observation.value)))),
-            (observation) => Effect.sync(() => observation.detach()),
-          );
-        });
-
       const stop = Effect.fn("Agent.stop")(function* (chatId: string) {
         const running = yield* state.turn(chatId);
         if (!running) return false;
@@ -316,7 +281,7 @@ export class Agent extends Context.Service<
         return "(I could not settle on an answer in time.)";
       });
 
-      return Agent.of({ begin, finish, watch, stop, ask, pending: state.turns });
+      return Agent.of({ begin, finish, stop, ask, pending: state.turns });
     }),
   );
 }
