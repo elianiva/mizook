@@ -57,6 +57,7 @@ export class State extends Context.Service<
     /** A small named value of the chat, such as the thread schedules post to. */
     meta(key: string): Effect.Effect<string | undefined, StateError>;
     setMeta(key: string, value: string): Effect.Effect<void, StateError>;
+    deleteMeta(key: string): Effect.Effect<void, StateError>;
     /** The channel's own settings: `setting:<name>` rows of the meta table, by name. */
     readonly settings: Effect.Effect<Record<string, string>, StateError>;
     /** True the first time it sees `id`: Telegram redelivers an update that was not answered in time. */
@@ -129,6 +130,10 @@ export class State extends Context.Service<
                 key,
               );
               return rows[0]?.value;
+            }),
+          deleteMeta: (key) =>
+            run("deleteMeta", async () => {
+              await sql.all(`DELETE FROM app_meta WHERE key = ?`, key);
             }),
           setMeta: (key, value) =>
             run("setMeta", async () => {

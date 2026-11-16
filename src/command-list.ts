@@ -3,7 +3,10 @@ export const COMMANDS = [
   { command: "stop", description: "Stop the running turn" },
   { command: "cost", description: "What the model calls cost" },
   { command: "model", description: "Show or set this channel's model" },
-  { command: "instructions", description: "Show or set this channel's instructions" },
+  {
+    command: "instructions",
+    description: "Show, set or reset (/instructions reset) the instructions",
+  },
   { command: "timezone", description: "Show or set the time zone" },
   { command: "budget", description: "Show or set the daily budget" },
   { command: "name", description: "Name this channel" },

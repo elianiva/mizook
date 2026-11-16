@@ -41,6 +41,14 @@ export class Commands extends Context.Service<
           return said;
         });
 
+      /** Drop a channel's own setting so the environment's value applies again. */
+      const reset = (key: string, said: string) =>
+        Effect.gen(function* () {
+          yield* state.deleteMeta(`setting:${key}`);
+          yield* host.reload;
+          return said;
+        });
+
       const run = Effect.fn("Commands.run")(function* (
         chatId: string,
         threadId: string,
@@ -49,7 +57,11 @@ export class Commands extends Context.Service<
         const match = /^\/([a-z_]+)(?:@\w+)?(?:\s+([\s\S]*))?$/.exec(text);
         if (!match) return undefined;
         const arg = (match[2] ?? "").trim();
-        switch (match[1]) {
+        const name = match[1] ?? "";
+        if (arg === "reset" && ["model", "instructions", "timezone", "budget"].includes(name)) {
+          return yield* reset(name, `${name} is back to the default.`);
+        }
+        switch (name) {
           case "stop":
             return (yield* agent.stop(chatId)) ? "Stopped." : "Nothing is running.";
           case "cost": {
@@ -65,13 +77,13 @@ export class Commands extends Context.Service<
           }
           case "model":
             return arg === ""
-              ? `Model: ${settings.model}. Change it with /model <id>.`
+              ? `Model: ${settings.model}. Change it with /model <id>, or /model reset.`
               : yield* set("model", arg, `Model set to ${arg}.`);
           case "instructions":
             return arg === ""
               ? settings.instructions === ""
                 ? "No instructions for this channel. Set them with /instructions <text>."
-                : settings.instructions
+                : `${settings.instructions}\n\n/instructions reset clears it.`
               : yield* set("instructions", arg, "Instructions saved.");
           case "timezone":
             return arg === ""
@@ -85,7 +97,7 @@ export class Commands extends Context.Service<
                 );
           case "budget":
             return arg === ""
-              ? `Daily budget: ${settings.budgetDaily === 0 ? "none" : dollars(settings.budgetDaily)}. Set it with /budget <dollars>, 0 for none.`
+              ? `Daily budget: ${settings.budgetDaily === 0 ? "none" : dollars(settings.budgetDaily)}. Set it with /budget <dollars>, 0 for none, or /budget reset.`
               : Number.isFinite(Number(arg)) && Number(arg) >= 0
                 ? yield* set("budget", arg, `Daily budget set to ${arg}.`)
                 : "Give a number of dollars, 0 for none.";
