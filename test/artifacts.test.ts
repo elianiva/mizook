@@ -104,3 +104,17 @@ test("kinds render into pages; bad table or chart JSON is refused at publish", a
   ).toBeUndefined();
   expect(renderArtifact("image/svg+xml", "<svg/>", ctx)).toBeUndefined();
 });
+
+test("html pages must use the design variables, not their own colours or sizes", async () => {
+  const { checkContent, KIND_TYPES } = await import("../src/artifact-render.ts");
+  const bad = (css: string) => checkContent(KIND_TYPES.html, `<style>${css}</style><p>x</p>`);
+  expect(bad("p{color:#ff0000}")).toContain("colour variables");
+  expect(bad("p{background:oklch(50% 0 0)}")).toContain("colour variables");
+  expect(bad("p{font-size:18px}")).toContain("size variables");
+  expect(bad("p{font-family:Arial}")).toContain("font-family");
+  expect(checkContent(KIND_TYPES.html, '<p style="color:#fff">x</p>')).toBeTruthy();
+  expect(
+    bad("p{color:var(--fg);font-size:var(--text-lg);font-family:var(--mono)}"),
+  ).toBeUndefined();
+  expect(checkContent(KIND_TYPES.html, "<p>no style</p>")).toBeUndefined();
+});

@@ -77,14 +77,14 @@ export const FONT_LINK = `<link rel="preconnect" href="https://fonts.googleapis.
  * One blue, used only for links and focus.
  */
 export const BASE_CSS = `
-:root{color-scheme:light dark;--bg:#ffffff;--subtle:#fdf8fa;--fg:#0a0a0a;--muted:#6b6b6b;--line:#ebebeb;--line-strong:#c9c9c9;--accent:#c2255c;--tint:#ffe3ec;--code:#f7f3f5;--font:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--subtle:#131012;--fg:#ededed;--muted:#8f8f8f;--line:#242424;--line-strong:#3d3d3d;--accent:#ff8fb8;--tint:#3a1a27;--code:#181416}}
+:root{color-scheme:light dark;--bg:oklch(100% 0 0);--subtle:oklch(98.6% .008 343);--fg:oklch(28.4% .109 3.9);--muted:oklch(54.2% .034 322.5);--line:oklch(93% .03 343);--line-strong:oklch(84% .06 343);--accent:oklch(52.5% .223 4);--accent-soft:oklch(89.9% .061 343);--tint:oklch(95.5% .03 343);--code:oklch(97% .012 343);--measure:48rem;--text-sm:.875rem;--text-base:1.0625rem;--text-lg:1.25rem;--text-xl:1.6rem;--text-2xl:clamp(2.25rem,7vw,3.25rem);--space-1:.5rem;--space-2:1rem;--space-3:2rem;--space-4:4rem;--font:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:oklch(14% .008 340);--subtle:oklch(17% .012 340);--fg:oklch(94% .02 343);--muted:oklch(70% .03 330);--line:oklch(25% .02 340);--line-strong:oklch(35% .03 340);--accent:oklch(76% .15 350);--accent-soft:oklch(32% .08 350);--tint:oklch(25% .06 350);--code:oklch(19% .012 340)}}
 *,*::before,*::after{box-sizing:border-box;border-radius:0 !important}
 :where(html){-webkit-text-size-adjust:100%}
 ::selection{background:var(--tint)}
-:where(body){margin:0;background:var(--bg);color:var(--fg);font:400 17px/1.75 var(--font);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:where(body){margin:0;background:var(--bg);color:var(--fg);font:400 var(--text-base)/1.75 var(--font);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 :where(h1,h2,h3,h4){font-weight:600;line-height:1.2;margin:2.4em 0 .7em;letter-spacing:-.03em}
-:where(h1){font-size:clamp(2.25rem,7vw,3.25rem);line-height:1.08;margin-top:0;letter-spacing:-.045em}:where(h2){font-size:1.6rem;letter-spacing:-.035em}:where(h3){font-size:1.2rem;letter-spacing:-.025em}:where(h4){font-size:.95rem}
+:where(h1){font-size:var(--text-2xl);line-height:1.08;margin-top:0;letter-spacing:-.045em}:where(h2){font-size:var(--text-xl);letter-spacing:-.035em}:where(h3){font-size:var(--text-lg);letter-spacing:-.025em}:where(h4){font-size:.95rem}
 :where(p,ul,ol,blockquote,pre,table){margin:0 0 1.2em}
 :where(h2){margin-top:3.2em}
 :where(rt){font-size:.55em;color:var(--muted);letter-spacing:0}
@@ -116,7 +116,7 @@ export const BASE_CSS = `
 `;
 
 const TEMPLATE_CSS = `
-.page{max-width:40rem;margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,32px) 96px}
+.page{max-width:var(--measure);margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,32px) 96px}
 .page.wide{max-width:64rem}
 .page>header{margin-bottom:2.5rem}
 .page>header h1{margin:0 0 .8rem}
@@ -336,7 +336,7 @@ const injectedHead = (
       : '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
     has.meta ? "" : meta(title, description),
     FONT_LINK,
-    `<style id="mizook-base">${BASE_CSS}:where(body){max-width:40rem;margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,24px) 96px}</style>`,
+    `<style id="mizook-base">${BASE_CSS}:where(body){max-width:var(--measure);margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,24px) 96px}</style>`,
     bridge(ctx),
   ].join("\n");
 
@@ -396,6 +396,30 @@ export const renderArtifact = (
   }
 };
 
+const STYLE_BLOCKS = /<style[^>]*>([\s\S]*?)<\/style>|\sstyle=("[^"]*"|'[^']*')/gi;
+const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i;
+const FONT_SIZE_LITERAL = /font-size\s*:\s*[\d.]+(?:px|rem)/i;
+
+/** Hard rules for html pages, so they use the design tokens instead of inventing colours and sizes. */
+const checkHtml = (source: string): string | undefined => {
+  for (const m of source.matchAll(STYLE_BLOCKS)) {
+    const css = (m[1] ?? m[2] ?? "").replace(/var\([^)]*\)/g, "");
+    if (COLOR_LITERAL.test(css)) {
+      return "html pages use the colour variables (var(--fg), var(--muted), var(--accent), var(--accent-soft), var(--tint), var(--line), var(--subtle), var(--code), var(--bg)), not hex, rgb, hsl or oklch values. Rewrite the colours with var().";
+    }
+    if (FONT_SIZE_LITERAL.test(css)) {
+      return "html pages use the size variables for font-size (var(--text-sm), var(--text-base), var(--text-lg), var(--text-xl), var(--text-2xl)), not px or rem values. Rewrite font-size with var().";
+    }
+    if (
+      /font-family\s*:/i.test(css) &&
+      !/font-family\s*:\s*var\(--(?:font|mono)\)/i.test(m[1] ?? m[2] ?? "")
+    ) {
+      return "html pages use font-family: var(--font) or var(--mono) only.";
+    }
+  }
+  return undefined;
+};
+
 /** Why a file cannot be published as this kind, or `undefined` when it is fine. */
 export const checkContent = (contentType: string, source: string): string | undefined => {
   switch (kindOf(contentType)) {
@@ -407,6 +431,8 @@ export const checkContent = (contentType: string, source: string): string | unde
       return Option.isNone(decodeChart(source))
         ? 'a chart is JSON: {"type": "bar"|"line"|"pie"|"doughnut"|"radar", "title"?, "labels": [...], "datasets": [{"label": "…", "data": [numbers]}]}'
         : undefined;
+    case "html":
+      return checkHtml(source);
     default:
       return undefined;
   }

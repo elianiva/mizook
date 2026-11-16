@@ -319,7 +319,7 @@ same name to update a page in place; old versions are kept (artifact_history, ar
 Pick the kind that fits: markdown for a document, table for rows of data, chart for numbers over
 categories or time. We draw those in a clean design, light and dark, built for a phone, so you write only
 the content. Use html only for something interactive, and write it plain: our base styles already style
-headings, buttons, inputs and tables. In html you may load libraries from cdn.jsdelivr.net, unpkg.com,
+headings, buttons, inputs and tables. Style html only with our variables; publishing is refused if a style block or style attribute holds a hex, rgb, hsl or oklch colour, a px or rem font-size, or another font-family. Colours: --bg, --subtle, --fg, --muted, --line, --line-strong, --accent, --accent-soft, --tint, --code. Sizes: --text-sm, --text-base, --text-lg, --text-xl, --text-2xl. Spacing: --space-1 to --space-4. Fonts: --font, --mono. The page column is --measure (48rem). There is no rounding and no shadow. In html you may load libraries from cdn.jsdelivr.net, unpkg.com,
 cdnjs.cloudflare.com and cdn.tailwindcss.com, and nothing else.
 
 An html page can show data you save for it: you write it with artifact_data, and the page reads it in
