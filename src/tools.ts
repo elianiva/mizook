@@ -108,6 +108,13 @@ export const FileReadArgs = Schema.Struct({
   key: described(Schema.String, "The key from an [attached …] note in a message."),
 });
 
+export const SendToUserArgs = Schema.Struct({
+  messages: described(
+    Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+    "The bubbles to send, in order. Each is one short message, like one text from a person. Several short bubbles beat one long block.",
+  ),
+});
+
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
@@ -121,6 +128,13 @@ export const ZOOM_DESCRIPTION =
 export const DATE_DESCRIPTION = "The date and time of message id.";
 
 export const toolSpecs: ReadonlyArray<ToolSpec> = [
+  {
+    name: "send_to_user",
+    description:
+      "Send messages to the user. This is the only way they hear from you: your final text is never shown. You can call it as often as you like during a turn, for example to say what you are about to do before a long task.",
+    parameters: parametersOf(SendToUserArgs),
+    replay: "unsafe",
+  },
   {
     name: "zoom",
     description: ZOOM_DESCRIPTION,
@@ -220,7 +234,15 @@ export const agentTools: Tool[] = toolSpecs.map(({ name, description, parameters
 }));
 
 /** Appended to the system prompt, before the user's instructions. Static: no dates or state. */
-export const TOOL_GUIDE = `# Executor
+export const TOOL_GUIDE = `# Talking to the user
+
+You talk to the user only through send_to_user. Whatever you write outside it is not shown. Send
+your answer as it would go in a chat: a few short bubbles (up to 8 in one call) rather than one block,
+and send an early bubble before slow work ("on it", "checking") so they are not left waiting. When
+you are done, end the turn with no text. You may send nothing at all when nothing needs saying,
+such as a scheduled check where nothing changed.
+
+# Executor
 
 executor reaches the user's connected accounts. Start with skills, then search and describe, then call
 or execute. A call that needs approval returns "Waiting for the user's approval": the user gets

@@ -9,6 +9,7 @@ import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
 import { Models } from "./models.ts";
 import { agentTools } from "./tools.ts";
+import { Outbox } from "./outbox.ts";
 import { Usage } from "./usage.ts";
 import { State, type PendingTurn } from "./state.ts";
 
@@ -57,6 +58,7 @@ export class Agent extends Context.Service<
       const durable = yield* Durable;
       const handlers = yield* Handlers;
       const usage = yield* Usage;
+      const outbox = yield* Outbox;
       const { main } = yield* Models;
       const { harness, context, turnInputs } = durable;
 
@@ -105,13 +107,24 @@ export class Agent extends Context.Service<
             });
             for (const block of message.content) {
               if (block.type === "text") reply += block.text;
-              else if (block.type === "toolCall") {
+              else if (block.type === "toolCall" && block.name === "send_to_user") {
+                yield* flush;
+                // What the agent says to the user is its reply, whichever way it was sent.
+                const said = Array.isArray(block.arguments.messages)
+                  ? block.arguments.messages.filter((m): m is string => typeof m === "string")
+                  : [];
+                for (const text of said) yield* memory.append("agent", text.trim());
+              } else if (block.type === "toolCall") {
                 yield* flush;
                 yield* memory.append("tool", `${block.name} ${JSON.stringify(block.arguments)}`);
               }
             }
             yield* flush;
-          } else if (entry.kind === "pi.tool-result" && message?.role === "toolResult") {
+          } else if (
+            entry.kind === "pi.tool-result" &&
+            message?.role === "toolResult" &&
+            message.toolName !== "send_to_user"
+          ) {
             yield* memory.append("echo", clipToolOutput(textOf(message)));
           }
         }
@@ -225,7 +238,8 @@ export class Agent extends Context.Service<
           reply = `I couldn't answer that (${last?.reason ?? "no answer"}).`;
         }
         yield* state.deleteTurn(chatId);
-        return reply === "" ? "(no reply)" : reply;
+        // The agent talks through send_to_user: its final text is only a fallback for a turn that said nothing.
+        return (yield* outbox.take(chatId)) > 0 ? "" : reply;
       });
 
       const stop = Effect.fn("Agent.stop")(function* (chatId: string) {

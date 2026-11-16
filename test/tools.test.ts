@@ -16,4 +16,7 @@ test("the tool schemas, derived from Effect Schema, accept good arguments and re
   expect(check("schedule_create", { kind: "sometimes", prompt: "x" })).toThrow();
   expect(check("schedule_create", { kind: "watch", prompt: "x", every_minutes: 1 })).toThrow();
   expect(check("schedule_list", {})()).toEqual({});
+  expect(check("send_to_user", { messages: ["hey", "one sec"] })()).toBeTruthy();
+  expect(check("send_to_user", { messages: [] })).toThrow();
+  expect(check("send_to_user", { messages: Array(9).fill("x") })).toThrow();
 });

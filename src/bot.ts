@@ -16,6 +16,7 @@ import { Agent, type AgentError } from "./agent.ts";
 import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
+import { Outbox } from "./outbox.ts";
 import { Approvals } from "./approvals.ts";
 import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
@@ -61,6 +62,7 @@ export class Bot extends Context.Service<
       const state = yield* State;
       const schedules = yield* Schedules;
       const commands = yield* Commands;
+      const outbox = yield* Outbox;
       const approvals = yield* Approvals;
       const executor = yield* Executor;
       const blobs = yield* Blobs;
@@ -116,6 +118,9 @@ export class Bot extends Context.Service<
           catch: (cause) => new TelegramError({ operation: "post", cause }),
         });
 
+      // Bubbles the agent sends mid-turn go straight to the chat.
+      yield* outbox.attach((threadId, text) => post(threadId, text).pipe(Effect.ignore));
+
       /** Keep the "typing…" indicator up while the agent works: Telegram drops it after five seconds. */
       const typing = (threadId: string) =>
         Effect.tryPromise({
@@ -161,7 +166,7 @@ export class Bot extends Context.Service<
         Effect.gen(function* () {
           if (!typingStarted) yield* typing(threadId);
           const reply = yield* agent.finish(chatId);
-          yield* post(threadId, reply);
+          if (reply.trim() !== "") yield* post(threadId, reply);
           yield* postApprovals(threadId);
         }).pipe(Effect.scoped);
 

@@ -12,10 +12,12 @@ import { Executor, pausedExecution } from "./executor.ts";
 import { Host } from "./host.ts";
 import { ToolError } from "./errors.ts";
 import { channelKey, State } from "./state.ts";
+import { Outbox } from "./outbox.ts";
 import { Web } from "./search.ts";
 import {
   AskChannelArgs,
   FileReadArgs,
+  SendToUserArgs,
   ExecutorArgs,
   ArtifactDeleteArgs,
   ArtifactPublishArgs,
@@ -38,6 +40,7 @@ export class Handlers extends Context.Service<
       const memory = yield* Memory;
       const schedules = yield* Schedules;
       const web = yield* Web;
+      const outbox = yield* Outbox;
       const executor = yield* Executor;
       const host = yield* Host;
       const approvals = yield* Approvals;
@@ -146,6 +149,15 @@ export class Handlers extends Context.Service<
               return (yield* artifacts.remove(yield* channel, a.name))
                 ? `Took down ${a.name}.`
                 : `No artifact ${a.name}.`;
+            });
+          case "send_to_user":
+            return Effect.gen(function* () {
+              const a = yield* decode(SendToUserArgs, args);
+              const threadId = yield* state.meta("thread");
+              if (!threadId) return yield* new ToolError({ reason: "no chat to send to yet" });
+              const texts = a.messages.map((m) => m.trim()).filter((m) => m !== "");
+              yield* outbox.send(threadId, texts);
+              return `Sent ${texts.length}.`;
             });
           case "web_search":
             return Effect.flatMap(decode(WebSearchArgs, args), (a) => web.search(a.query));

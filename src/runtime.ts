@@ -14,6 +14,7 @@ import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
 import { readSettings, State } from "./state.ts";
 import { Executor } from "./executor.ts";
+import { Outbox } from "./outbox.ts";
 import { Handlers } from "./handlers.ts";
 import { Approvals } from "./approvals.ts";
 import { Artifacts } from "./artifacts.ts";
@@ -94,6 +95,7 @@ export const makeRuntime = (
     Layer.provideMerge(Agent.layer),
     Layer.provideMerge(Durable.layer(database)),
     Layer.provideMerge(Handlers.layer),
+    Layer.provideMerge(Outbox.layer),
     Layer.provideMerge(Executor.layer),
     Layer.provideMerge(Approvals.layer(sql)),
     Layer.provideMerge(Backup.layer),
