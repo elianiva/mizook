@@ -33,7 +33,7 @@ export const RECOVER_AFTER_MS = 30_000;
 const FIRES_PER_HOUR = 20;
 
 const GREETING = (name: string) =>
-  `Hi, I'm ${name}. This is one chat that never ends: I remember everything we say, so there is nothing to reset. What shall we do?`;
+  `hey, ${name} here. I remember everything said in this chat, so no resets. what are we doing?`;
 
 export class Bot extends Context.Service<
   Bot,

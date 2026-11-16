@@ -23,6 +23,7 @@ import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
 import { Schedules } from "./schedules.ts";
 import { SummarizerLive } from "./summarizer.ts";
+import { PERSONA } from "./persona.ts";
 import { TOOL_GUIDE } from "./tools.ts";
 
 /**
@@ -75,7 +76,9 @@ export const makeRuntime = (
       const { agentName, instructions, timezone } = yield* Settings;
       return Memory.layer({
         name: agentName,
-        instructions: instructions === "" ? TOOL_GUIDE : `${TOOL_GUIDE}\n\n${instructions}`,
+        instructions: [PERSONA, TOOL_GUIDE, instructions]
+          .filter((part) => part !== "")
+          .join("\n\n"),
         formatDate: (date) => formatDate(date, timezone),
       });
     }),
