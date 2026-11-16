@@ -77,10 +77,11 @@ export const FONT_LINK = `<link rel="preconnect" href="https://fonts.googleapis.
  * One blue, used only for links and focus.
  */
 export const BASE_CSS = `
-:root{color-scheme:light dark;--bg:#ffffff;--subtle:#fafafa;--fg:#0a0a0a;--muted:#6b6b6b;--line:#ebebeb;--line-strong:#c9c9c9;--accent:#0057d9;--code:#f5f5f5;--font:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--subtle:#111111;--fg:#ededed;--muted:#8f8f8f;--line:#242424;--line-strong:#3d3d3d;--accent:#52a8ff;--code:#161616}}
+:root{color-scheme:light dark;--bg:#ffffff;--subtle:#fdf8fa;--fg:#0a0a0a;--muted:#6b6b6b;--line:#ebebeb;--line-strong:#c9c9c9;--accent:#c2255c;--tint:#ffe3ec;--code:#f7f3f5;--font:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--subtle:#131012;--fg:#ededed;--muted:#8f8f8f;--line:#242424;--line-strong:#3d3d3d;--accent:#ff8fb8;--tint:#3a1a27;--code:#181416}}
 *,*::before,*::after{box-sizing:border-box;border-radius:0 !important}
 :where(html){-webkit-text-size-adjust:100%}
+::selection{background:var(--tint)}
 :where(body){margin:0;background:var(--bg);color:var(--fg);font:400 15px/1.7 var(--font);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 :where(h1,h2,h3,h4){font-weight:600;line-height:1.2;margin:2.4em 0 .7em;letter-spacing:-.03em}
 :where(h1){font-size:2rem;margin-top:0;letter-spacing:-.04em}:where(h2){font-size:1.3rem}:where(h3){font-size:1.05rem;letter-spacing:-.02em}:where(h4){font-size:.95rem}
@@ -91,7 +92,7 @@ export const BASE_CSS = `
 :where(code){font:400 .85em var(--mono);background:var(--code);padding:.12em .35em}
 :where(pre){background:var(--subtle);border:1px solid var(--line);padding:14px 16px;overflow:auto;line-height:1.6}
 :where(pre code){background:none;padding:0}
-:where(blockquote){border-left:1px solid var(--fg);margin-left:0;padding:0 0 0 1.1em;color:var(--muted)}
+:where(blockquote){border-left:2px solid var(--accent);margin-left:0;padding:0 0 0 1.1em;color:var(--muted)}
 :where(hr){border:0;border-top:1px solid var(--line);margin:2.5em 0}
 :where(table){border-collapse:collapse;width:100%;font-size:.92rem}
 :where(th,td){padding:.75em 1em .75em 0;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
@@ -102,7 +103,7 @@ export const BASE_CSS = `
 :where(button:active){transform:scale(.98)}
 :where(button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
 :where(input,select,textarea){background:var(--bg);border:1px solid var(--line-strong);padding:.5em .75em}
-:where(input[type=checkbox]){accent-color:var(--fg)}
+:where(input[type=checkbox]){accent-color:var(--accent)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `;
 
@@ -119,7 +120,7 @@ const TEMPLATE_CSS = `
 .table-wrap th:hover{color:var(--fg)}
 .table-wrap td,.table-wrap th{padding-right:1.5em}
 .table-wrap tbody tr:last-child td{border-bottom:0}
-.table-wrap tbody tr:hover td{background:var(--subtle)}
+.table-wrap tbody tr:hover td{background:var(--tint)}
 td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .tools{display:flex;gap:16px;margin-bottom:12px;align-items:baseline}
 .tools input{flex:1;min-width:0;max-width:18rem}
@@ -135,7 +136,7 @@ summary::-webkit-details-marker{display:none}
 .doc :where(table){display:block;overflow:auto}
 .doc :where(table) :where(tr:last-child td){border-bottom:0}
 .doc input[type=checkbox]{appearance:none;-webkit-appearance:none;width:1em;height:1em;border:1px solid var(--fg);background:var(--bg);vertical-align:-.15em;margin:0 .65em 0 0;opacity:1}
-.doc input[type=checkbox]:checked{background:var(--fg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E") center/80% no-repeat}
+.doc input[type=checkbox]:checked{border-color:var(--accent);background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E") center/80% no-repeat}
 .doc :where(ul.contains-task-list,ul:has(>li>input[type=checkbox])){list-style:none;padding-left:0}
 `;
 
@@ -146,7 +147,7 @@ const meta = (title: string, description: string): string =>
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta name="twitter:card" content="summary">
-<meta name="theme-color" content="#0a5ce8">`;
+<meta name="theme-color" content="#c2255c">`;
 
 const shell = (o: {
   title: string;
@@ -271,7 +272,7 @@ const CHART_SCRIPT = `
 (()=>{const spec=JSON.parse(document.getElementById("spec").textContent);
 const css=getComputedStyle(document.documentElement);const v=n=>css.getPropertyValue(n).trim();
 const fg=v("--fg"),muted=v("--muted"),line=v("--line"),bg=v("--bg");
-const palette=[fg,"#0070f3","#f5a623","#8a8a8a","#12a594","#e5484d"];
+const palette=[fg,v("--accent"),"#8a8a8a","#e8a33d","#3b82a0","#7a5c8a"];
 const round=spec.type==="pie"||spec.type==="doughnut";
 const datasets=spec.datasets.map((d,i)=>({label:d.label,data:d.data,
 backgroundColor:round?spec.labels.map((_,j)=>palette[j%palette.length]):(spec.type==="radar"?palette[i%palette.length]+"26":palette[i%palette.length]),
