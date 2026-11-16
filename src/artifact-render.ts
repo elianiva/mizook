@@ -69,54 +69,74 @@ const clip = (text: string, max: number): string => {
 };
 
 /** The design the templates share: type, colour and spacing tokens, light and dark. */
+export const FONT_LINK = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">`;
+
+/**
+ * The design the templates share. Monochrome and flat: hairline rules instead of boxes, no radius, no
+ * shadow, no gradient. Inter for reading, IBM Plex Mono for the small facts (as on elianiva.com).
+ * One blue, used only for links and focus.
+ */
 export const BASE_CSS = `
-:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#78716c;--card:#ffffff;--line:#e7e5e4;--accent:#4f46e5;--accent-fg:#ffffff;--code:#f5f5f4;--radius:12px;--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e7e5e4;--muted:#a8a29e;--card:#181b21;--line:#2a2e36;--accent:#818cf8;--accent-fg:#0f1115;--code:#1e2229}}
-:where(*,*::before,*::after){box-sizing:border-box}
+:root{color-scheme:light dark;--bg:#ffffff;--subtle:#fafafa;--fg:#0a0a0a;--muted:#6b6b6b;--line:#ebebeb;--line-strong:#c9c9c9;--accent:#0057d9;--code:#f5f5f5;--font:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--subtle:#111111;--fg:#ededed;--muted:#8f8f8f;--line:#242424;--line-strong:#3d3d3d;--accent:#52a8ff;--code:#161616}}
+*,*::before,*::after{box-sizing:border-box;border-radius:0 !important}
 :where(html){-webkit-text-size-adjust:100%}
-:where(body){margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 var(--font);-webkit-font-smoothing:antialiased}
-:where(h1,h2,h3,h4){line-height:1.25;margin:1.6em 0 .5em;letter-spacing:-.01em}
-:where(h1){font-size:1.75rem;margin-top:0}:where(h2){font-size:1.35rem}:where(h3){font-size:1.1rem}
-:where(p,ul,ol,blockquote,pre,table){margin:0 0 1em}
-:where(a){color:var(--accent);text-underline-offset:2px}
+:where(body){margin:0;background:var(--bg);color:var(--fg);font:400 15px/1.7 var(--font);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:where(h1,h2,h3,h4){font-weight:600;line-height:1.2;margin:2.4em 0 .7em;letter-spacing:-.03em}
+:where(h1){font-size:2rem;margin-top:0;letter-spacing:-.04em}:where(h2){font-size:1.3rem}:where(h3){font-size:1.05rem;letter-spacing:-.02em}:where(h4){font-size:.95rem}
+:where(p,ul,ol,blockquote,pre,table){margin:0 0 1.2em}
+:where(li+li){margin-top:.35em}
+:where(a){color:var(--accent);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 :where(img,svg,video,canvas){max-width:100%;height:auto}
-:where(code){font:.9em var(--mono);background:var(--code);padding:.15em .35em;border-radius:6px}
-:where(pre){background:var(--code);padding:14px 16px;border-radius:var(--radius);overflow:auto}
+:where(code){font:400 .85em var(--mono);background:var(--code);padding:.12em .35em}
+:where(pre){background:var(--subtle);border:1px solid var(--line);padding:14px 16px;overflow:auto;line-height:1.6}
 :where(pre code){background:none;padding:0}
-:where(blockquote){border-left:3px solid var(--line);margin-left:0;padding:.1em 1em;color:var(--muted)}
-:where(hr){border:0;border-top:1px solid var(--line);margin:2em 0}
-:where(table){border-collapse:collapse;width:100%}
-:where(th,td){padding:.55em .8em;text-align:left;border-bottom:1px solid var(--line)}
-:where(th){font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+:where(blockquote){border-left:1px solid var(--fg);margin-left:0;padding:0 0 0 1.1em;color:var(--muted)}
+:where(hr){border:0;border-top:1px solid var(--line);margin:2.5em 0}
+:where(table){border-collapse:collapse;width:100%;font-size:.92rem}
+:where(th,td){padding:.75em 1em .75em 0;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+:where(th){font:500 .78rem var(--mono);letter-spacing:0;color:var(--muted);border-bottom-color:var(--line-strong)}
 :where(button,input,select,textarea){font:inherit;color:inherit}
-:where(button){background:var(--accent);color:var(--accent-fg);border:0;border-radius:10px;padding:.55em 1em;cursor:pointer}
-:where(input,select,textarea){background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.5em .75em}
-:where(input[type=checkbox]){accent-color:var(--accent)}
+:where(button){background:var(--fg);color:var(--bg);border:1px solid var(--fg);padding:.5em 1em;font-weight:500;cursor:pointer;transition:opacity .12s}
+:where(button:hover){opacity:.85}
+:where(button:active){transform:scale(.98)}
+:where(button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+:where(input,select,textarea){background:var(--bg);border:1px solid var(--line-strong);padding:.5em .75em}
+:where(input[type=checkbox]){accent-color:var(--fg)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `;
 
 const TEMPLATE_CSS = `
-.page{max-width:44rem;margin:0 auto;padding:clamp(20px,5vw,48px) clamp(16px,5vw,32px) 64px}
-.page.wide{max-width:70rem}
-.page>header{margin-bottom:1.5rem}
-.page>header h1{margin:0 0 .25rem}
-.page>header p{margin:0;color:var(--muted)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:clamp(14px,3vw,24px)}
-.table-wrap{overflow:auto;max-height:75vh;border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
+.page{max-width:40rem;margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,32px) 96px}
+.page.wide{max-width:64rem}
+.page>header{margin-bottom:2.5rem}
+.page>header h1{margin:0 0 .6rem}
+.page>header p{margin:0;color:var(--muted);max-width:34rem}
+.meta{font:400 .8rem var(--mono);color:var(--muted);margin:0 0 .9rem}
+.table-wrap{overflow:auto;max-height:78vh;border-top:1px solid var(--fg);border-bottom:1px solid var(--line-strong)}
 .table-wrap table{margin:0;min-width:100%}
-.table-wrap th{position:sticky;top:0;background:var(--card);cursor:pointer;white-space:nowrap;user-select:none}
+.table-wrap th{position:sticky;top:0;background:var(--bg);white-space:nowrap;user-select:none;cursor:pointer}
+.table-wrap th:hover{color:var(--fg)}
+.table-wrap td,.table-wrap th{padding-right:1.5em}
 .table-wrap tbody tr:last-child td{border-bottom:0}
-.table-wrap tbody tr:nth-child(even){background:color-mix(in srgb,var(--code) 55%,transparent)}
-td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-.tools{display:flex;gap:10px;margin-bottom:12px;align-items:center}
-.tools input{flex:1;min-width:0}
-.tools .count{color:var(--muted);font-size:.85rem;white-space:nowrap}
-.chart-box{position:relative;height:min(60vh,420px)}
-.doc :where(h1){font-size:2rem}
-.doc :where(img){border-radius:var(--radius)}
+.table-wrap tbody tr:hover td{background:var(--subtle)}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tools{display:flex;gap:16px;margin-bottom:12px;align-items:baseline}
+.tools input{flex:1;min-width:0;max-width:18rem}
+.tools .count{font:400 .8rem var(--mono);color:var(--muted);white-space:nowrap}
+.chart-box{position:relative;height:min(56vh,380px);border-top:1px solid var(--fg);padding-top:20px}
+details{margin-top:2rem}
+summary{cursor:pointer;font:400 .8rem var(--mono);color:var(--muted);list-style:none}
+summary::before{content:"▸ "}
+details[open] summary::before{content:"▾ "}
+summary::-webkit-details-marker{display:none}
+.doc :where(h1){font-size:2.4rem;margin-bottom:.6em}
+.doc :where(img){border:1px solid var(--line)}
 .doc :where(table){display:block;overflow:auto}
-.doc input[type=checkbox]{appearance:none;-webkit-appearance:none;width:1.1em;height:1.1em;border:1.5px solid var(--muted);border-radius:5px;vertical-align:-.18em;margin:0 .55em 0 0;opacity:1}
-.doc input[type=checkbox]:checked{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/80% no-repeat;border-color:var(--accent)}
-.doc :where(ul.contains-task-list,ul:has(>li>input[type=checkbox])){list-style:none;padding-left:.2em}
+.doc :where(table) :where(tr:last-child td){border-bottom:0}
+.doc input[type=checkbox]{appearance:none;-webkit-appearance:none;width:1em;height:1em;border:1px solid var(--fg);background:var(--bg);vertical-align:-.15em;margin:0 .65em 0 0;opacity:1}
+.doc input[type=checkbox]:checked{background:var(--fg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E") center/80% no-repeat}
+.doc :where(ul.contains-task-list,ul:has(>li>input[type=checkbox])){list-style:none;padding-left:0}
 `;
 
 const meta = (title: string, description: string): string =>
@@ -126,7 +146,7 @@ const meta = (title: string, description: string): string =>
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta name="twitter:card" content="summary">
-<meta name="theme-color" content="#4f46e5">`;
+<meta name="theme-color" content="#0a5ce8">`;
 
 const shell = (o: {
   title: string;
@@ -141,6 +161,7 @@ const shell = (o: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 ${meta(o.title, o.description)}
+${FONT_LINK}
 <style>${BASE_CSS}${TEMPLATE_CSS}</style>
 ${o.head ?? ""}
 </head>
@@ -226,7 +247,7 @@ const renderTable = (source: string, ctx: Context): string => {
     body: `<header><h1>${esc(title)}</h1>${description ? `<p>${esc(description)}</p>` : ""}</header>
 <div class="tools"><input id="q" type="search" placeholder="Filter" aria-label="Filter rows"><span class="count" id="n"></span></div>
 <div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
-<style>th[data-sort]::after{content:" " attr(data-sort);color:var(--accent)}</style>
+<style>th[data-sort]::after{content:" " attr(data-sort);color:var(--fg)}</style>
 <script>${TABLE_SCRIPT}</script>`,
   });
 };
@@ -248,17 +269,17 @@ const CHART_JS = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min
 
 const CHART_SCRIPT = `
 (()=>{const spec=JSON.parse(document.getElementById("spec").textContent);
-const css=getComputedStyle(document.documentElement);
-const fg=css.getPropertyValue("--fg").trim(),muted=css.getPropertyValue("--muted").trim(),line=css.getPropertyValue("--line").trim();
-const palette=["#6366f1","#f59e0b","#10b981","#ef4444","#06b6d4","#a855f7","#84cc16","#f97316"];
+const css=getComputedStyle(document.documentElement);const v=n=>css.getPropertyValue(n).trim();
+const fg=v("--fg"),muted=v("--muted"),line=v("--line"),bg=v("--bg");
+const palette=[fg,"#0070f3","#f5a623","#8a8a8a","#12a594","#e5484d"];
 const round=spec.type==="pie"||spec.type==="doughnut";
 const datasets=spec.datasets.map((d,i)=>({label:d.label,data:d.data,
-backgroundColor:round?spec.labels.map((_,j)=>palette[j%palette.length]):palette[i%palette.length]+(spec.type==="line"||spec.type==="radar"?"33":"cc"),
-borderColor:round?css.getPropertyValue("--card").trim():palette[i%palette.length],borderWidth:round?2:2,tension:.3,borderRadius:spec.type==="bar"?6:0,fill:spec.type==="radar"}));
-Chart.defaults.color=muted;Chart.defaults.font.family=css.getPropertyValue("--font");
-new Chart(document.getElementById("c"),{type:spec.type,data:{labels:spec.labels,datasets},options:{responsive:true,maintainAspectRatio:false,
-plugins:{legend:{display:round||spec.datasets.length>1,labels:{color:fg,usePointStyle:true}}},
-scales:round||spec.type==="radar"?{}:{x:{grid:{display:false}},y:{grid:{color:line},beginAtZero:true}}}});})();`;
+backgroundColor:round?spec.labels.map((_,j)=>palette[j%palette.length]):(spec.type==="radar"?palette[i%palette.length]+"26":palette[i%palette.length]),
+borderColor:round?bg:palette[i%palette.length],borderWidth:round?2:1.5,tension:0,borderRadius:0,pointRadius:spec.type==="line"?3:0,pointStyle:"rect",fill:spec.type==="radar"}));
+Chart.defaults.color=muted;Chart.defaults.font.family=v("--mono");Chart.defaults.font.size=11;
+new Chart(document.getElementById("c"),{type:spec.type,data:{labels:spec.labels,datasets},options:{responsive:true,maintainAspectRatio:false,cutout:spec.type==="doughnut"?"68%":undefined,
+plugins:{legend:{display:round||spec.datasets.length>1,position:"bottom",labels:{color:fg,boxWidth:10,boxHeight:10,padding:18}}},
+scales:round||spec.type==="radar"?{}:{x:{grid:{display:false},border:{color:v("--line-strong")}},y:{grid:{color:line},border:{display:false},beginAtZero:true}}}});})();`;
 
 const renderChart = (source: string, ctx: Context): string => {
   const spec = decodeChart(source);
@@ -274,9 +295,9 @@ const renderChart = (source: string, ctx: Context): string => {
     title: clip(title, 120),
     description: clip(description ?? datasets.map((d) => d.label).join(", "), 160),
     body: `<header><h1>${esc(title)}</h1>${description ? `<p>${esc(description)}</p>` : ""}</header>
-<div class="card"><div class="chart-box"><canvas id="c" role="img" aria-label="${esc(title)}"></canvas></div></div>
-<details style="margin-top:1rem"><summary style="cursor:pointer;color:var(--muted)">Data</summary>
-<div class="table-wrap" style="margin-top:.5rem"><table><thead><tr><th></th>${datasets.map((d) => `<th class="num">${esc(d.label)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></details>
+<div><div class="chart-box"><canvas id="c" role="img" aria-label="${esc(title)}"></canvas></div></div>
+<details><summary>data</summary>
+<div class="table-wrap" style="margin-top:.75rem;max-height:none"><table><thead><tr><th></th>${datasets.map((d) => `<th class="num">${esc(d.label)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></details>
 <script id="spec" type="application/json">${scriptJson(spec.value)}</script>
 <script src="${CHART_JS}"></script>
 <script>${CHART_SCRIPT}</script>`,
@@ -305,6 +326,7 @@ const injectedHead = (
       ? ""
       : '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
     has.meta ? "" : meta(title, description),
+    FONT_LINK,
     `<style id="mizook-base">${BASE_CSS}</style>`,
     bridge(ctx),
   ].join("\n");
@@ -339,7 +361,7 @@ const renderError = (message: string, ctx: Context): string =>
   shell({
     title: ctx.name,
     description: message,
-    body: `<div class="card"><p>${esc(message)}</p></div>`,
+    body: `<p>${esc(message)}</p>`,
   });
 
 /**
