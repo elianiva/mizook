@@ -48,6 +48,8 @@ export const artifactHeaders = (contentType: string): Headers => {
       `font-src data: ${FONT_FILES} ${CDNS.join(" ")}`,
       "media-src data: blob: https:",
       "connect-src https:",
+      // Browser extensions such as Yomitan show their popup in an iframe injected into the page.
+      "frame-src chrome-extension: moz-extension:",
     ].join("; "),
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
