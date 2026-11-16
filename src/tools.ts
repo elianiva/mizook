@@ -213,7 +213,7 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: "artifact_data",
     description:
-      "Read or write what an artifact's page saved with mizook.data (a tracker's entries, a checklist's state). The page and you share it.",
+      "Read or write the data an artifact's page shows through mizook.data (a tracker's entries, a checklist's state). Only you can write it; the page reads it.",
     parameters: parametersOf(ArtifactDataArgs),
     replay: "unsafe",
   },
@@ -322,10 +322,10 @@ the content. Use html only for something interactive, and write it plain: our ba
 headings, buttons, inputs and tables. In html you may load libraries from cdn.jsdelivr.net, unpkg.com,
 cdnjs.cloudflare.com and cdn.tailwindcss.com, and nothing else.
 
-An html page can save data and talk to you. In its script: mizook.data.get(key), .set(key, value),
-.del(key), .all() keep JSON that survives reloads; mizook.say(text) starts a turn here with that text,
-so a button on the page can ask you something or log an event. You read and write the same data with
-artifact_data. That makes a tracker, a checklist or a journal that stays in step with this chat.
+An html page can show data you save for it: you write it with artifact_data, and the page reads it in
+its script with mizook.data.get(key) or mizook.data.all() (read-only, JSON). Pages cannot write data or
+message you. For a tracker or checklist, keep the state with artifact_data: when the user tells you an
+update in chat, save it, and the page shows it on reload.
 To keep a page fresh, create a cron schedule whose prompt says to republish it with new data.
 Pass expires_in_hours for a link that should lapse.
 

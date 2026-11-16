@@ -2,7 +2,6 @@
 export const DATA_KEY = /^[\w.-]{1,64}$/;
 export const MAX_VALUE_BYTES = 256_000;
 export const MAX_KEYS = 200;
-export const MAX_SAY_CHARS = 2_000;
 
 export const dataPrefix = (token: string): string => `d/${token}/`;
 export const dataKey = (token: string, key: string): string => `${dataPrefix(token)}${key}`;

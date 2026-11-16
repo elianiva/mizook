@@ -1,14 +1,7 @@
 import { Effect } from "effect";
 import type { Env } from "./env.ts";
 import { artifactHeaders, renderArtifact } from "./artifact-render.ts";
-import {
-  DATA_KEY,
-  dataKey,
-  dataPrefix,
-  MAX_KEYS,
-  MAX_SAY_CHARS,
-  MAX_VALUE_BYTES,
-} from "./artifact-data.ts";
+import { DATA_KEY, dataKey, dataPrefix, MAX_KEYS } from "./artifact-data.ts";
 import { hookTokenValid } from "./hooks.ts";
 import { channelOf } from "./route.ts";
 
@@ -61,13 +54,13 @@ export default {
       return new Response(page ?? object.body, { headers: artifactHeaders(type) });
     }
 
-    // What a page saves, and its way back to the chat. The page's own token is the key. The page
+    // What the agent saved for a page, read-only. The page's own token is the key. The page
     // runs in an opaque origin, so these answer any origin: the token, not the origin, is the secret.
     const data = /^\/d\/([\w-]{16,64})(?:\/([^/]*))?$/.exec(pathname);
     if (data) {
       const cors = {
         "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET, PUT, POST, DELETE, OPTIONS",
+        "access-control-allow-methods": "GET, OPTIONS",
         "access-control-allow-headers": "content-type",
       };
       const reply = (body: BodyInit | null, status = 200, type = "application/json") =>
@@ -92,48 +85,10 @@ export default {
         }
         return reply(JSON.stringify(out));
       }
-      if (key === "say" && request.method === "POST") {
-        const text = String(
-          ((await request.json().catch(() => ({}))) as { text?: unknown }).text ?? "",
-        ).slice(0, MAX_SAY_CHARS);
-        if (text.trim() === "") return reply("text is empty", 400, "text/plain");
-        const channel = page.customMetadata?.do;
-        if (!channel) return reply("no channel", 404, "text/plain");
-        const stub = env.ChatAgent.getByName(channel) as unknown as {
-          hook(body: string): Promise<boolean>;
-        };
-        const ok = await stub.hook(`[page ${page.customMetadata?.name ?? ""}] ${text}`);
-        return reply(JSON.stringify({ ok }), ok ? 200 : 429);
-      }
       if (key === undefined || !DATA_KEY.test(key)) return reply("bad key", 400, "text/plain");
       if (request.method === "GET") {
         const value = await env.Files.get(dataKey(token, key));
         return value ? reply(value.body) : reply("not found", 404, "text/plain");
-      }
-      if (request.method === "PUT") {
-        const body = await request.text();
-        if (body.length > MAX_VALUE_BYTES) return reply("too large", 413, "text/plain");
-        try {
-          JSON.parse(body);
-        } catch {
-          return reply("value must be JSON", 400, "text/plain");
-        }
-        const exists = await env.Files.head(dataKey(token, key));
-        if (
-          !exists &&
-          (await env.Files.list({ prefix: dataPrefix(token), limit: MAX_KEYS })).objects.length >=
-            MAX_KEYS
-        ) {
-          return reply("too many keys", 413, "text/plain");
-        }
-        await env.Files.put(dataKey(token, key), body, {
-          httpMetadata: { contentType: "application/json" },
-        });
-        return reply(null, 204);
-      }
-      if (request.method === "DELETE") {
-        await env.Files.delete(dataKey(token, key));
-        return reply(null, 204);
       }
       return reply("method not allowed", 405, "text/plain");
     }

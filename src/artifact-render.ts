@@ -154,7 +154,7 @@ ${o.body}
 export interface Context {
   /** The file's name, used as the title when the content has none. */
   readonly name: string;
-  /** The site's origin and the artifact's token, for the data and `say` calls of a page. */
+  /** The site's origin and the artifact's token, for the data calls of a page. */
   readonly origin: string;
   readonly token: string;
 }
@@ -285,18 +285,13 @@ const renderChart = (source: string, ctx: Context): string => {
 
 // ── html ───────────────────────────────────────────────────────────────────
 
-/** What a page can call: its own saved data, and the chat. Both are keyed by the page's link. */
+/** What a page can call: the data saved for it, read-only. Keyed by the page's link. */
 const bridge = (ctx: Context): string => `<script>
 (()=>{const base=${scriptJson(ctx.origin)}+"/d/"+${scriptJson(ctx.token)};
-const call=async(path,init)=>{const r=await fetch(base+path,init);if(!r.ok)throw new Error(await r.text());return r.status===204?null:r.json()};
-const json=(method,body)=>({method,headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-window.mizook={
-data:{
+const call=async path=>{const r=await fetch(base+path);if(!r.ok)throw new Error(await r.text());return r.status===204?null:r.json()};
+window.mizook={data:{
 all:()=>call(""),
-get:async k=>{const r=await fetch(base+"/"+encodeURIComponent(k));return r.status===404?null:r.json()},
-set:(k,v)=>call("/"+encodeURIComponent(k),json("PUT",v)),
-del:k=>call("/"+encodeURIComponent(k),{method:"DELETE"})},
-say:text=>call("/say",json("POST",{text}))};})();
+get:async k=>{const r=await fetch(base+"/"+encodeURIComponent(k));return r.status===404?null:r.json()}}};})();
 </script>`;
 
 const injectedHead = (
