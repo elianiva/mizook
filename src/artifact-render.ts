@@ -82,10 +82,18 @@ export const BASE_CSS = `
 *,*::before,*::after{box-sizing:border-box;border-radius:0 !important}
 :where(html){-webkit-text-size-adjust:100%}
 ::selection{background:var(--tint)}
-:where(body){margin:0;background:var(--bg);color:var(--fg);font:400 15px/1.7 var(--font);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:where(body){margin:0;background:var(--bg);color:var(--fg);font:400 17px/1.75 var(--font);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 :where(h1,h2,h3,h4){font-weight:600;line-height:1.2;margin:2.4em 0 .7em;letter-spacing:-.03em}
-:where(h1){font-size:2rem;margin-top:0;letter-spacing:-.04em}:where(h2){font-size:1.3rem}:where(h3){font-size:1.05rem;letter-spacing:-.02em}:where(h4){font-size:.95rem}
+:where(h1){font-size:clamp(2.25rem,7vw,3.25rem);line-height:1.08;margin-top:0;letter-spacing:-.045em}:where(h2){font-size:1.6rem;letter-spacing:-.035em}:where(h3){font-size:1.2rem;letter-spacing:-.025em}:where(h4){font-size:.95rem}
 :where(p,ul,ol,blockquote,pre,table){margin:0 0 1.2em}
+:where(h2){margin-top:3.2em}
+:where(rt){font-size:.55em;color:var(--muted);letter-spacing:0}
+:where(details){margin:0 0 .5em}
+:where(details>summary){cursor:pointer;list-style:none;color:var(--fg);padding:.35em 0}
+:where(details>summary)::-webkit-details-marker{display:none}
+:where(details>summary)::before{content:"+";font-family:var(--mono);display:inline-block;width:1.4em;color:var(--muted)}
+:where(details[open]>summary)::before{content:"\\2212"}
+:where(details[open]){padding-bottom:.6em}
 :where(li+li){margin-top:.35em}
 :where(a){color:var(--accent);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 :where(img,svg,video,canvas){max-width:100%;height:auto}
@@ -111,7 +119,7 @@ const TEMPLATE_CSS = `
 .page{max-width:40rem;margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,32px) 96px}
 .page.wide{max-width:64rem}
 .page>header{margin-bottom:2.5rem}
-.page>header h1{margin:0 0 .6rem}
+.page>header h1{margin:0 0 .8rem}
 .page>header p{margin:0;color:var(--muted);max-width:34rem}
 .meta{font:400 .8rem var(--mono);color:var(--muted);margin:0 0 .9rem}
 .table-wrap{overflow:auto;max-height:78vh;border-top:1px solid var(--fg);border-bottom:1px solid var(--line-strong)}
@@ -131,7 +139,7 @@ summary{cursor:pointer;font:400 .8rem var(--mono);color:var(--muted);list-style:
 summary::before{content:"▸ "}
 details[open] summary::before{content:"▾ "}
 summary::-webkit-details-marker{display:none}
-.doc :where(h1){font-size:2.4rem;margin-bottom:.6em}
+.doc :where(h1){margin-bottom:.6em}
 .doc :where(img){border:1px solid var(--line)}
 .doc :where(table){display:block;overflow:auto}
 .doc :where(table) :where(tr:last-child td){border-bottom:0}
@@ -328,7 +336,7 @@ const injectedHead = (
       : '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
     has.meta ? "" : meta(title, description),
     FONT_LINK,
-    `<style id="mizook-base">${BASE_CSS}</style>`,
+    `<style id="mizook-base">${BASE_CSS}:where(body){max-width:40rem;margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,24px) 96px}</style>`,
     bridge(ctx),
   ].join("\n");
 
