@@ -17,6 +17,33 @@ export default Alchemy.Stack(
   { providers: Cloudflare.providers(), state: Cloudflare.state() },
   Effect.gen(function* () {
     const files = yield* Cloudflare.R2.Bucket("Files");
+    // The dashboard at /admin sits behind Access. Login is GitHub when its OAuth app is given
+    // (https://github.com/settings/developers, callback `https://<team>/cdn-cgi/access/callback`);
+    // otherwise Access offers whatever login methods the account already has.
+    const teamDomain = yield* Config.String("ACCESS_TEAM_DOMAIN");
+    const githubId = yield* optional("GITHUB_CLIENT_ID");
+    const githubSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET").pipe(
+      Config.withDefault(Redacted.make("")),
+    );
+    const github =
+      githubId !== "" && Redacted.value(githubSecret) !== ""
+        ? yield* Cloudflare.Access.IdentityProvider("GitHub", {
+            type: "github",
+            config: { clientId: githubId, clientSecret: githubSecret },
+          })
+        : undefined;
+    const admin = yield* Cloudflare.Access.Application("Admin", {
+      type: "self_hosted",
+      name: "Mizook dashboard",
+      domain: `${DOMAIN}/admin*`,
+      sessionDuration: "24h",
+      ...(github && {
+        allowedIdps: [github.identityProviderId],
+        autoRedirectToIdentity: true,
+      }),
+      policies: [{ decision: "allow", include: [{ email: yield* Config.String("ADMIN_EMAIL") }] }],
+    });
+
     const worker = yield* Cloudflare.Worker("Mizook", {
       main: "./src/worker.ts",
       domain: { name: DOMAIN },
@@ -29,9 +56,9 @@ export default Alchemy.Stack(
         // Artifacts, exports and backups.
         Files: files,
         PUBLIC_URL: `https://${DOMAIN}`,
-        // The dashboard at /admin: the Access application protecting it, from Zero Trust.
-        ACCESS_TEAM_DOMAIN: optional("ACCESS_TEAM_DOMAIN"),
-        ACCESS_AUD: optional("ACCESS_AUD"),
+        // The Worker checks the Access token itself: the team and the application's audience.
+        ACCESS_TEAM_DOMAIN: teamDomain,
+        ACCESS_AUD: admin.aud,
 
         BOT_TOKEN: Config.Redacted("BOT_TOKEN"),
         MIZOOK_WEBHOOK_SECRET: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),

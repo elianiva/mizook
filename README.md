@@ -96,7 +96,10 @@ The deploy job points Telegram at the Worker after each deploy. To do it by hand
 
 A read-only dashboard lives at `/admin`: status and spend, the chat log, the memory view, usage, and schedules, per channel.
 
-1. In Zero Trust, add a self-hosted Access application for `mzk.elianiva.com/admin` (path `admin*`), with an allow policy for yourself and GitHub or Google as the identity provider. Leave `/telegram/webhook`, `/hook`, `/a`, `/d` and `/x` outside it.
-2. Copy the application's audience tag. Set `ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`) and `ACCESS_AUD`, then deploy.
+Alchemy declares the Access application and policy (`alchemy.run.ts`), so `alchemy deploy` is the whole setup. Set these first:
 
-The Worker checks the Access token itself (RS256, issuer, audience, expiry). While either variable is empty, `/admin` answers 503.
+- `ACCESS_TEAM_DOMAIN`: your Zero Trust team domain, `<team>.cloudflareaccess.com`.
+- `ADMIN_EMAIL`: the one email the policy allows.
+- `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (optional): a GitHub OAuth app whose callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Alchemy creates the GitHub login method from it. Without them, Access uses the login methods the account already has.
+
+The application covers `/admin*` only, so `/telegram/webhook`, `/hook`, `/a`, `/d` and `/x` stay outside it. The Worker also checks the Access token itself (RS256, issuer, audience, expiry), and `/admin` answers 503 while the team domain or audience is missing.
