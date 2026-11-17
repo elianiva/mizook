@@ -1,4 +1,4 @@
-import { Array, Option, Record, pipe } from "effect";
+import { Array, Option, Order, Record, pipe } from "effect";
 import { AsyncData } from "foldkit";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
 
@@ -6,6 +6,8 @@ import {
   type LogMessage,
   type ActionKind,
   type SettingKey,
+  type ScheduleRow,
+  type ViewLine,
   type UsageReport,
   auditQuery,
   recentQuery,
@@ -17,7 +19,17 @@ import {
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
-import { ago, count, dateTime, epochDateTime, percent, usd } from "./format.ts";
+import {
+  ago,
+  count,
+  dateTime,
+  describeSpec,
+  epochDateTime,
+  inZone,
+  percent,
+  until,
+  usd,
+} from "./format.ts";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
 import {
@@ -500,37 +512,125 @@ const entryView = (model: Model, channel: string, entryId: number, h: H): Html =
 
 // MEMORY
 
+const KIND_PREFIX = /^(user|agent|tool|echo|note): ?([\s\S]*)$/;
+
+/** `12+4` is messages 12 to 15. */
+const spanOf = (label: string): { readonly start: number; readonly count: number } => {
+  const [start, count_] = label.split("+").map(Number);
+  return { start: start ?? 0, count: count_ ?? 1 };
+};
+
+const levelShade = (level: number): string =>
+  level === 0
+    ? "var(--colors-border-strong)"
+    : `color-mix(in oklab, var(--colors-accent) ${Math.min(30 + level * 14, 100)}%, var(--colors-border-strong))`;
+
+const memoryLine = (line: typeof ViewLine.Type, h: H): Html => {
+  const { start, count: covered } = spanOf(line.label);
+  const said = KIND_PREFIX.exec(line.text);
+  const range = covered === 1 ? `#${start}` : `#${start} – #${start + covered - 1}`;
+  return h.keyed("div")(
+    line.label,
+    [h.Class(ui.memRow)],
+    [
+      h.div(
+        [h.Class(ui.memGutter)],
+        [
+          h.span([h.Class(ui.mono)], [range]),
+          h.span([h.Class(ui.memDot), h.Style({ "background-color": levelShade(line.level) })]),
+        ],
+      ),
+      line.level === 0 && said
+        ? h.div(
+            [h.Class(ui.memBubble)],
+            [kindBadge(said[1] ?? "note", h), h.div([h.Class(ui.clamp4)], [said[2] ?? ""])],
+          )
+        : h.div(
+            [h.Class(ui.memSpan)],
+            [
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [`${count(covered)} messages, summarised once`],
+              ),
+              h.div([h.Class(ui.clamp4)], [line.text]),
+            ],
+          ),
+    ],
+  );
+};
+
 const memoryView = (model: Model, channel: string, h: H): Html =>
   remote(memoryQuery.read(model.memory, { channel }), h, skeletonView(h, 2), (lines) =>
     Array.match(lines, {
       onEmpty: () => emptyView("The view is empty.", h),
-      onNonEmpty: (rows) =>
-        h.div(
-          [h.Class(ui.page)],
+      onNonEmpty: (rows) => {
+        const total = Array.reduce(rows, 0, (sum, row) => sum + spanOf(row.label).count);
+        const bytes = Array.reduce(rows, 0, (sum, row) => sum + row.size);
+        const levels = Array.reduce(rows, {} as Record<number, number>, (acc, row) => ({
+          ...acc,
+          [row.level]: (acc[row.level] ?? 0) + 1,
+        }));
+        return h.div(
+          [h.Class(ui.stack)],
           [
-            h.p(
-              [h.Class(ui.muted)],
+            h.div(
+              [h.Class(ui.grid)],
               [
-                `${count(rows.length)} lines, ${count(Array.reduce(rows, 0, (sum, row) => sum + row.size))} bytes of summaries. A line named id+n covers n messages from id.`,
+                statView("Messages covered", count(total), h),
+                statView("View lines", count(rows.length), h),
+                statView("Summary bytes", count(bytes), h),
+                statView("Compression", `${Math.round(total / Math.max(rows.length, 1))}×`, h),
               ],
             ),
-            tableView(
-              [th("Line", h), th("Level", h), th("Summary", h)],
-              Array.map(rows, (row) =>
-                h.keyed("tr")(
-                  row.label,
-                  [h.Class(ui.row)],
-                  [
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [row.label]),
-                    h.td([h.Class(ui.td)], [h.span([h.Class(ui.badge)], [`L${row.level}`])]),
-                    h.td([h.Class(ui.td)], [h.div([h.Class(ui.text)], [row.text])]),
-                  ],
-                ),
+            sectionView(
+              "The whole chat, oldest to newest",
+              h.div(
+                [h.Class(ui.memMapWrap)],
+                [
+                  h.div(
+                    [h.Class(ui.memMap)],
+                    Array.map(rows, (row) =>
+                      h.keyed("span")(row.label, [
+                        h.Class(ui.memSeg),
+                        h.Title(`${row.label}: ${row.text.slice(0, 120)}`),
+                        h.Style({
+                          "flex-grow": String(spanOf(row.label).count),
+                          "background-color": levelShade(row.level),
+                        }),
+                      ]),
+                    ),
+                  ),
+                  h.div(
+                    [h.Class(ui.memLegend)],
+                    Array.map(Array.sort(Object.keys(levels).map(Number), Order.Number), (level) =>
+                      h.keyed("span")(
+                        String(level),
+                        [h.Class(ui.memLegendItem)],
+                        [
+                          h.span([
+                            h.Class(ui.memDot),
+                            h.Style({ "background-color": levelShade(level) }),
+                          ]),
+                          `L${level} · ${levels[level]} line${levels[level] === 1 ? "" : "s"}${level === 0 ? "" : `, ${2 ** level} messages each`}`,
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              h,
+            ),
+            sectionView(
+              "What the agent sees",
+              h.div(
+                [h.Class(ui.memList)],
+                Array.map(rows, (row) => memoryLine(row, h)),
               ),
               h,
             ),
           ],
-        ),
+        );
+      },
     }),
   );
 
@@ -720,30 +820,71 @@ const rangeView = (model: Model, days: number, h: H): Html =>
 
 // SCHEDULES
 
+const scheduleCard = (model: Model, schedule: typeof ScheduleRow.Type, h: H): Html => {
+  const info = describeSpec(schedule.spec);
+  return h.keyed("div")(
+    String(schedule.id),
+    [h.Class(ui.card)],
+    [
+      h.div(
+        [h.Class(ui.cardWhen)],
+        [
+          h.span([h.Class(ui.cardCountdown)], [until(schedule.nextAt)]),
+          h.span(
+            [h.Class(`${ui.muted} ${ui.mono}`)],
+            [
+              `${inZone(schedule.nextAt, info.timezone)} ${info.timezone === "UTC" ? "UTC" : ""}`.trim(),
+            ],
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class(ui.cardBody)],
+        [
+          h.div(
+            [h.Class(ui.cardHead)],
+            [
+              h.span([h.Class(ui.badge)], [info.kind]),
+              h.span([h.Class(ui.strong)], [info.cadence]),
+              h.span([h.Class(`${ui.muted} ${ui.mono}`)], [`#${schedule.id}`]),
+            ],
+          ),
+          h.div([h.Class(ui.clamp3)], [schedule.prompt]),
+          h.div(
+            [h.Class(ui.cardFoot)],
+            [
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [info.kind === "cron" ? `${info.detail} · ${info.timezone}` : info.detail],
+              ),
+              actionButton(model, "cancel", schedule.id, "Cancel", h),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+};
+
 const schedulesView = (model: Model, channel: string, h: H): Html =>
   remote(schedulesQuery.read(model.schedules, { channel }), h, skeletonView(h, 1), (rows) =>
     Array.match(rows, {
       onEmpty: () => emptyView("No active schedules.", h),
       onNonEmpty: (schedules) =>
-        tableView(
-          [th("ID", h), th("Schedule", h), th("Next run", h), th("Prompt", h), th("", h)],
-          Array.map(schedules, (schedule) =>
-            h.keyed("tr")(
-              String(schedule.id),
-              [h.Class(ui.row)],
+        h.div(
+          [h.Class(ui.stack)],
+          [
+            h.p(
+              [h.Class(ui.muted)],
               [
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${schedule.id}`]),
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [schedule.spec]),
-                h.td(
-                  [h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)],
-                  [epochDateTime(schedule.nextAt)],
-                ),
-                h.td([h.Class(ui.td)], [h.div([h.Class(ui.text)], [schedule.prompt])]),
-                h.td([h.Class(ui.td)], [actionButton(model, "cancel", schedule.id, "Cancel", h)]),
+                `${schedules.length} active, soonest first. Times are in each schedule's own time zone.`,
               ],
             ),
-          ),
-          h,
+            h.div(
+              [h.Class(ui.cards)],
+              Array.map(schedules, (schedule) => scheduleCard(model, schedule, h)),
+            ),
+          ],
         ),
     }),
   );
