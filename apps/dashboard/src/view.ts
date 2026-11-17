@@ -93,12 +93,6 @@ const skeletonView = (h: H, rows: number): Html =>
 
 const emptyView = (text: string, h: H): Html => h.div([h.Class(ui.empty)], [text]);
 
-const statView = (label: string, value: string, h: H): Html =>
-  h.div(
-    [h.Class(ui.stat)],
-    [h.span([h.Class(ui.statLabel)], [label]), h.span([h.Class(ui.statValue)], [value])],
-  );
-
 const sectionView = (title: string, body: Html, h: H): Html =>
   h.section([h.Class(ui.section)], [h.h2([h.Class(ui.sectionTitle)], [title]), body]);
 
@@ -649,6 +643,115 @@ const memoryLine = (line: typeof ViewLine.Type, h: H): Html => {
   );
 };
 
+const VIEW_BUDGET_BYTES = 128 * 1024;
+
+const kilobytes = (bytes: number): string =>
+  bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
+
+const memoryHero = (
+  rows: ReadonlyArray<typeof ViewLine.Type>,
+  total: number,
+  bytes: number,
+  levels: Record<number, number>,
+  h: H,
+): Html => {
+  const ratio = Math.max(Math.round(total / Math.max(rows.length, 1)), 1);
+  const deepest = Array.reduce(rows, 0, (max, row) => Math.max(max, spanOf(row.label).count));
+  const used = percent(bytes, VIEW_BUDGET_BYTES);
+  return h.div(
+    [h.Class(ui.hero)],
+    [
+      h.div(
+        [h.Class(ui.heroSpend)],
+        [
+          h.span([h.Class(ui.statLabel)], ["The agent reads"]),
+          h.span([h.Class(ui.heroValue)], [`${count(rows.length)} lines`]),
+          h.span(
+            [h.Class(ui.muted)],
+            [`standing in for ${count(total)} messages, ${ratio}× smaller than the raw chat`],
+          ),
+          h.div(
+            [h.Class(ui.ratio)],
+            [
+              h.div([
+                h.Class(ui.ratioFill),
+                h.Style({ width: `${Math.max(percent(rows.length, total), 2)}%` }),
+              ]),
+            ],
+          ),
+          h.div(
+            [h.Class(ui.heroFoot)],
+            [h.span([], [`${count(rows.length)} lines`]), h.span([], [`${count(total)} messages`])],
+          ),
+          h.div(
+            [h.Class(ui.heroBudget)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Lines by depth"]),
+              h.div(
+                [h.Class(ui.depth)],
+                Array.map(Array.sort(Object.keys(levels).map(Number), Order.Number), (level) =>
+                  h.keyed("span")(String(level), [
+                    h.Class(ui.depthSeg),
+                    h.Title(`L${level}: ${levels[level]} lines`),
+                    h.Style({
+                      "flex-grow": String(levels[level] ?? 0),
+                      "background-color": levelShade(level),
+                    }),
+                  ]),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class(ui.heroSide)],
+        [
+          h.div(
+            [h.Class(ui.miniCard)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Summary size"]),
+              h.span([h.Class(ui.miniValue)], [kilobytes(bytes)]),
+              h.div(
+                [h.Class(ui.ratio)],
+                [
+                  h.div([
+                    h.Class(ui.ratioFill),
+                    h.Style({ width: `${Math.min(Math.max(used, 2), 100)}%` }),
+                  ]),
+                ],
+              ),
+              h.span([h.Class(`${ui.muted} ${ui.mono}`)], [`${used}% of the 128 KB view`]),
+            ],
+          ),
+          h.div(
+            [h.Class(ui.miniCard)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Compression"]),
+              h.span([h.Class(ui.miniValue)], [`${ratio}×`]),
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [`${count(Math.round(bytes / Math.max(rows.length, 1)))} bytes a line on average`],
+              ),
+            ],
+          ),
+          h.div(
+            [h.Class(ui.miniCard)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Widest line"]),
+              h.span([h.Class(ui.miniValue)], [`${count(deepest)} msgs`]),
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [`one summary, ${deepest === 1 ? "nothing merged yet" : "zoom to expand"}`],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+};
+
 const memoryView = (model: Model, channel: string, h: H): Html =>
   remote(memoryQuery.read(model.memory, { channel }), h, skeletonView(h, 2), (lines) =>
     Array.match(lines, {
@@ -663,15 +766,7 @@ const memoryView = (model: Model, channel: string, h: H): Html =>
         return h.div(
           [h.Class(ui.stack)],
           [
-            h.div(
-              [h.Class(ui.grid)],
-              [
-                statView("Messages covered", count(total), h),
-                statView("View lines", count(rows.length), h),
-                statView("Summary bytes", count(bytes), h),
-                statView("Compression", `${Math.round(total / Math.max(rows.length, 1))}×`, h),
-              ],
-            ),
+            memoryHero(rows, total, bytes, levels, h),
             sectionView(
               "The whole chat, oldest to newest",
               h.div(

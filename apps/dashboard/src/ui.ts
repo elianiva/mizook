@@ -587,6 +587,8 @@ export const ui = {
   }),
   ratio: css({ height: "4px", backgroundColor: "border", width: "100%" }),
   ratioFill: css({ height: "100%", backgroundColor: "accent" }),
+  depth: css({ display: "flex", height: "10px", gap: "1px" }),
+  depthSeg: css({ flexBasis: "2px", minWidth: "2px" }),
   strong: css({ fontWeight: "700" }),
   alert: css({
     border: "1px solid",
