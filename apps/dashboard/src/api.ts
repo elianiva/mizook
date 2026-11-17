@@ -197,6 +197,38 @@ export const AuditRow = Schema.Struct({
   ok: Schema.Boolean,
 });
 
+export const ArtifactRow = Schema.Struct({
+  name: Schema.String,
+  token: Schema.String,
+  version: Schema.Finite,
+  contentType: Schema.String,
+  updated: Schema.Finite,
+  visibility: Schema.Literals(["public", "private"]),
+  url: Schema.String,
+});
+
+export const ArtifactSource = Schema.Struct({
+  artifact: ArtifactRow,
+  text: Schema.String,
+  size: Schema.Finite,
+});
+
+export const artifactsQuery = Query.define({
+  name: "Artifacts",
+  args: channelArgs,
+  data: Schema.Array(ArtifactRow),
+  error: Schema.String,
+  execute: ({ channel }) => fetchJson(Schema.Array(ArtifactRow), "artifacts", { c: channel }),
+});
+
+export const artifactQuery = Query.define({
+  name: "Artifact",
+  args: { channel: Schema.String, name: Schema.String },
+  data: ArtifactSource,
+  error: Schema.String,
+  execute: ({ channel, name }) => fetchJson(ArtifactSource, "artifact", { c: channel, name }),
+});
+
 export const summaryQuery = Query.define({
   name: "Summary",
   data: Schema.Array(Summary),
@@ -224,6 +256,9 @@ export const recentQuery = Query.define({
 
 export const ActionKind = Schema.Literals(["approve", "deny", "cancel", "stop"]);
 export type ActionKind = typeof ActionKind.Type;
+
+export const ArtifactAction = Schema.Literals(["public", "private", "delete"]);
+export type ArtifactAction = typeof ArtifactAction.Type;
 
 export const SettingKey = Schema.Literals(["model", "budget", "timezone", "instructions"]);
 export type SettingKey = typeof SettingKey.Type;
@@ -261,6 +296,13 @@ export const postAction = (
       : `${action === "cancel" ? "schedules" : "approvals"}/${id}/${action}`,
     channel,
   ).pipe(Effect.asVoid);
+
+export const postArtifact = (
+  channel: string,
+  name: string,
+  action: ArtifactAction,
+): Effect.Effect<void, string> =>
+  write(`artifacts/${encodeURIComponent(name)}/${action}`, channel).pipe(Effect.asVoid);
 
 /** An empty value puts the setting back to its default. Gives the channel's reply. */
 export const postSetting = (

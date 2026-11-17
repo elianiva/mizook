@@ -118,3 +118,25 @@ test("html pages must use the design variables, not their own colours or sizes",
   ).toBeUndefined();
   expect(checkContent(KIND_TYPES.html, "<p>no style</p>")).toBeUndefined();
 });
+
+test("a private artifact is marked on its public copy, and keeps that after a new version", async () => {
+  await go(
+    Effect.gen(function* () {
+      const artifacts = yield* Artifacts;
+      const blobs = yield* Blobs;
+      const made = yield* artifacts.publish("c", "p.html", "<p>one</p>", "text/html");
+      expect(made.visibility).toBe("public");
+      const closed = yield* artifacts.setVisibility("p.html", "private");
+      expect(closed.visibility).toBe("private");
+      expect((yield* blobs.get(`a/${made.token}`))!.meta.visibility).toBe("private");
+      const again = yield* artifacts.publish("c", "p.html", "<p>two</p>", "text/html");
+      expect(again.visibility).toBe("private");
+      expect((yield* blobs.get(`a/${made.token}`))!.meta.visibility).toBe("private");
+      const shown = yield* artifacts.source("p.html");
+      expect(shown.text).toBe("<p>two</p>");
+      const opened = yield* artifacts.setVisibility("p.html", "public");
+      expect((yield* blobs.get(`a/${made.token}`))!.meta.visibility).toBe("public");
+      expect(opened.version).toBe(2);
+    }),
+  );
+});

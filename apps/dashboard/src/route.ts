@@ -13,6 +13,7 @@ export const AppRoute = defineRouteUnion({
   Schedules: { channel: MaybeString },
   Settings: { channel: MaybeString },
   Audit: { channel: MaybeString },
+  Artifacts: { channel: MaybeString, name: MaybeString },
   NotFound: { path: Schema.String },
 });
 
@@ -78,6 +79,13 @@ export const auditRouter = pipe(
   Route.mapTo(AppRoute.Audit),
 );
 
+export const artifactsRouter = pipe(
+  admin,
+  slash(literal("artifacts")),
+  Route.query(Schema.Struct({ channel: optional, name: optional })),
+  Route.mapTo(AppRoute.Artifacts),
+);
+
 const routeParser = Route.oneOf(
   entryRouter,
   logRouter,
@@ -86,6 +94,7 @@ const routeParser = Route.oneOf(
   schedulesRouter,
   settingsRouter,
   auditRouter,
+  artifactsRouter,
   overviewRouter,
 );
 
@@ -101,6 +110,7 @@ export const routeChannel = (route: AppRoute): Option.Option<string> =>
     Schedules: ({ channel }) => channel,
     Settings: ({ channel }) => channel,
     Audit: ({ channel }) => channel,
+    Artifacts: ({ channel }) => channel,
     NotFound: () => Option.none(),
   });
 
@@ -114,6 +124,7 @@ export const routeHref = (route: AppRoute): string =>
     Schedules: schedulesRouter,
     Settings: settingsRouter,
     Audit: auditRouter,
+    Artifacts: artifactsRouter,
     NotFound: () => overviewRouter({ channel: Option.none() }),
   });
 
@@ -135,6 +146,7 @@ export const routeOnChannel = (route: AppRoute, channel: string): AppRoute => {
     Schedules: () => AppRoute.Schedules({ channel: selected }),
     Settings: () => AppRoute.Settings({ channel: selected }),
     Audit: () => AppRoute.Audit({ channel: selected }),
+    Artifacts: () => AppRoute.Artifacts({ channel: selected, name: Option.none() }),
     NotFound: () => AppRoute.Overview({ channel: selected }),
   });
 };

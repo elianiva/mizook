@@ -45,7 +45,11 @@ export default {
     if (artifact && request.method === "GET") {
       const object = await env.Files.get(`a/${artifact[1]}`);
       const expires = Number(object?.customMetadata?.expires ?? 0);
-      if (!object || (expires > 0 && Date.now() > expires)) {
+      if (
+        !object ||
+        object.customMetadata?.visibility === "private" ||
+        (expires > 0 && Date.now() > expires)
+      ) {
         return new Response("Not found", { status: 404 });
       }
       const type = object.httpMetadata?.contentType ?? "text/plain; charset=utf-8";
@@ -75,7 +79,11 @@ export default {
       const token = data[1]!;
       const page = await env.Files.head(`a/${token}`);
       const expires = Number(page?.customMetadata?.expires ?? 0);
-      if (!page || (expires > 0 && Date.now() > expires))
+      if (
+        !page ||
+        page.customMetadata?.visibility === "private" ||
+        (expires > 0 && Date.now() > expires)
+      )
         return reply("not found", 404, "text/plain");
       const key = data[2] === undefined ? undefined : decodeURIComponent(data[2]);
 

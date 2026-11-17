@@ -10,6 +10,9 @@ import {
   type ScheduleRow,
   type ViewLine,
   type UsageReport,
+  artifactQuery,
+  artifactsQuery,
+  type ArtifactRow,
   auditQuery,
   recentQuery,
   summaryQuery,
@@ -40,6 +43,7 @@ import {
   entryRouter,
   logRouter,
   memoryRouter,
+  artifactsRouter,
   auditRouter,
   overviewRouter,
   settingsRouter,
@@ -1171,6 +1175,153 @@ const settingsView = (model: Model, channel: string, h: H): Html =>
     ),
   );
 
+// ARTIFACTS
+
+const artifactButton = (
+  model: Model,
+  row: typeof ArtifactRow.Type,
+  action: "public" | "private" | "delete",
+  label: string,
+  h: H,
+): Html => {
+  const armed = action === "delete" && Option.contains(model.armed, `artifact-delete:${row.name}`);
+  return h.button(
+    [
+      h.Type("button"),
+      h.Class(armed ? `${ui.buttonSmall} ${ui.buttonArmed}` : ui.buttonSmall),
+      h.OnClick(Message.ClickedArtifact({ name: row.name, action })),
+    ],
+    [armed ? "Confirm delete" : label],
+  );
+};
+
+const artifactSourceView = (model: Model, channel: string, name: string, h: H): Html =>
+  remote(artifactQuery.read(model.artifact, { channel, name }), h, skeletonView(h, 1), (data) =>
+    h.div(
+      [h.Class(ui.stack)],
+      [
+        h.div(
+          [h.Class(ui.metaRow)],
+          [
+            h.span([h.Class(ui.strong)], [data.artifact.name]),
+            h.span([h.Class(ui.mono)], [data.artifact.contentType]),
+            h.span([h.Class(ui.mono)], [`${count(data.size)} bytes`]),
+            h.a(
+              [
+                h.Class(ui.link),
+                h.Href(artifactsRouter({ channel: Option.some(channel), name: Option.none() })),
+              ],
+              ["Close"],
+            ),
+          ],
+        ),
+        h.pre([h.Class(ui.pre)], [data.text]),
+      ],
+    ),
+  );
+
+const artifactsView = (model: Model, channel: string, name: Option.Option<string>, h: H): Html =>
+  remote(artifactsQuery.read(model.artifacts, { channel }), h, skeletonView(h, 1), (rows) =>
+    Array.match(rows, {
+      onEmpty: () => emptyView("No artifacts have been published.", h),
+      onNonEmpty: (list) =>
+        h.div(
+          [h.Class(ui.stack)],
+          [
+            tableView(
+              [
+                th("Name", h),
+                th("Type", h),
+                th("Version", h, true),
+                th("Updated", h),
+                th("Link", h),
+                th("", h),
+              ],
+              Array.map(list, (row) =>
+                h.keyed("tr")(
+                  row.name,
+                  [h.Class(ui.row)],
+                  [
+                    h.td([h.Class(`${ui.td} ${ui.strong}`)], [row.name]),
+                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [row.contentType.split(";")[0] ?? ""]),
+                    h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [`v${row.version}`]),
+                    h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [ago(row.updated)]),
+                    h.td(
+                      [h.Class(ui.td)],
+                      [
+                        h.span(
+                          [
+                            h.Class(ui.badge),
+                            h.Style({
+                              color:
+                                row.visibility === "public"
+                                  ? "var(--colors-ok)"
+                                  : "var(--colors-fg-muted)",
+                            }),
+                          ],
+                          [row.visibility],
+                        ),
+                      ],
+                    ),
+                    h.td(
+                      [h.Class(ui.td)],
+                      [
+                        h.div(
+                          [h.Class(ui.actions)],
+                          [
+                            ...(row.visibility === "public"
+                              ? [
+                                  h.a(
+                                    [
+                                      h.Class(ui.buttonSmall),
+                                      h.Href(row.url),
+                                      h.Target("_blank"),
+                                      h.Rel("noopener noreferrer"),
+                                    ],
+                                    ["Open"],
+                                  ),
+                                ]
+                              : []),
+                            h.a(
+                              [
+                                h.Class(ui.buttonSmall),
+                                h.Href(
+                                  artifactsRouter({
+                                    channel: Option.some(channel),
+                                    name: Option.some(row.name),
+                                  }),
+                                ),
+                              ],
+                              ["Source"],
+                            ),
+                            artifactButton(
+                              model,
+                              row,
+                              row.visibility === "public" ? "private" : "public",
+                              row.visibility === "public" ? "Make private" : "Make public",
+                              h,
+                            ),
+                            artifactButton(model, row, "delete", "Delete", h),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              h,
+            ),
+            ...Option.match(name, {
+              onNone: () => [],
+              onSome: (value) => [
+                sectionView("Source", artifactSourceView(model, channel, value, h), h),
+              ],
+            }),
+          ],
+        ),
+    }),
+  );
+
 // AUDIT
 
 const auditView = (model: Model, channel: string, h: H): Html =>
@@ -1252,6 +1403,7 @@ const tabsView = (model: Model, h: H): Html => {
     ["Usage", usageRouter({ channel, days: Option.none() }), tag === "Usage"],
     ["Schedules", schedulesRouter({ channel }), tag === "Schedules"],
     ["Settings", settingsRouter({ channel }), tag === "Settings"],
+    ["Artifacts", artifactsRouter({ channel, name: Option.none() }), tag === "Artifacts"],
     ["Audit", auditRouter({ channel }), tag === "Audit"],
   ];
   return h.nav(
@@ -1308,6 +1460,11 @@ const pageView = (model: Model, h: H): Html =>
           h.div(
             [h.Class(ui.page)],
             [titleView("Settings", [], h), settingsView(model, channel, h)],
+          ),
+        Artifacts: ({ name }) =>
+          h.div(
+            [h.Class(ui.page)],
+            [titleView("Artifacts", [], h), artifactsView(model, channel, name, h)],
           ),
         Audit: () =>
           h.div([h.Class(ui.page)], [titleView("Audit", [], h), auditView(model, channel, h)]),

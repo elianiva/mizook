@@ -7,6 +7,7 @@ interface ChannelRpc {
   dashboard(page: string, params: Record<string, string>): Promise<unknown>;
   act(who: string, action: string, id: number): Promise<boolean>;
   stop(who: string): Promise<boolean>;
+  artifact(who: string, name: string, action: string): Promise<boolean>;
   setting(who: string, key: string, value: string | undefined): Promise<string>;
 }
 
@@ -22,7 +23,17 @@ const verifierFor = (env: Env): Verifier | undefined => {
   return verifier.value;
 };
 
-const PAGES = new Set(["overview", "messages", "message", "memory", "usage", "schedules", "audit"]);
+const PAGES = new Set([
+  "overview",
+  "messages",
+  "message",
+  "memory",
+  "usage",
+  "schedules",
+  "audit",
+  "artifacts",
+  "artifact",
+]);
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "cache-control": "no-store" } });
@@ -124,6 +135,16 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
 
   if (url.pathname === "/admin/api/stop") {
     return (await rpc.stop(who)) ? json({ ok: true }) : json({ error: "already gone" }, 409);
+  }
+
+  const artifact =
+    /^\/admin\/api\/artifacts\/([a-z0-9][a-z0-9._-]{0,60})\/(public|private|delete)$/.exec(
+      url.pathname,
+    );
+  if (artifact) {
+    return (await rpc.artifact(who, artifact[1]!, artifact[2]!))
+      ? json({ ok: true })
+      : json({ error: "already gone" }, 409);
   }
 
   const setting = /^\/admin\/api\/settings\/([a-z]+)$/.exec(url.pathname);

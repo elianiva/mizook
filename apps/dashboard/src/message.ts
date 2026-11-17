@@ -5,6 +5,9 @@ import { Url } from "foldkit/url";
 
 import {
   ActionKind,
+  ArtifactAction,
+  artifactQuery,
+  artifactsQuery,
   SettingKey,
   auditQuery,
   channelsQuery,
@@ -38,6 +41,9 @@ export const Message = defineMessageUnion({
   ClickedAction: { action: ActionKind, id: Schema.Finite },
   SucceededAction: {},
   GotSummaryMessage: { message: summaryQuery.Message },
+  GotArtifactsMessage: { message: artifactsQuery.Message },
+  GotArtifactMessage: { message: artifactQuery.Message },
+  ClickedArtifact: { name: Schema.String, action: ArtifactAction },
   GotAuditMessage: { message: auditQuery.Message },
   GotRecentMessage: { message: recentQuery.Message },
   UpdatedDraft: { key: SettingKey, value: Schema.String },

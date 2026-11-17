@@ -11,6 +11,7 @@ import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
 import { Schedules } from "./schedules.ts";
+import { Artifacts } from "./artifacts.ts";
 import { Commands } from "./commands.ts";
 import { State } from "./state.ts";
 import * as read from "./admin/read.ts";
@@ -159,6 +160,12 @@ export class ChatAgent extends DurableObject<Env> {
         return read.schedules(sql);
       case "audit":
         return read.audit(sql);
+      case "artifacts":
+        return this.runtime.runPromise(Artifacts.use((artifacts) => artifacts.list));
+      case "artifact":
+        return this.runtime
+          .runPromise(Artifacts.use((artifacts) => artifacts.source(params.name ?? "")))
+          .catch(() => undefined);
       default:
         return undefined;
     }
@@ -192,6 +199,26 @@ export class ChatAgent extends DurableObject<Env> {
       this.ctx.waitUntil(this.runtime.runPromise(after).then(() => this.rearm()));
     }
     return done.ok;
+  }
+
+  /** Change or remove a published artifact from the dashboard. Audited. False when it is gone. */
+  async artifact(who: string, name: string, action: string): Promise<boolean> {
+    const ok = await this.runtime
+      .runPromise(
+        Artifacts.use((artifacts) =>
+          action === "delete"
+            ? artifacts.remove(this.doName, name)
+            : Effect.as(
+                artifacts.setVisibility(name, action === "private" ? "private" : "public"),
+                true,
+              ),
+        ),
+      )
+      .catch(() => false);
+    await this.runtime.runPromise(
+      State.use((state) => state.audit(who, `artifact:${action}:${name}`, 0, ok)),
+    );
+    return ok;
   }
 
   /** Stop the turn that is running, as `/stop` does. */

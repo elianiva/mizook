@@ -6,6 +6,10 @@ import { type Url, toString as urlToString } from "foldkit/url";
 
 import {
   ActionKind,
+  ArtifactAction,
+  artifactQuery,
+  artifactsQuery,
+  postArtifact,
   SettingKey,
   auditQuery,
   channelsQuery,
@@ -58,6 +62,16 @@ const PostAction = Command.define("PostAction", {
     ),
 });
 
+const PostArtifact = Command.define("PostArtifact", {
+  args: { channel: Schema.String, name: Schema.String, action: ArtifactAction },
+  messages: [Message.SucceededAction, Message.FailedAction],
+  execute: ({ channel, name, action }) =>
+    postArtifact(channel, name, action).pipe(
+      Effect.as(Message.SucceededAction()),
+      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+    ),
+});
+
 const SaveSetting = Command.define("SaveSetting", {
   args: { channel: Schema.String, key: SettingKey, value: Schema.String },
   messages: [Message.SucceededSetting, Message.FailedAction],
@@ -102,6 +116,14 @@ const audit = auditQuery.lift<Model, Message>({
   parentField: "audit",
   toParentMessage: (message) => Message.GotAuditMessage({ message }),
 });
+const artifacts = artifactsQuery.lift<Model, Message>({
+  parentField: "artifacts",
+  toParentMessage: (message) => Message.GotArtifactsMessage({ message }),
+});
+const artifact = artifactQuery.lift<Model, Message>({
+  parentField: "artifact",
+  toParentMessage: (message) => Message.GotArtifactMessage({ message }),
+});
 const recent = recentQuery.lift<Model, Message>({
   parentField: "recent",
   toParentMessage: (message) => Message.GotRecentMessage({ message }),
@@ -136,6 +158,7 @@ const draftsOf = (route: AppRoute) =>
     Schedules: () => ({ draftKind: "", draftSearch: "" }),
     Settings: () => ({ draftKind: "", draftSearch: "" }),
     Audit: () => ({ draftKind: "", draftSearch: "" }),
+    Artifacts: () => ({ draftKind: "", draftSearch: "" }),
     NotFound: () => ({ draftKind: "", draftSearch: "" }),
   });
 
@@ -180,6 +203,15 @@ const loadRoute: Step = (model) =>
         Schedules: () => schedules.revalidateOrLoad(model, { channel }),
         Settings: () => overview.revalidateOrLoad(model, { channel }),
         Audit: () => audit.revalidateOrLoad(model, { channel }),
+        Artifacts: ({ name }) =>
+          Update.combine(model, [
+            (stepModel) => artifacts.revalidateOrLoad(stepModel, { channel }),
+            (stepModel) =>
+              Option.match(name, {
+                onNone: () => ({ model: stepModel }),
+                onSome: (value) => artifact.revalidateOrLoad(stepModel, { channel, name: value }),
+              }),
+          ]),
         NotFound: () => ({ model }),
       }),
   });
@@ -205,6 +237,8 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     draftSearch: drafts.draftSearch,
     summary: summaryQuery.init(),
     audit: auditQuery.init(),
+    artifacts: artifactsQuery.init(),
+    artifact: artifactQuery.init(),
     recent: recentQuery.init(),
     drafts: {},
     armed: Option.none(),
@@ -240,6 +274,29 @@ export const update = (model: Model, message: Message) =>
     GotSchedulesMessage: ({ message }) => schedules.fold(model, message),
     GotSummaryMessage: ({ message }) => summary.fold(model, message),
     GotAuditMessage: ({ message }) => audit.fold(model, message),
+    GotArtifactsMessage: ({ message }) => artifacts.fold(model, message),
+    GotArtifactMessage: ({ message }) => artifact.fold(model, message),
+
+    ClickedArtifact: ({ name, action }) => {
+      const key = `artifact-${action}:${name}`;
+      const channel = currentChannel(model);
+      if (Option.isNone(channel)) {
+        return { model };
+      }
+      // Deleting asks twice; opening or closing the link does not.
+      if (action === "delete" && !Option.contains(model.armed, key)) {
+        return {
+          model: modifyFields(model, {
+            armed: () => Option.some(key),
+            notice: () => Option.none(),
+          }),
+        };
+      }
+      return {
+        model: modifyFields(model, { armed: () => Option.none() }),
+        commands: [PostArtifact({ channel: channel.value, name, action })],
+      };
+    },
     GotRecentMessage: ({ message }) => recent.fold(model, message),
 
     UpdatedDraft: ({ key, value }) => ({

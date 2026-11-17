@@ -1,6 +1,8 @@
 import { Schema } from "effect";
 
 import {
+  artifactQuery,
+  artifactsQuery,
   auditQuery,
   channelsQuery,
   entryQuery,
@@ -28,6 +30,8 @@ export const Model = Schema.Struct({
   /** The action waiting for a second click, as `kind:id`. */
   summary: summaryQuery.Model,
   audit: auditQuery.Model,
+  artifacts: artifactsQuery.Model,
+  artifact: artifactQuery.Model,
   recent: recentQuery.Model,
   /** Setting inputs the person has changed and not saved yet. */
   drafts: Schema.Record(Schema.String, Schema.String),

@@ -24,8 +24,12 @@ const Row = Schema.Struct({
   version: Schema.Finite,
   content_type: Schema.String,
   updated: Schema.Finite,
+  visibility: Schema.Literals(["public", "private"]),
 });
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
+
+/** Who may open the public link: anyone who has it, or nobody (the dashboard still can). */
+export type Visibility = "public" | "private";
 
 export interface Artifact {
   readonly name: string;
@@ -33,6 +37,7 @@ export interface Artifact {
   readonly version: number;
   readonly contentType: string;
   readonly updated: number;
+  readonly visibility: Visibility;
   readonly url: string;
 }
 
@@ -61,6 +66,18 @@ export class Artifacts extends Context.Service<
       options?: { readonly expiresInHours?: number },
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
     readonly list: Effect.Effect<ReadonlyArray<Artifact>, StateError>;
+    /** The latest version's text, for the dashboard to show. */
+    source(
+      name: string,
+    ): Effect.Effect<
+      { readonly artifact: Artifact; readonly text: string; readonly size: number },
+      ToolError | StateError | BlobError
+    >;
+    /** Open or close the public link. The page keeps its token and its data. */
+    setVisibility(
+      name: string,
+      visibility: Visibility,
+    ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
     remove(channel: string, name: string): Effect.Effect<boolean, StateError | BlobError>;
     /** The numbers of the versions kept of an artifact, oldest first. */
     history(
@@ -116,12 +133,17 @@ export class Artifacts extends Context.Service<
                content_type TEXT NOT NULL, updated INTEGER NOT NULL)`,
           ),
         );
+        // Older databases have no visibility column; the error on a second run is the answer "it is there".
+        yield* run("migrate artifact visibility", () =>
+          sql.all(`ALTER TABLE app_artifacts ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`),
+        ).pipe(Effect.ignore);
         const toArtifact = (row: typeof Row.Type): Artifact => ({
           name: row.name,
           token: row.token,
           version: row.version,
           contentType: row.content_type,
           updated: row.updated,
+          visibility: row.visibility,
           url: `${publicUrl}/a/${row.token}/${row.name}`,
         });
         const query = (operation: string, text: string, ...params: unknown[]) =>
@@ -175,6 +197,7 @@ export class Artifacts extends Context.Service<
                 meta: {
                   name,
                   do: doNameOf(channel),
+                  visibility: current?.visibility ?? "public",
                   ...(options?.expiresInHours
                     ? { expires: String(Date.now() + options.expiresInHours * 3_600_000) }
                     : {}),
@@ -196,6 +219,34 @@ export class Artifacts extends Context.Service<
               return saved!;
             }),
           list: all,
+          source: (name) =>
+            Effect.gen(function* () {
+              const artifact = yield* find(name);
+              const blob = yield* blobs.get(`a/${artifact.token}`);
+              if (!blob) return yield* new ToolError({ reason: `no artifact ${name}` });
+              return {
+                artifact,
+                text: new TextDecoder().decode(blob.body),
+                size: blob.body.length,
+              };
+            }),
+          setVisibility: (name, visibility) =>
+            Effect.gen(function* () {
+              const found = yield* find(name);
+              const blob = yield* blobs.get(`a/${found.token}`);
+              if (!blob) return yield* new ToolError({ reason: `no artifact ${name}` });
+              yield* blobs.put(`a/${found.token}`, blob.body, {
+                contentType: blob.contentType,
+                meta: { ...blob.meta, visibility },
+              });
+              const [saved] = yield* query(
+                "save artifact",
+                `UPDATE app_artifacts SET visibility = ? WHERE name = ? RETURNING *`,
+                visibility,
+                name,
+              );
+              return saved!;
+            }),
           remove: (_channel, name) =>
             Effect.gen(function* () {
               const [found] = yield* query(
