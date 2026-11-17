@@ -521,6 +521,7 @@ export const ui = {
   heroSpend: css({
     display: "flex",
     flexDirection: "column",
+    justifyContent: "space-between",
     gap: "10px",
     padding: "18px",
     border: "1px solid {colors.border}",
