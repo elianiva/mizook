@@ -29,6 +29,9 @@ export default Alchemy.Stack(
         // Artifacts, exports and backups.
         Files: files,
         PUBLIC_URL: `https://${DOMAIN}`,
+        // The dashboard at /admin: the Access application protecting it, from Zero Trust.
+        ACCESS_TEAM_DOMAIN: optional("ACCESS_TEAM_DOMAIN"),
+        ACCESS_AUD: optional("ACCESS_AUD"),
 
         BOT_TOKEN: Config.Redacted("BOT_TOKEN"),
         MIZOOK_WEBHOOK_SECRET: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),

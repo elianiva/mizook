@@ -10,6 +10,7 @@ import { Host } from "./host.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
+import * as read from "./admin/read.ts";
 
 type Hosted = Context.Service.Shape<typeof Host>;
 
@@ -125,6 +126,37 @@ export class ChatAgent extends DurableObject<Env> {
   /** What this channel has spent, for `/cost`. */
   async spend(): Promise<Spend> {
     return this.runtime.runPromise(Usage.use((usage) => usage.spend));
+  }
+
+  /** Read-only data for the dashboard, already authorised by the Worker. */
+  async dashboard(page: string, params: Record<string, string>): Promise<unknown> {
+    const sql = {
+      all: <T>(query: string, ...args: unknown[]) =>
+        this.ctx.storage.sql.exec(query, ...(args as never[])).toArray() as T[],
+    };
+    const now = Date.now();
+    const num = (v: string | undefined) => (v === undefined || v === "" ? undefined : Number(v));
+    switch (page) {
+      case "overview":
+        return read.overview(sql, now);
+      case "messages":
+        return read.messages(sql, {
+          ...(params.kind && { kind: params.kind }),
+          ...(params.q && { q: params.q }),
+          ...(num(params.before) !== undefined && { before: num(params.before)! }),
+          limit: 50,
+        });
+      case "message":
+        return read.message(sql, Number(params.i));
+      case "memory":
+        return read.memoryView(sql);
+      case "usage":
+        return read.usage(sql, Math.min(Math.max(Number(params.days) || 30, 1), 365), now);
+      case "schedules":
+        return read.schedules(sql);
+      default:
+        return undefined;
+    }
   }
 
   override async fetch(request: Request): Promise<Response> {

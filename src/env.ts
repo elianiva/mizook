@@ -21,6 +21,9 @@ export interface Env {
   PUBLIC_URL?: string;
   BUDGET_DAILY?: string;
   Files: R2Bucket;
+  /** `<team>.cloudflareaccess.com`. The dashboard stays shut while this or the audience is empty. */
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   PARALLEL_API_KEY?: string;
   EXA_API_KEY?: string;
 }

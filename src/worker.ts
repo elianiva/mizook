@@ -4,6 +4,7 @@ import { artifactHeaders, renderArtifact } from "./artifact-render.ts";
 import { DATA_KEY, dataKey, dataPrefix, MAX_KEYS } from "./artifact-data.ts";
 import { hookTokenValid } from "./hooks.ts";
 import { channelOf } from "./route.ts";
+import { handleAdmin } from "./admin/handler.ts";
 
 export { ChatAgent } from "./chat-agent.ts";
 export { Hub } from "./hub.ts";
@@ -20,6 +21,8 @@ const sameSecret = async (a: string, b: string): Promise<boolean> => {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
+
+    if (pathname === "/admin" || pathname.startsWith("/admin/")) return handleAdmin(request, env);
 
     if (pathname === "/telegram/webhook" && request.method === "POST") {
       // Turn away anything Telegram did not send before it wakes the chat.

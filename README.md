@@ -91,3 +91,12 @@ vp test      # the memory package's tests and the Telegram chunker
 Each name may be a secret or a variable; the workflow reads both.
 
 The deploy job points Telegram at the Worker after each deploy. To do it by hand: `vp run webhook https://mzk.elianiva.com`.
+
+## Dashboard
+
+A read-only dashboard lives at `/admin`: status and spend, the chat log, the memory view, usage, and schedules, per channel.
+
+1. In Zero Trust, add a self-hosted Access application for `mzk.elianiva.com/admin` (path `admin*`), with an allow policy for yourself and GitHub or Google as the identity provider. Leave `/telegram/webhook`, `/hook`, `/a`, `/d` and `/x` outside it.
+2. Copy the application's audience tag. Set `ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`) and `ACCESS_AUD`, then deploy.
+
+The Worker checks the Access token itself (RS256, issuer, audience, expiry). While either variable is empty, `/admin` answers 503.
