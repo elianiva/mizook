@@ -72,6 +72,10 @@ jobs:
       TELEGRAM_ALLOWED_USER_IDS: ${{ secrets.TELEGRAM_ALLOWED_USER_IDS || vars.TELEGRAM_ALLOWED_USER_IDS }}
       INSTRUCTIONS: ${{ secrets.INSTRUCTIONS || vars.INSTRUCTIONS }}
       BUDGET_DAILY: ${{ secrets.BUDGET_DAILY || vars.BUDGET_DAILY }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN || vars.ACCESS_TEAM_DOMAIN }}
+      ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL || vars.ADMIN_EMAIL }}
+      GH_CLIENT_ID: ${{ secrets.GH_CLIENT_ID || vars.GH_CLIENT_ID }}
+      GH_CLIENT_SECRET: ${{ secrets.GH_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -80,6 +84,7 @@ jobs:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @mizook/dashboard build
       - run: pnpm exec alchemy deploy --stage prod --yes
       # Telegram must know where the bot lives and what its menu holds. Both calls are idempotent, so every deploy repeats them.
       - run: node scripts/set-webhook.ts https://mzk.elianiva.com
