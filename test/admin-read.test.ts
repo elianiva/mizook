@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
-import { memoryView, messages, overview, usage } from "../src/admin/read.ts";
+import { audit, memoryView, messages, overview, usage } from "../src/admin/read.ts";
 
 const setup = () => {
   const db = new DatabaseSync(":memory:");
@@ -62,7 +62,36 @@ test("the memory view names lines as the agent does and usage groups by day and 
   add.run(day + 1000, "memory", "m2", 0.25);
   add.run(day - 3 * 86_400_000, "turn", "m1", 9);
   const report = await usage(sql, 1, day + 2000);
-  expect(report.byDay).toEqual([{ day: "2026-01-02", cost: 0.75, calls: 2 }]);
+  expect(report.byDay).toEqual([
+    { day: "2026-01-02", cost: 0.75, calls: 2, input: 2, output: 4, cacheRead: 6 },
+  ]);
   expect(report.byModel.map((m) => m.model)).toEqual(["m1", "m2"]);
   expect(report.byKind.map((k) => k.kind)).toEqual(["turn", "memory"]);
+});
+
+test("tool calls are counted by the first word, inside the range only, and the audit lists newest first", async () => {
+  const { db, sql } = setup();
+  db.exec(`CREATE TABLE mem_messages (i INTEGER PRIMARY KEY, kind TEXT, text TEXT, size INTEGER, date TEXT);
+    CREATE TABLE app_audit (at INTEGER, who TEXT, action TEXT, target INTEGER, ok INTEGER)`);
+  const now = Date.UTC(2026, 0, 10);
+  const add = db.prepare(`INSERT INTO mem_messages VALUES (?, ?, ?, 1, ?)`);
+  const day = (n: number) => new Date(now - n * 86_400_000).toISOString();
+  add.run(0, "tool", 'search {"q":"a"}', day(1));
+  add.run(1, "tool", 'search {"q":"b"}', day(2));
+  add.run(2, "tool", "skills", day(1));
+  add.run(3, "tool", 'search {"q":"old"}', day(20));
+  add.run(4, "user", "search is not a tool call", day(1));
+  const report = await usage(sql, 7, now);
+  expect(report.byTool).toEqual([
+    { tool: "search", calls: 2 },
+    { tool: "skills", calls: 1 },
+  ]);
+
+  const log = db.prepare(`INSERT INTO app_audit VALUES (?, ?, ?, ?, ?)`);
+  log.run(1, "a@x", "deny", 7, 1);
+  log.run(2, "a@x", "stop", 0, 0);
+  expect((await audit(sql)).map((r) => [r.action, r.ok])).toEqual([
+    ["stop", false],
+    ["deny", true],
+  ]);
 });

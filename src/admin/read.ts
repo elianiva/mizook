@@ -153,7 +153,16 @@ export const memoryView = async (sql: SqlDriver): Promise<ViewLine[]> => {
 };
 
 export interface UsageReport {
-  readonly byDay: ReadonlyArray<{ day: string; cost: number; calls: number }>;
+  readonly byDay: ReadonlyArray<{
+    day: string;
+    cost: number;
+    calls: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+  }>;
+  /** Tool calls the agent made, by tool name, most used first. */
+  readonly byTool: ReadonlyArray<{ tool: string; calls: number }>;
   readonly byModel: ReadonlyArray<{
     model: string;
     cost: number;
@@ -168,11 +177,28 @@ export interface UsageReport {
 /** Spend over the last `days` days, by UTC day, model and kind of call. */
 export const usage = async (sql: SqlDriver, days: number, now: number): Promise<UsageReport> => {
   const since = now - days * DAY;
-  const byDay = await rows<{ day: string; cost: number; calls: number }>(
+  const byDay = (
+    await rows<{
+      day: string;
+      cost: number;
+      calls: number;
+      input: number;
+      output: number;
+      cache_read: number;
+    }>(
+      sql,
+      `SELECT strftime('%Y-%m-%d', at / 1000, 'unixepoch') AS day, SUM(cost) AS cost, COUNT(*) AS calls,
+              SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read
+       FROM app_usage WHERE at >= ? GROUP BY day ORDER BY day`,
+      since,
+    )
+  ).map(({ cache_read, ...rest }) => ({ ...rest, cacheRead: cache_read }));
+  // A tool message is `name {json arguments}`: the first word is the tool.
+  const byTool = await rows<{ tool: string; calls: number }>(
     sql,
-    `SELECT strftime('%Y-%m-%d', at / 1000, 'unixepoch') AS day, SUM(cost) AS cost, COUNT(*) AS calls
-     FROM app_usage WHERE at >= ? GROUP BY day ORDER BY day`,
-    since,
+    `SELECT substr(text, 1, instr(text || ' ', ' ') - 1) AS tool, COUNT(*) AS calls
+     FROM mem_messages WHERE kind = 'tool' AND date >= ? GROUP BY tool ORDER BY calls DESC LIMIT 12`,
+    new Date(since).toISOString(),
   );
   const byModel = await rows<{
     model: string;
@@ -196,6 +222,7 @@ export const usage = async (sql: SqlDriver, days: number, now: number): Promise<
   );
   return {
     byDay,
+    byTool,
     byModel: byModel.map(({ cache_read, ...rest }) => ({ ...rest, cacheRead: cache_read })),
     byKind,
   };
@@ -215,3 +242,20 @@ export const schedules = async (sql: SqlDriver): Promise<ScheduleRow[]> =>
       `SELECT id, spec, prompt, next_at FROM app_schedules WHERE active = 1 ORDER BY next_at, id`,
     )
   ).map((s) => ({ id: s.id, spec: s.spec, prompt: s.prompt, nextAt: s.next_at }));
+
+export interface AuditRow {
+  readonly at: number;
+  readonly who: string;
+  readonly action: string;
+  readonly target: number;
+  readonly ok: boolean;
+}
+
+/** What people did from the dashboard, newest first. */
+export const audit = async (sql: SqlDriver): Promise<AuditRow[]> =>
+  (
+    await rows<{ at: number; who: string; action: string; target: number; ok: number }>(
+      sql,
+      `SELECT at, who, action, target, ok FROM app_audit ORDER BY at DESC LIMIT 100`,
+    )
+  ).map((r) => ({ ...r, ok: r.ok === 1 }));

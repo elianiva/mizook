@@ -11,6 +11,7 @@ import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
 import { Schedules } from "./schedules.ts";
+import { Commands } from "./commands.ts";
 import { State } from "./state.ts";
 import * as read from "./admin/read.ts";
 
@@ -146,7 +147,7 @@ export class ChatAgent extends DurableObject<Env> {
           ...(params.kind && { kind: params.kind }),
           ...(params.q && { q: params.q }),
           ...(num(params.before) !== undefined && { before: num(params.before)! }),
-          limit: 50,
+          limit: Math.min(Math.max(num(params.limit) ?? 50, 1), 50),
         });
       case "message":
         return read.message(sql, Number(params.i));
@@ -156,6 +157,8 @@ export class ChatAgent extends DurableObject<Env> {
         return read.usage(sql, Math.min(Math.max(Number(params.days) || 30, 1), 365), now);
       case "schedules":
         return read.schedules(sql);
+      case "audit":
+        return read.audit(sql);
       default:
         return undefined;
     }
@@ -189,6 +192,35 @@ export class ChatAgent extends DurableObject<Env> {
       this.ctx.waitUntil(this.runtime.runPromise(after).then(() => this.rearm()));
     }
     return done.ok;
+  }
+
+  /** Stop the turn that is running, as `/stop` does. */
+  async stop(who: string): Promise<boolean> {
+    const stopped = await this.runtime.runPromise(
+      Effect.gen(function* () {
+        const thread = yield* (yield* State).meta("thread");
+        return thread === undefined ? false : yield* (yield* Agent).stop(thread);
+      }),
+    );
+    await this.runtime.runPromise(State.use((state) => state.audit(who, "stop", 0, stopped)));
+    return stopped;
+  }
+
+  /**
+   * Change one of this channel's settings the way its slash command does, so the checks and the
+   * reload are the command's own. `undefined` resets it. Returns the command's reply.
+   */
+  async setting(who: string, key: string, value: string | undefined): Promise<string> {
+    const reply = await this.runtime.runPromise(
+      Effect.gen(function* () {
+        const thread = yield* (yield* State).meta("thread");
+        if (thread === undefined) return "Nothing has been said in this channel yet.";
+        const text = `/${key} ${value === undefined ? "reset" : value}`;
+        return (yield* (yield* Commands).run(thread, thread, text)) ?? "Unknown setting.";
+      }),
+    );
+    await this.runtime.runPromise(State.use((state) => state.audit(who, `set:${key}`, 0, true)));
+    return reply;
   }
 
   override async fetch(request: Request): Promise<Response> {

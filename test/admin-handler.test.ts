@@ -140,3 +140,75 @@ test("a write needs the token, the csrf header and this origin, and acts once", 
   expect((await post("/admin/api/approvals/7/deny?c=nope", good)).status).toBe(404);
   vi.unstubAllGlobals();
 });
+
+test("stop and settings are writes too, and settings are checked before they reach the channel", async () => {
+  const token = await signedIn();
+  const calls: unknown[][] = [];
+  const env = configured({
+    ChatAgent: {
+      getByName: () => ({
+        stop: async (...args: unknown[]) => (calls.push(["stop", ...args]), true),
+        setting: async (...args: unknown[]) => (calls.push(["setting", ...args]), "saved"),
+      }),
+    } as never,
+  });
+  const post = (path: string, body?: unknown) =>
+    call(
+      env,
+      path,
+      { method: "POST", ...(body !== undefined && { body: JSON.stringify(body) }) },
+      { "cf-access-jwt-assertion": token, "x-mizook-csrf": "1", origin: "https://x.test" },
+    );
+  const c = "?c=-100%3A1";
+
+  expect((await post(`/admin/api/stop${c}`)).status).toBe(200);
+  expect((await post(`/admin/api/settings/budget${c}`, { value: "2.5" })).status).toBe(200);
+  expect((await post(`/admin/api/settings/budget${c}`, { value: "" })).status).toBe(200);
+  expect((await post(`/admin/api/settings/budget${c}`, { value: "lots" })).status).toBe(400);
+  expect((await post(`/admin/api/settings/budget${c}`, { value: "-1" })).status).toBe(400);
+  expect((await post(`/admin/api/settings/timezone${c}`, { value: "Mars/Base" })).status).toBe(400);
+  expect((await post(`/admin/api/settings/model${c}`, { value: "a b; rm" })).status).toBe(400);
+  expect((await post(`/admin/api/settings/model${c}`, { value: 5 })).status).toBe(400);
+  expect((await post(`/admin/api/settings/secret${c}`, { value: "x" })).status).toBe(404);
+  expect((await post(`/admin/api/settings/budget${c}`)).status).toBe(400);
+  expect(calls).toEqual([
+    ["stop", "me@example.com"],
+    ["setting", "me@example.com", "budget", "2.5"],
+    ["setting", "me@example.com", "budget", undefined],
+  ]);
+  vi.unstubAllGlobals();
+});
+
+test("the summary has one line per channel", async () => {
+  const headers = { "cf-access-jwt-assertion": await signedIn() };
+  const env = configured({
+    ChatAgent: {
+      getByName: () => ({
+        dashboard: async () => ({
+          messages: 4,
+          spend: { last24h: 0.5, last7d: 2 },
+          turns: [{}],
+          approvals: [{}, {}],
+          schedules: 3,
+          settings: { budget: "1" },
+        }),
+      }),
+    } as never,
+  });
+  const res = await call(env, "/admin/api/summary", undefined, headers);
+  expect(await res.json()).toEqual([
+    {
+      doName: "-100:1",
+      name: "finance",
+      lastActive: 1,
+      messages: 4,
+      spend24h: 0.5,
+      spend7d: 2,
+      pending: 1,
+      approvals: 2,
+      schedules: 3,
+      budget: 1,
+    },
+  ]);
+  vi.unstubAllGlobals();
+});
