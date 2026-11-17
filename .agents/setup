@@ -2,11 +2,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "==> corepack/pnpm"
-if ! command -v pnpm >/dev/null 2>&1; then
-  corepack enable || npm install -g corepack && corepack enable
+echo "==> pnpm"
+want="$(node -p "require('./package.json').packageManager")"
+if [ "$(pnpm -v 2>/dev/null || true)" != "${want#pnpm@}" ]; then
+  command -v corepack >/dev/null 2>&1 || npm install -g --force corepack
+  corepack enable
+  corepack prepare "$want" --activate
 fi
-corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
 echo "==> pnpm install"
 time pnpm install --frozen-lockfile
