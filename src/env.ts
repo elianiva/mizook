@@ -24,6 +24,8 @@ export interface Env {
   /** `<team>.cloudflareaccess.com`. The dashboard stays shut while this or the audience is empty. */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  /** The built dashboard, served only after the Access check. */
+  ASSETS?: Fetcher;
   PARALLEL_API_KEY?: string;
   EXA_API_KEY?: string;
 }

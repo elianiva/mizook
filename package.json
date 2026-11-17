@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
-    "deploy": "alchemy deploy",
+    "deploy": "pnpm --filter @mizook/dashboard build && alchemy deploy",
     "destroy": "alchemy destroy",
     "webhook": "node --env-file=.env scripts/set-webhook.ts",
     "test": "vp test",
@@ -13,7 +13,7 @@
     "fmt": "vp check --fix",
     "lint": "vp lint",
     "prepare": "lefthook install && effect-tsrs patch --oxlint",
-    "typecheck": "tsrs --noEmit -p tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json"
+    "typecheck": "tsrs --noEmit -p tsconfig.json && tsrs --noEmit -p apps/dashboard/tsconfig.json && effect-tsrs diagnostics --strict --project apps/dashboard/tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json"
   },
   "dependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.85",

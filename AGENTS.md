@@ -8,6 +8,7 @@
 - If `vp lint` fails after an install that skipped scripts, run `pnpm exec effect-tsrs patch --oxlint`.
 - Alchemy and infrastructure live only in the root `alchemy.run.ts`; `src/` never imports Alchemy.
 - `packages/memory` knows nothing about Cloudflare, Telegram, or any model.
+- The dashboard is `apps/dashboard`: Foldkit, with styles written through Panda's `css()` and no rounded corners. It reads only `/admin/api`; the Worker's `src/admin` owns that API and the Access check.
 - Failures are tagged errors (`Data.TaggedError`), never a bare `Error` in an Effect failure channel.
 
 <!--VITE PLUS START-->

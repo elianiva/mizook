@@ -46,6 +46,9 @@ export default Alchemy.Stack(
 
     const worker = yield* Cloudflare.Worker("Mizook", {
       main: "./src/worker.ts",
+      // The dashboard, built by `pnpm --filter @mizook/dashboard build`. Every request goes through
+      // the Worker first, so the Access check runs before any file is served.
+      assets: { directory: "./apps/dashboard/dist", base: "/admin", runWorkerFirst: true },
       domain: { name: DOMAIN },
       compatibility: { date: "2026-05-08", flags: ["nodejs_compat"] },
       env: {
