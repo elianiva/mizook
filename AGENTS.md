@@ -4,8 +4,7 @@
 - Verify with `vp check`, `pnpm typecheck`, and `vp test`.
 - Write commit subjects as plain sentences, with no `feat:` or `chore:` prefix.
 - Never run `alchemy deploy` or `alchemy destroy` without explicit approval.
-- Use only `tsrs` and `effect-tsrs` for type checks. Never run `tsc`, and do not add `typescript` or turn on `typeCheck` in `vite.config.ts`.
-- If `vp lint` fails after an install that skipped scripts, run `pnpm exec effect-tsrs patch --oxlint`.
+- Use only `tsrs` for type checks and type-aware linting, and `effect-tsrs` for Effect diagnostics. Never run `tsc` or `tsgolint`, and do not add `typescript`: Oxlint's `typeAware` and `typeCheck` run on `tsrs-lint`, which Vite+ ships.
 - Alchemy and infrastructure live only in the root `alchemy.run.ts`; `src/` never imports Alchemy.
 - `packages/memory` knows nothing about Cloudflare, Telegram, or any model.
 - The dashboard is `apps/dashboard`: Foldkit, with styles written through Panda's `css()` and no rounded corners. It reads only `/admin/api`; the Worker's `src/admin` owns that API and the Access check.

@@ -1,4 +1,3 @@
-import { recommended } from "@yielded/effect-tsrs/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
 const ignored = [
@@ -15,29 +14,26 @@ export default defineConfig({
   fmt: { ignorePatterns: [...ignored, "**/*.d.ts"] },
   lint: {
     ignorePatterns: ignored,
-    // `effect-tsrs patch --oxlint` (run by `prepare`) swaps the tsgolint backend for effect-tsrs,
-    // so type-aware lint runs only the Effect rules. Types are checked by `tsrs`.
-    options: { typeAware: true, typeCheck: false },
-    plugins: ["typescript", "unicorn", "oxc", ...recommended.plugins],
+    // Oxlint's type-aware rules and type checks run on tsrs (tsrs-lint), which Vite+ ships.
+    options: { typeAware: true, typeCheck: true },
+    plugins: ["typescript", "unicorn", "oxc"],
     rules: {
-      ...recommended.rules,
-      // effect-tsrs hands these default type-aware rules to tsgolint. Keep them off.
-      "typescript/await-thenable": "off",
-      "typescript/no-array-delete": "off",
-      "typescript/no-base-to-string": "off",
-      "typescript/no-duplicate-type-constituents": "off",
-      "typescript/no-floating-promises": "off",
-      "typescript/no-for-in-array": "off",
-      "typescript/no-implied-eval": "off",
-      "typescript/no-meaningless-void-operator": "off",
-      "typescript/no-misused-spread": "off",
-      "typescript/no-redundant-type-constituents": "off",
-      "typescript/no-unsafe-unary-minus": "off",
-      "typescript/no-useless-default-assignment": "off",
-      "typescript/require-array-sort-compare": "off",
-      "typescript/restrict-template-expressions": "off",
-      "typescript/unbound-method": "off",
+      "typescript/await-thenable": "error",
+      "typescript/no-array-delete": "error",
+      "typescript/no-base-to-string": "error",
+      "typescript/no-duplicate-type-constituents": "error",
       "typescript/no-explicit-any": "error",
+      "typescript/no-floating-promises": "error",
+      "typescript/no-for-in-array": "error",
+      "typescript/no-implied-eval": "error",
+      "typescript/no-meaningless-void-operator": "error",
+      "typescript/no-misused-spread": "error",
+      "typescript/no-redundant-type-constituents": "error",
+      "typescript/no-unsafe-unary-minus": "error",
+      "typescript/no-useless-default-assignment": "error",
+      "typescript/require-array-sort-compare": "error",
+      "typescript/restrict-template-expressions": "error",
+      "typescript/unbound-method": "error",
     },
   },
 });

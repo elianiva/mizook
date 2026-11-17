@@ -8,18 +8,18 @@
     "build": "panda codegen && vite build"
   },
   "dependencies": {
-    "@foldkit/ui": "0.170.0",
+    "@foldkit/ui": "0.171.0",
     "@fontsource-variable/google-sans": "^5.3.2",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "effect": "4.1.4",
-    "foldkit": "0.170.0"
+    "foldkit": "0.171.0"
   },
   "devDependencies": {
-    "@foldkit/vite-plugin": "0.29.0",
+    "@foldkit/vite-plugin": "0.29.1",
     "@pandacss/dev": "2.5.0",
     "@pandacss/preset-base": "2.5.0",
     "@pandacss/preset-panda": "2.5.0",
     "@pandacss/vite": "2.5.0",
-    "vite": "8.3.6"
+    "vite": "8.3.8"
   }
 }
