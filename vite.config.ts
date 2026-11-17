@@ -8,6 +8,7 @@ const ignored = [
   "node_modules/**",
   "dist/**",
   "patches/**",
+  "**/styled-system/**",
 ];
 
 export default defineConfig({
