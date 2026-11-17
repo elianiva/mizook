@@ -297,6 +297,15 @@ export const postAction = (
     channel,
   ).pipe(Effect.asVoid);
 
+/** Publish pasted html or markdown. Gives the public link. */
+export const postNewArtifact = (
+  channel: string,
+  draft: { name: string; kind: string; content: string },
+): Effect.Effect<string, string> =>
+  write("artifacts", channel, draft).pipe(
+    Effect.map((reply) => String((reply as { url?: string }).url ?? "")),
+  );
+
 export const postArtifact = (
   channel: string,
   name: string,

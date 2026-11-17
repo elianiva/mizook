@@ -10,6 +10,7 @@ import {
   artifactQuery,
   artifactsQuery,
   postArtifact,
+  postNewArtifact,
   SettingKey,
   auditQuery,
   channelsQuery,
@@ -68,6 +69,21 @@ const PostArtifact = Command.define("PostArtifact", {
   execute: ({ channel, name, action }) =>
     postArtifact(channel, name, action).pipe(
       Effect.as(Message.SucceededAction()),
+      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+    ),
+});
+
+const PostNewArtifact = Command.define("PostNewArtifact", {
+  args: {
+    channel: Schema.String,
+    name: Schema.String,
+    kind: Schema.String,
+    content: Schema.String,
+  },
+  messages: [Message.SucceededPublish, Message.FailedAction],
+  execute: ({ channel, name, kind, content }) =>
+    postNewArtifact(channel, { name, kind, content }).pipe(
+      Effect.map((url) => Message.SucceededPublish({ url })),
       Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
     ),
 });
@@ -241,6 +257,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     artifact: artifactQuery.init(),
     recent: recentQuery.init(),
     drafts: {},
+    composer: { name: "", kind: "markdown", content: "" },
     armed: Option.none(),
     notice: Option.none(),
   });
@@ -276,6 +293,32 @@ export const update = (model: Model, message: Message) =>
     GotAuditMessage: ({ message }) => audit.fold(model, message),
     GotArtifactsMessage: ({ message }) => artifacts.fold(model, message),
     GotArtifactMessage: ({ message }) => artifact.fold(model, message),
+
+    UpdatedComposer: ({ field, value }) => ({
+      model: modifyFields(model, {
+        composer: (composer) =>
+          field === "kind"
+            ? { ...composer, kind: value === "html" ? "html" : "markdown" }
+            : { ...composer, [field]: value },
+      }),
+    }),
+    ClickedPublish: () =>
+      Option.match(currentChannel(model), {
+        onNone: () => ({ model }),
+        onSome: (channel) => ({
+          model: modifyFields(model, { notice: () => Option.none() }),
+          commands: [
+            PostNewArtifact({ channel, ...model.composer, name: model.composer.name.trim() }),
+          ],
+        }),
+      }),
+    SucceededPublish: ({ url }) =>
+      loadRoute(
+        modifyFields(model, {
+          composer: () => ({ name: "", kind: "markdown" as const, content: "" }),
+          notice: () => Option.some(`Published: ${url}`),
+        }),
+      ),
 
     ClickedArtifact: ({ name, action }) => {
       const key = `artifact-${action}:${name}`;

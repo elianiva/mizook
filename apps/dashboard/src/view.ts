@@ -1177,21 +1177,116 @@ const settingsView = (model: Model, channel: string, h: H): Html =>
 
 // ARTIFACTS
 
-const artifactButton = (
-  model: Model,
-  row: typeof ArtifactRow.Type,
-  action: "public" | "private" | "delete",
-  label: string,
-  h: H,
-): Html => {
-  const armed = action === "delete" && Option.contains(model.armed, `artifact-delete:${row.name}`);
+const deleteButton = (model: Model, row: typeof ArtifactRow.Type, h: H): Html => {
+  const armed = Option.contains(model.armed, `artifact-delete:${row.name}`);
   return h.button(
     [
       h.Type("button"),
       h.Class(armed ? `${ui.buttonSmall} ${ui.buttonArmed}` : ui.buttonSmall),
-      h.OnClick(Message.ClickedArtifact({ name: row.name, action })),
+      h.OnClick(Message.ClickedArtifact({ name: row.name, action: "delete" })),
     ],
-    [armed ? "Confirm delete" : label],
+    [armed ? "Confirm delete" : "Delete"],
+  );
+};
+
+const kindLabel = (contentType: string): string => {
+  const type = contentType.split(";")[0] ?? "";
+  return type.includes("table")
+    ? "table"
+    : type.includes("chart")
+      ? "chart"
+      : type.includes("markdown")
+        ? "markdown"
+        : type.includes("html")
+          ? "html"
+          : (type.split("/")[1] ?? "file");
+};
+
+const visibilityToggle = (row: typeof ArtifactRow.Type, h: H): Html =>
+  h.div(
+    [h.Class(ui.segmented), h.Role("group"), h.AriaLabel(`Link of ${row.name}`)],
+    Array.map(["public", "private"] as const, (choice) => {
+      const on = row.visibility === choice;
+      return h.button(
+        [
+          h.Type("button"),
+          h.Class(ui.segment),
+          h.AriaCurrent(on ? "page" : "false"),
+          ...(on ? [] : [h.OnClick(Message.ClickedArtifact({ name: row.name, action: choice }))]),
+        ],
+        [choice],
+      );
+    }),
+  );
+
+const artifactCard = (model: Model, channel: string, row: typeof ArtifactRow.Type, h: H): Html => {
+  const isPublic = row.visibility === "public";
+  return h.keyed("div")(
+    row.name,
+    [h.Class(ui.card)],
+    [
+      h.div(
+        [h.Class(isPublic ? ui.cardWhen : `${ui.cardWhen} ${ui.tileHatch}`)],
+        [
+          h.span([h.Class(ui.tileKind)], [kindLabel(row.contentType)]),
+          h.span([h.Class(`${ui.muted} ${ui.mono}`)], [`v${row.version}`]),
+        ],
+      ),
+      h.div(
+        [h.Class(ui.cardBody)],
+        [
+          h.div(
+            [h.Class(ui.cardHead)],
+            [h.span([h.Class(`${ui.strong} ${ui.artifactName}`)], [row.name])],
+          ),
+          h.div(
+            [h.Class(`${ui.muted} ${ui.mono}`)],
+            [`${row.contentType.split(";")[0] ?? ""} · updated ${ago(row.updated)}`],
+          ),
+          h.div(
+            [h.Class(`${ui.urlLine} ${isPublic ? "" : ui.urlOff}`)],
+            [isPublic ? row.url : "Link closed"],
+          ),
+          h.div(
+            [h.Class(ui.cardFoot)],
+            [
+              visibilityToggle(row, h),
+              h.div(
+                [h.Class(ui.actionsRow)],
+                [
+                  ...(isPublic
+                    ? [
+                        h.a(
+                          [
+                            h.Class(ui.buttonSmall),
+                            h.Href(row.url),
+                            h.Target("_blank"),
+                            h.Rel("noopener noreferrer"),
+                          ],
+                          ["Open"],
+                        ),
+                      ]
+                    : []),
+                  h.a(
+                    [
+                      h.Class(ui.buttonSmall),
+                      h.Href(
+                        artifactsRouter({
+                          channel: Option.some(channel),
+                          name: Option.some(row.name),
+                        }),
+                      ),
+                    ],
+                    ["Source"],
+                  ),
+                  deleteButton(model, row, h),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
   );
 };
 
@@ -1220,6 +1315,68 @@ const artifactSourceView = (model: Model, channel: string, name: string, h: H): 
     ),
   );
 
+const composerView = (model: Model, h: H): Html => {
+  const { name, kind, content } = model.composer;
+  const ready = name.trim() !== "" && content.trim() !== "";
+  return sectionView(
+    "Publish",
+    h.div(
+      [h.Class(ui.stack)],
+      [
+        h.div(
+          [h.Class(ui.toolbar)],
+          [
+            h.input([
+              h.Class(ui.input),
+              h.Type("text"),
+              h.AriaLabel("Name"),
+              h.Placeholder(kind === "html" ? "my-page.html" : "my-notes"),
+              h.Value(name),
+              h.OnInput((value) => Message.UpdatedComposer({ field: "name", value })),
+            ]),
+            h.div(
+              [h.Class(ui.segmented), h.Role("group"), h.AriaLabel("Kind")],
+              Array.map(["markdown", "html"] as const, (choice) =>
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.Class(ui.segment),
+                    h.AriaCurrent(kind === choice ? "page" : "false"),
+                    h.OnClick(Message.UpdatedComposer({ field: "kind", value: choice })),
+                  ],
+                  [choice],
+                ),
+              ),
+            ),
+          ],
+        ),
+        h.textarea([
+          h.Class(`${ui.textarea} ${ui.composerBody}`),
+          h.AriaLabel("Content"),
+          h.Placeholder(kind === "html" ? "<h1>Paste HTML</h1>" : "# Paste Markdown"),
+          h.Value(content),
+          h.OnInput((value) => Message.UpdatedComposer({ field: "content", value })),
+        ]),
+        h.div(
+          [h.Class(ui.toolbar)],
+          [
+            h.button(
+              [
+                h.Type("button"),
+                h.Class(ui.buttonPrimary),
+                h.Disabled(!ready),
+                h.OnClick(Message.ClickedPublish()),
+              ],
+              ["Publish"],
+            ),
+          ],
+        ),
+      ],
+    ),
+    h,
+  );
+};
+
 const artifactsView = (model: Model, channel: string, name: Option.Option<string>, h: H): Html =>
   remote(artifactsQuery.read(model.artifacts, { channel }), h, skeletonView(h, 1), (rows) =>
     Array.match(rows, {
@@ -1228,88 +1385,9 @@ const artifactsView = (model: Model, channel: string, name: Option.Option<string
         h.div(
           [h.Class(ui.stack)],
           [
-            tableView(
-              [
-                th("Name", h),
-                th("Type", h),
-                th("Version", h, true),
-                th("Updated", h),
-                th("Link", h),
-                th("", h),
-              ],
-              Array.map(list, (row) =>
-                h.keyed("tr")(
-                  row.name,
-                  [h.Class(ui.row)],
-                  [
-                    h.td([h.Class(`${ui.td} ${ui.strong}`)], [row.name]),
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [row.contentType.split(";")[0] ?? ""]),
-                    h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [`v${row.version}`]),
-                    h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [ago(row.updated)]),
-                    h.td(
-                      [h.Class(ui.td)],
-                      [
-                        h.span(
-                          [
-                            h.Class(ui.badge),
-                            h.Style({
-                              color:
-                                row.visibility === "public"
-                                  ? "var(--colors-ok)"
-                                  : "var(--colors-fg-muted)",
-                            }),
-                          ],
-                          [row.visibility],
-                        ),
-                      ],
-                    ),
-                    h.td(
-                      [h.Class(ui.td)],
-                      [
-                        h.div(
-                          [h.Class(ui.actions)],
-                          [
-                            ...(row.visibility === "public"
-                              ? [
-                                  h.a(
-                                    [
-                                      h.Class(ui.buttonSmall),
-                                      h.Href(row.url),
-                                      h.Target("_blank"),
-                                      h.Rel("noopener noreferrer"),
-                                    ],
-                                    ["Open"],
-                                  ),
-                                ]
-                              : []),
-                            h.a(
-                              [
-                                h.Class(ui.buttonSmall),
-                                h.Href(
-                                  artifactsRouter({
-                                    channel: Option.some(channel),
-                                    name: Option.some(row.name),
-                                  }),
-                                ),
-                              ],
-                              ["Source"],
-                            ),
-                            artifactButton(
-                              model,
-                              row,
-                              row.visibility === "public" ? "private" : "public",
-                              row.visibility === "public" ? "Make private" : "Make public",
-                              h,
-                            ),
-                            artifactButton(model, row, "delete", "Delete", h),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              h,
+            h.div(
+              [h.Class(ui.cards)],
+              Array.map(list, (row) => artifactCard(model, channel, row, h)),
             ),
             ...Option.match(name, {
               onNone: () => [],
@@ -1464,7 +1542,11 @@ const pageView = (model: Model, h: H): Html =>
         Artifacts: ({ name }) =>
           h.div(
             [h.Class(ui.page)],
-            [titleView("Artifacts", [], h), artifactsView(model, channel, name, h)],
+            [
+              titleView("Artifacts", [], h),
+              composerView(model, h),
+              artifactsView(model, channel, name, h),
+            ],
           ),
         Audit: () =>
           h.div([h.Class(ui.page)], [titleView("Audit", [], h), auditView(model, channel, h)]),

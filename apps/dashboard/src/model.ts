@@ -35,6 +35,12 @@ export const Model = Schema.Struct({
   recent: recentQuery.Model,
   /** Setting inputs the person has changed and not saved yet. */
   drafts: Schema.Record(Schema.String, Schema.String),
+  /** The artifact being written on the Artifacts page. */
+  composer: Schema.Struct({
+    name: Schema.String,
+    kind: Schema.Literals(["markdown", "html"]),
+    content: Schema.String,
+  }),
   armed: Schema.Option(Schema.String),
   notice: Schema.Option(Schema.String),
 });

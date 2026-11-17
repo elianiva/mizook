@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import type { Env } from "../env.ts";
 import type { ChannelInfo } from "../host.ts";
+import { KIND_TYPES } from "../artifact-render.ts";
 import { makeVerifier, type Verifier } from "./access.ts";
 
 interface ChannelRpc {
@@ -8,6 +9,12 @@ interface ChannelRpc {
   act(who: string, action: string, id: number): Promise<boolean>;
   stop(who: string): Promise<boolean>;
   artifact(who: string, name: string, action: string): Promise<boolean>;
+  publishArtifact(
+    who: string,
+    name: string,
+    content: string,
+    contentType: string,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
   setting(who: string, key: string, value: string | undefined): Promise<string>;
 }
 
@@ -135,6 +142,17 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
 
   if (url.pathname === "/admin/api/stop") {
     return (await rpc.stop(who)) ? json({ ok: true }) : json({ error: "already gone" }, 409);
+  }
+
+  if (url.pathname === "/admin/api/artifacts") {
+    const body = (await request.json().catch(() => undefined)) as
+      | { name?: unknown; kind?: unknown; content?: unknown }
+      | undefined;
+    const kind = body?.kind === "html" || body?.kind === "markdown" ? body.kind : undefined;
+    if (!kind || typeof body?.name !== "string" || typeof body.content !== "string")
+      return json({ error: "bad request" }, 400);
+    const made = await rpc.publishArtifact(who, body.name.trim(), body.content, KIND_TYPES[kind]);
+    return made.ok ? json(made) : json({ error: made.error }, 400);
   }
 
   const artifact =

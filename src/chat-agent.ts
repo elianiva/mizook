@@ -221,6 +221,34 @@ export class ChatAgent extends DurableObject<Env> {
     return ok;
   }
 
+  /** Publish a page the person pasted into the dashboard. Audited. */
+  async publishArtifact(
+    who: string,
+    name: string,
+    content: string,
+    contentType: string,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    const result = await this.runtime
+      .runPromise(
+        Artifacts.use((artifacts) =>
+          artifacts.publish(this.doName, name, content, contentType),
+        ).pipe(
+          Effect.match({
+            onSuccess: (made) => ({ ok: true as const, url: made.url }),
+            onFailure: (e) => ({
+              ok: false as const,
+              error: "reason" in e ? e.reason : "Could not save it",
+            }),
+          }),
+        ),
+      )
+      .catch(() => ({ ok: false as const, error: "Could not save it" }));
+    await this.runtime.runPromise(
+      State.use((state) => state.audit(who, `artifact:create:${name}`, 0, result.ok)),
+    );
+    return result;
+  }
+
   /** Stop the turn that is running, as `/stop` does. */
   async stop(who: string): Promise<boolean> {
     const stopped = await this.runtime.runPromise(
