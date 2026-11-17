@@ -86,3 +86,12 @@ export class ExecutorError extends Data.TaggedError("ExecutorError")<{
     return `executor: ${this.reason}`;
   }
 }
+
+/** A dashboard request did not carry a valid Cloudflare Access token. */
+export class AccessDenied extends Data.TaggedError("AccessDenied")<{
+  readonly reason: string;
+}> {
+  override get message() {
+    return `access denied: ${this.reason}`;
+  }
+}
