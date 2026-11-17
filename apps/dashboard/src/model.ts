@@ -22,6 +22,9 @@ export const Model = Schema.Struct({
   schedules: schedulesQuery.Model,
   draftKind: Schema.String,
   draftSearch: Schema.String,
+  /** The action waiting for a second click, as `kind:id`. */
+  armed: Schema.Option(Schema.String),
+  notice: Schema.Option(Schema.String),
 });
 
 export type Model = typeof Model.Type;

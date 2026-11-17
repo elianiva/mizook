@@ -4,6 +4,7 @@ import type { Document, Html, HtmlBuilder } from "foldkit/html";
 
 import {
   type LogMessage,
+  type ActionKind,
   entryQuery,
   logQuery,
   memoryQuery,
@@ -92,6 +93,18 @@ const badgeColor = (kind: string): string =>
       : kind === "tool"
         ? "var(--colors-warn)"
         : "var(--colors-fg-muted)";
+
+const actionButton = (model: Model, action: ActionKind, id: number, label: string, h: H): Html => {
+  const armed = Option.contains(model.armed, `${action}:${id}`);
+  return h.button(
+    [
+      h.Type("button"),
+      h.Class(armed ? `${ui.buttonSmall} ${ui.buttonArmed}` : ui.buttonSmall),
+      h.OnClick(Message.ClickedAction({ action, id })),
+    ],
+    [armed ? `Confirm ${label.toLowerCase()}` : label],
+  );
+};
 
 const kindBadge = (kind: string, h: H): Html =>
   h.span([h.Class(ui.badge), h.Style({ color: badgeColor(kind) })], [kind]);
@@ -208,6 +221,13 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
                         [`#${approval.id}${approval.posted ? "" : " · not posted"}`],
                       ),
                       h.span([h.Class(ui.text)], [approval.summary]),
+                      h.div(
+                        [h.Class(ui.actions)],
+                        [
+                          actionButton(model, "approve", approval.id, "Approve", h),
+                          actionButton(model, "deny", approval.id, "Deny", h),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -545,7 +565,7 @@ const schedulesView = (model: Model, channel: string, h: H): Html =>
       onEmpty: () => emptyView("No active schedules.", h),
       onNonEmpty: (schedules) =>
         tableView(
-          [th("ID", h), th("Schedule", h), th("Next run", h), th("Prompt", h)],
+          [th("ID", h), th("Schedule", h), th("Next run", h), th("Prompt", h), th("", h)],
           Array.map(schedules, (schedule) =>
             h.keyed("tr")(
               String(schedule.id),
@@ -558,6 +578,7 @@ const schedulesView = (model: Model, channel: string, h: H): Html =>
                   [epochDateTime(schedule.nextAt)],
                 ),
                 h.td([h.Class(ui.td)], [h.div([h.Class(ui.text)], [schedule.prompt])]),
+                h.td([h.Class(ui.td)], [actionButton(model, "cancel", schedule.id, "Cancel", h)]),
               ],
             ),
           ),
@@ -616,6 +637,12 @@ const tabsView = (model: Model, h: H): Html => {
     ),
   );
 };
+
+const noticeView = (model: Model, h: H): Html =>
+  Option.match(model.notice, {
+    onNone: () => h.empty,
+    onSome: (text) => h.div([h.Class(ui.notice), h.Role("status")], [text]),
+  });
 
 const pageView = (model: Model, h: H): Html =>
   Option.match(currentChannel(model), {
@@ -689,7 +716,7 @@ export const view = (model: Model, h: H): Document => ({
           tabsView(model, h),
         ],
       ),
-      h.main([h.Class(ui.main)], [pageView(model, h)]),
+      h.main([h.Class(ui.main)], [noticeView(model, h), pageView(model, h)]),
     ],
   ),
 });

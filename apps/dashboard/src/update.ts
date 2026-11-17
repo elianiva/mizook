@@ -5,11 +5,13 @@ import { modifyFields } from "foldkit/struct";
 import { type Url, toString as urlToString } from "foldkit/url";
 
 import {
+  ActionKind,
   channelsQuery,
   entryQuery,
   logQuery,
   memoryQuery,
   overviewQuery,
+  postAction,
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
@@ -39,6 +41,16 @@ const LoadExternal = Command.define("LoadExternal", {
   args: { href: Schema.String },
   messages: [Message.CompletedLoadExternal],
   execute: ({ href }) => load(href).pipe(Effect.as(Message.CompletedLoadExternal())),
+});
+
+const PostAction = Command.define("PostAction", {
+  args: { channel: Schema.String, action: ActionKind, id: Schema.Finite },
+  messages: [Message.SucceededAction, Message.FailedAction],
+  execute: ({ channel, action, id }) =>
+    postAction(channel, action, id).pipe(
+      Effect.as(Message.SucceededAction()),
+      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+    ),
 });
 
 // QUERIES
@@ -105,6 +117,8 @@ const setRoute =
     return {
       model: modifyFields(model, {
         route: () => route,
+        armed: () => Option.none(),
+        notice: () => Option.none(),
         draftKind: () => drafts.draftKind,
         draftSearch: () => drafts.draftSearch,
       }),
@@ -153,6 +167,8 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     schedules: schedulesQuery.init(),
     draftKind: drafts.draftKind,
     draftSearch: drafts.draftSearch,
+    armed: Option.none(),
+    notice: Option.none(),
   });
   return Update.combine(model, [loadChannels, loadRoute]);
 };
@@ -203,6 +219,26 @@ export const update = (model: Model, message: Message) =>
       ),
 
     ClickedRetry: () => loadRoute(model),
+
+    ClickedAction: ({ action, id }) => {
+      const key = `${action}:${id}`;
+      const channel = currentChannel(model);
+      if (Option.isNone(channel) || !Option.contains(model.armed, key)) {
+        return {
+          model: modifyFields(model, {
+            armed: () => Option.some(key),
+            notice: () => Option.none(),
+          }),
+        };
+      }
+      return {
+        model: modifyFields(model, { armed: () => Option.none() }),
+        commands: [PostAction({ channel: channel.value, action, id })],
+      };
+    },
+    SucceededAction: () => loadRoute(modifyFields(model, { notice: () => Option.some("Done.") })),
+    FailedAction: ({ reason }) =>
+      loadRoute(modifyFields(model, { notice: () => Option.some(reason) })),
 
     TickedOverviewRefresh: () =>
       Option.match(currentChannel(model), {

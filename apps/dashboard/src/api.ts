@@ -165,3 +165,28 @@ export const schedulesQuery = Query.define({
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(ScheduleRow), "schedules", { c: channel }),
 });
+
+export const ActionKind = Schema.Literals(["approve", "deny", "cancel"]);
+export type ActionKind = typeof ActionKind.Type;
+
+/** A write. The header and same-origin post are what the Worker checks besides the Access token. */
+export const postAction = (
+  channel: string,
+  action: ActionKind,
+  id: number,
+): Effect.Effect<void, string> =>
+  Effect.tryPromise({
+    try: async () => {
+      const resource = action === "cancel" ? "schedules" : "approvals";
+      const url = `/admin/api/${resource}/${id}/${action}?c=${encodeURIComponent(channel)}`;
+      const response = await fetch(url, { method: "POST", headers: { "x-mizook-csrf": "1" } });
+      if (!response.ok) {
+        throw new Error(
+          response.status === 409
+            ? "It was already handled"
+            : `Request failed (${response.status})`,
+        );
+      }
+    },
+    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+  });

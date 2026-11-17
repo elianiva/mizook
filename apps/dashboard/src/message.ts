@@ -4,6 +4,7 @@ import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 
 import {
+  ActionKind,
   channelsQuery,
   entryQuery,
   logQuery,
@@ -30,6 +31,9 @@ export const Message = defineMessageUnion({
   UpdatedSearchDraft: { value: Schema.String },
   SubmittedFilter: {},
   ClickedRetry: {},
+  ClickedAction: { action: ActionKind, id: Schema.Finite },
+  SucceededAction: {},
+  FailedAction: { reason: Schema.String },
   TickedOverviewRefresh: {},
 });
 

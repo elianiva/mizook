@@ -308,6 +308,22 @@ export const ui = {
     color: "fgMuted",
     fontSize: "sm",
   }),
+  actions: css({ display: "flex", gap: "8px", marginTop: "12px" }),
+  buttonSmall: css({
+    ...control,
+    height: "30px",
+    paddingInline: "12px",
+    fontSize: "sm",
+    cursor: "pointer",
+    _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
+  }),
+  buttonArmed: css({ borderColor: "danger", color: "danger" }),
+  notice: css({
+    border: "1px solid {colors.border}",
+    backgroundColor: "bgSubtle",
+    padding: "14px 20px",
+    fontSize: "sm",
+  }),
   back: css({ color: "fgMuted", fontSize: "sm", _hover: { color: "fg" } }),
   footer: css({ display: "flex", justifyContent: "center" }),
 };
