@@ -102,6 +102,6 @@ Alchemy declares the Access application and policy (`alchemy.run.ts`), so `alche
 
 - `ACCESS_TEAM_DOMAIN`: your Zero Trust team domain, `<team>.cloudflareaccess.com`.
 - `ADMIN_EMAIL`: the one email the policy allows.
-- `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (optional): a GitHub OAuth app whose callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Alchemy creates the GitHub login method from it. Without them, Access uses the login methods the account already has.
+- `GH_CLIENT_ID` and `GH_CLIENT_SECRET` (optional): a GitHub OAuth app whose callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Alchemy creates the GitHub login method from it. Without them, Access uses the login methods the account already has.
 
 The application covers `/admin*` only, so `/telegram/webhook`, `/hook`, `/a`, `/d` and `/x` stay outside it. The Worker also checks the Access token itself (RS256, issuer, audience, expiry), and `/admin` answers 503 while the team domain or audience is missing.

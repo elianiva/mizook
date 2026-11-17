@@ -21,8 +21,8 @@ export default Alchemy.Stack(
     // (https://github.com/settings/developers, callback `https://<team>/cdn-cgi/access/callback`);
     // otherwise Access offers whatever login methods the account already has.
     const teamDomain = yield* Config.String("ACCESS_TEAM_DOMAIN");
-    const githubId = yield* optional("GITHUB_CLIENT_ID");
-    const githubSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET").pipe(
+    const githubId = yield* optional("GH_CLIENT_ID");
+    const githubSecret = yield* Config.Redacted("GH_CLIENT_SECRET").pipe(
       Config.withDefault(Redacted.make("")),
     );
     const github =
