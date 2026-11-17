@@ -132,129 +132,125 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
       [h.Class(ui.page)],
       [
         h.div(
-          [h.Class(ui.grid)],
+          [],
           [
-            statView("Messages", count(data.messages), h),
-            statView("Memory nodes", count(data.nodes), h),
-            statView("View lines", count(data.viewLines), h),
-            statView("Schedules", count(data.schedules), h),
+            h.div(
+              [h.Class(ui.grid)],
+              [
+                statView("Messages", count(data.messages), h),
+                statView("Memory nodes", count(data.nodes), h),
+                statView("View lines", count(data.viewLines), h),
+                statView("Schedules", count(data.schedules), h),
+                statView("Spend 24 h", usd(data.spend.last24h), h),
+                statView("Spend 7 d", usd(data.spend.last7d), h),
+                statView("Spend total", usd(data.spend.total), h),
+              ],
+            ),
+            budget > 0
+              ? h.div(
+                  [h.Class(ui.budget)],
+                  [
+                    h.div(
+                      [h.Class(ui.budgetRow)],
+                      [
+                        h.span([], ["Daily budget"]),
+                        h.span([], [`${usd(data.spend.last24h)} of ${usd(budget)} · ${used}%`]),
+                      ],
+                    ),
+                    h.div(
+                      [h.Class(ui.meter)],
+                      [
+                        h.div([
+                          h.Class(ui.meterFill),
+                          h.Style({
+                            width: `${Math.min(used, 100)}%`,
+                            "background-color": meterColor(used),
+                          }),
+                        ]),
+                      ],
+                    ),
+                  ],
+                )
+              : h.empty,
           ],
         ),
-        sectionView(
-          "Spend",
-          h.div(
-            [],
-            [
-              h.div(
-                [h.Class(ui.grid)],
-                [
-                  statView("Last 24 hours", usd(data.spend.last24h), h),
-                  statView("Last 7 days", usd(data.spend.last7d), h),
-                  statView("All time", usd(data.spend.total), h),
-                ],
-              ),
-              budget > 0
-                ? h.div(
-                    [h.Class(ui.budget)],
-                    [
-                      h.div(
-                        [h.Class(ui.budgetRow)],
+        h.div(
+          [h.Class(ui.columns)],
+          [
+            sectionView(
+              "Pending turns",
+              Array.match(data.turns, {
+                onEmpty: () => emptyView("Nothing is running.", h),
+                onNonEmpty: (turns) =>
+                  h.div(
+                    [h.Class(ui.list)],
+                    Array.map(turns, (turn) =>
+                      h.keyed("div")(
+                        turn.chatId,
+                        [h.Class(ui.listItem)],
                         [
-                          h.span([], ["Daily budget"]),
-                          h.span([], [`${usd(data.spend.last24h)} of ${usd(budget)} · ${used}%`]),
+                          h.span([h.Class(`${ui.mono} ${ui.muted}`)], [turn.chatId]),
+                          h.span([h.Class(ui.text)], [turn.text]),
                         ],
                       ),
-                      h.div(
-                        [h.Class(ui.meter)],
+                    ),
+                  ),
+              }),
+              h,
+            ),
+            sectionView(
+              "Approvals",
+              Array.match(data.approvals, {
+                onEmpty: () => emptyView("Nothing is waiting.", h),
+                onNonEmpty: (approvals) =>
+                  h.div(
+                    [h.Class(ui.list)],
+                    Array.map(approvals, (approval) =>
+                      h.keyed("div")(
+                        String(approval.id),
+                        [h.Class(ui.listItem)],
                         [
-                          h.div([
-                            h.Class(ui.meterFill),
-                            h.Style({
-                              width: `${Math.min(used, 100)}%`,
-                              "background-color": meterColor(used),
-                            }),
-                          ]),
+                          h.span(
+                            [h.Class(`${ui.mono} ${ui.muted}`)],
+                            [`#${approval.id}${approval.posted ? "" : " · not posted"}`],
+                          ),
+                          h.span([h.Class(ui.text)], [approval.summary]),
+                          h.div(
+                            [h.Class(ui.actions)],
+                            [
+                              actionButton(model, "approve", approval.id, "Approve", h),
+                              actionButton(model, "deny", approval.id, "Deny", h),
+                            ],
+                          ),
                         ],
                       ),
-                    ],
-                  )
-                : h.empty,
-            ],
-          ),
-          h,
-        ),
-        sectionView(
-          "Pending turns",
-          Array.match(data.turns, {
-            onEmpty: () => emptyView("Nothing is running.", h),
-            onNonEmpty: (turns) =>
-              h.div(
-                [h.Class(ui.list)],
-                Array.map(turns, (turn) =>
-                  h.keyed("div")(
-                    turn.chatId,
-                    [h.Class(ui.listItem)],
-                    [
-                      h.span([h.Class(`${ui.mono} ${ui.muted}`)], [turn.chatId]),
-                      h.span([h.Class(ui.text)], [turn.text]),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-          }),
-          h,
-        ),
-        sectionView(
-          "Approvals",
-          Array.match(data.approvals, {
-            onEmpty: () => emptyView("Nothing is waiting.", h),
-            onNonEmpty: (approvals) =>
-              h.div(
-                [h.Class(ui.list)],
-                Array.map(approvals, (approval) =>
-                  h.keyed("div")(
-                    String(approval.id),
-                    [h.Class(ui.listItem)],
-                    [
-                      h.span(
-                        [h.Class(`${ui.mono} ${ui.muted}`)],
-                        [`#${approval.id}${approval.posted ? "" : " · not posted"}`],
-                      ),
-                      h.span([h.Class(ui.text)], [approval.summary]),
-                      h.div(
-                        [h.Class(ui.actions)],
+              }),
+              h,
+            ),
+            sectionView(
+              "Settings",
+              Array.match(settings, {
+                onEmpty: () => emptyView("Every setting is at its default.", h),
+                onNonEmpty: (entries) =>
+                  h.div(
+                    [h.Class(ui.list)],
+                    Array.map(entries, ([key, value]) =>
+                      h.keyed("div")(
+                        key,
+                        [h.Class(ui.keyValue)],
                         [
-                          actionButton(model, "approve", approval.id, "Approve", h),
-                          actionButton(model, "deny", approval.id, "Deny", h),
+                          h.span([h.Class(`${ui.mono} ${ui.muted}`)], [key]),
+                          h.span([h.Class(ui.text)], [value]),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-          }),
-          h,
-        ),
-        sectionView(
-          "Settings",
-          Array.match(settings, {
-            onEmpty: () => emptyView("Every setting is at its default.", h),
-            onNonEmpty: (entries) =>
-              h.div(
-                [h.Class(ui.list)],
-                Array.map(entries, ([key, value]) =>
-                  h.keyed("div")(
-                    key,
-                    [h.Class(ui.keyValue)],
-                    [
-                      h.span([h.Class(`${ui.mono} ${ui.muted}`)], [key]),
-                      h.span([h.Class(ui.text)], [value]),
-                    ],
-                  ),
-                ),
-              ),
-          }),
-          h,
+              }),
+              h,
+            ),
+          ],
         ),
       ],
     );
@@ -303,7 +299,7 @@ const logRowView = (m: LogMessage, channel: Option.Option<string>, h: H): Html =
         [h.a([h.Href(entryRouter({ entryId: m.i, channel })), h.Class(ui.link)], [String(m.i)])],
       ),
       h.td([h.Class(ui.td)], [kindBadge(m.kind, h)]),
-      h.td([h.Class(ui.td)], [h.div([h.Class(ui.text)], [m.cut ? `${m.text} …` : m.text])]),
+      h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [m.cut ? `${m.text} …` : m.text])]),
       h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [dateTime(m.date)]),
     ],
   );
@@ -482,56 +478,61 @@ const usageView = (model: Model, channel: string, days: number, h: H): Html =>
           }),
           h,
         ),
-        sectionView(
-          "By model",
-          tableView(
-            [
-              th("Model", h),
-              th("Calls", h, true),
-              th("Input", h, true),
-              th("Output", h, true),
-              th("Cache hit", h, true),
-              th("Cost", h, true),
-            ],
-            Array.map(report.byModel, (model_) =>
-              h.keyed("tr")(
-                model_.model,
-                [h.Class(ui.row)],
+        h.div(
+          [h.Class(ui.columns)],
+          [
+            sectionView(
+              "By model",
+              tableView(
                 [
-                  h.td([h.Class(`${ui.td} ${ui.mono}`)], [model_.model]),
-                  h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.calls)]),
-                  h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.input)]),
-                  h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.output)]),
-                  h.td(
-                    [h.Class(`${ui.td} ${ui.tdNum}`)],
-                    [`${percent(model_.cacheRead, model_.input + model_.cacheRead)}%`],
+                  th("Model", h),
+                  th("Calls", h, true),
+                  th("Input", h, true),
+                  th("Output", h, true),
+                  th("Cache hit", h, true),
+                  th("Cost", h, true),
+                ],
+                Array.map(report.byModel, (model_) =>
+                  h.keyed("tr")(
+                    model_.model,
+                    [h.Class(ui.row)],
+                    [
+                      h.td([h.Class(`${ui.td} ${ui.mono}`)], [model_.model]),
+                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.calls)]),
+                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.input)]),
+                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.output)]),
+                      h.td(
+                        [h.Class(`${ui.td} ${ui.tdNum}`)],
+                        [`${percent(model_.cacheRead, model_.input + model_.cacheRead)}%`],
+                      ),
+                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(model_.cost)]),
+                    ],
                   ),
-                  h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(model_.cost)]),
-                ],
+                ),
+                h,
               ),
+              h,
             ),
-            h,
-          ),
-          h,
-        ),
-        sectionView(
-          "By kind",
-          tableView(
-            [th("Kind", h), th("Calls", h, true), th("Cost", h, true)],
-            Array.map(report.byKind, (kind) =>
-              h.keyed("tr")(
-                kind.kind,
-                [h.Class(ui.row)],
-                [
-                  h.td([h.Class(ui.td)], [kindBadge(kind.kind, h)]),
-                  h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(kind.calls)]),
-                  h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(kind.cost)]),
-                ],
+            sectionView(
+              "By kind",
+              tableView(
+                [th("Kind", h), th("Calls", h, true), th("Cost", h, true)],
+                Array.map(report.byKind, (kind) =>
+                  h.keyed("tr")(
+                    kind.kind,
+                    [h.Class(ui.row)],
+                    [
+                      h.td([h.Class(ui.td)], [kindBadge(kind.kind, h)]),
+                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(kind.calls)]),
+                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(kind.cost)]),
+                    ],
+                  ),
+                ),
+                h,
               ),
+              h,
             ),
-            h,
-          ),
-          h,
+          ],
         ),
       ],
     );
