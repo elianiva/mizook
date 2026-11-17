@@ -324,7 +324,7 @@ const logView = (model: Model, channel: string, h: H): Html => {
             onEmpty: () => emptyView("No messages match.", h),
             onNonEmpty: (rows) =>
               h.div(
-                [h.Class(ui.section)],
+                [h.Class(ui.fill)],
                 [
                   tableView(
                     [th("ID", h), th("Kind", h), th("Message", h), th("Date (UTC)", h)],
@@ -386,7 +386,7 @@ const entryView = (model: Model, channel: string, entryId: number, h: H): Html =
       ),
       remote(entryQuery.read(model.entry, { channel, entryId }), h, skeletonView(h, 1), (data) =>
         h.div(
-          [h.Class(ui.section)],
+          [h.Class(ui.fill)],
           [
             h.div(
               [h.Class(ui.metaRow)],
@@ -479,7 +479,7 @@ const usageView = (model: Model, channel: string, days: number, h: H): Html =>
           h,
         ),
         h.div(
-          [h.Class(ui.columns)],
+          [h.Class(ui.stack)],
           [
             sectionView(
               "By model",
