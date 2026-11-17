@@ -23,6 +23,10 @@ export interface Overview {
   readonly turns: ReadonlyArray<{ chatId: string; text: string }>;
   readonly approvals: ReadonlyArray<{ id: number; summary: string; posted: boolean }>;
   readonly schedules: number;
+  /** Spend per UTC day over the last 14 days, oldest first; a day with no spend is 0. */
+  readonly daily: ReadonlyArray<{ day: string; cost: number }>;
+  /** When the soonest active schedule fires, epoch milliseconds. */
+  readonly nextSchedule: number | null;
 }
 
 const count = async (sql: SqlDriver, table: string) =>
@@ -36,6 +40,20 @@ const spentSince = async (sql: SqlDriver, since: number) =>
       since,
     )
   )[0]?.total ?? 0;
+
+const dailySpend = async (sql: SqlDriver, now: number) => {
+  const found = await rows<{ day: string; cost: number }>(
+    sql,
+    `SELECT strftime('%Y-%m-%d', at / 1000, 'unixepoch') AS day, SUM(cost) AS cost
+     FROM app_usage WHERE at >= ? GROUP BY day`,
+    now - 14 * DAY,
+  );
+  const byDay = new Map(found.map((r) => [r.day, r.cost]));
+  return Array.from({ length: 14 }, (_, k) => {
+    const day = new Date(now - (13 - k) * DAY).toISOString().slice(0, 10);
+    return { day, cost: byDay.get(day) ?? 0 };
+  });
+};
 
 export const overview = async (sql: SqlDriver, now: number): Promise<Overview> => {
   const views = (await rows<{ json: string }>(sql, `SELECT json FROM mem_views`))[0]?.json;
@@ -67,6 +85,14 @@ export const overview = async (sql: SqlDriver, now: number): Promise<Overview> =
       (
         await rows<{ n: number }>(sql, `SELECT COUNT(*) AS n FROM app_schedules WHERE active = 1`)
       )[0]?.n ?? 0,
+    daily: await dailySpend(sql, now),
+    nextSchedule:
+      (
+        await rows<{ at: number | null }>(
+          sql,
+          `SELECT MIN(next_at) AS at FROM app_schedules WHERE active = 1`,
+        )
+      )[0]?.at ?? null,
   };
 };
 

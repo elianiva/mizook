@@ -6,6 +6,7 @@ import {
   type LogMessage,
   type ActionKind,
   type SettingKey,
+  type Overview,
   type ScheduleRow,
   type ViewLine,
   type UsageReport,
@@ -234,6 +235,140 @@ const budgetAlert = (used: number, channel: Option.Option<string>, h: H): Html =
         ],
       );
 
+type OverviewData = typeof Overview.Type;
+
+const heroView = (data: OverviewData, budget: number, used: number, h: H): Html => {
+  const days = data.daily;
+  const peak = Array.reduce(days, 0, (max, day) => Math.max(max, day.cost));
+  const today = days[days.length - 1]?.cost ?? 0;
+  const yesterday = days[days.length - 2]?.cost ?? 0;
+  const delta = yesterday > 0 ? Math.round(((today - yesterday) / yesterday) * 100) : undefined;
+  const ratio = Math.max(Math.round(data.messages / Math.max(data.viewLines, 1)), 1);
+  const linesWidth = Math.max(percent(data.viewLines, data.messages), 2);
+  return h.div(
+    [h.Class(ui.hero)],
+    [
+      h.div(
+        [h.Class(ui.heroSpend)],
+        [
+          h.div(
+            [h.Class(ui.heroHead)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Spend today"]),
+              delta === undefined
+                ? h.empty
+                : h.span(
+                    [
+                      h.Class(ui.mono),
+                      h.Style({
+                        color: delta > 0 ? "var(--colors-warn)" : "var(--colors-ok)",
+                      }),
+                    ],
+                    [`${delta > 0 ? "▲" : "▼"} ${Math.abs(delta)}% vs yesterday`],
+                  ),
+            ],
+          ),
+          h.span([h.Class(ui.heroValue)], [usd(data.spend.last24h)]),
+          h.div(
+            [h.Class(ui.spark)],
+            Array.map(days, (day, index) =>
+              h.keyed("span")(day.day, [
+                h.Class(ui.sparkBar),
+                h.Title(`${day.day}: ${usd(day.cost)}`),
+                h.Style({
+                  height: `${Math.max(percent(day.cost, peak), 3)}%`,
+                  ...(index === days.length - 1 && {
+                    "background-color": "var(--colors-accent)",
+                  }),
+                }),
+              ]),
+            ),
+          ),
+          h.div(
+            [h.Class(ui.axis)],
+            [h.span([], ["14 days ago"]), h.span([], [`peak ${usd(peak)}`]), h.span([], ["today"])],
+          ),
+          h.div(
+            [h.Class(ui.heroFoot)],
+            [
+              h.span([], [`7 d ${usd(data.spend.last7d)}`]),
+              h.span([], [`all time ${usd(data.spend.total)}`]),
+            ],
+          ),
+          budget > 0
+            ? h.div(
+                [h.Class(ui.heroBudget)],
+                [
+                  h.div(
+                    [h.Class(ui.budgetRow)],
+                    [
+                      h.span([], ["Daily budget"]),
+                      h.span([], [`${usd(data.spend.last24h)} of ${usd(budget)} · ${used}%`]),
+                    ],
+                  ),
+                  h.div(
+                    [h.Class(ui.meter)],
+                    [
+                      h.div([
+                        h.Class(ui.meterFill),
+                        h.Style({
+                          width: `${Math.min(used, 100)}%`,
+                          "background-color": meterColor(used),
+                        }),
+                      ]),
+                    ],
+                  ),
+                ],
+              )
+            : h.empty,
+        ],
+      ),
+      h.div(
+        [h.Class(ui.heroSide)],
+        [
+          h.div(
+            [h.Class(ui.miniCard)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Messages"]),
+              h.span([h.Class(ui.miniValue)], [count(data.messages)]),
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [`${count(data.nodes)} memory nodes built`],
+              ),
+            ],
+          ),
+          h.div(
+            [h.Class(ui.miniCard)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Memory compression"]),
+              h.span([h.Class(ui.miniValue)], [`${ratio}×`]),
+              h.div(
+                [h.Class(ui.ratio)],
+                [h.div([h.Class(ui.ratioFill), h.Style({ width: `${linesWidth}%` })])],
+              ),
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [`${count(data.viewLines)} lines stand for ${count(data.messages)} messages`],
+              ),
+            ],
+          ),
+          h.div(
+            [h.Class(ui.miniCard)],
+            [
+              h.span([h.Class(ui.statLabel)], ["Schedules"]),
+              h.span([h.Class(ui.miniValue)], [count(data.schedules)]),
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [data.nextSchedule === null ? "none queued" : `next ${until(data.nextSchedule)}`],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+};
+
 const overviewView = (model: Model, channel: string, h: H): Html =>
   remote(overviewQuery.read(model.overview, { channel }), h, skeletonView(h, 3), (data) => {
     const budget = Number(data.settings["budget"] ?? 0);
@@ -243,49 +378,7 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
       [h.Class(ui.stack)],
       [
         budget > 0 ? budgetAlert(used, maybeChannel, h) : h.empty,
-        h.div(
-          [],
-          [
-            h.div(
-              [h.Class(ui.grid)],
-              [
-                statView("Messages", count(data.messages), h),
-                statView("Memory nodes", count(data.nodes), h),
-                statView("View lines", count(data.viewLines), h),
-                statView("Schedules", count(data.schedules), h),
-                statView("Spend 24 h", usd(data.spend.last24h), h),
-                statView("Spend 7 d", usd(data.spend.last7d), h),
-                statView("Spend total", usd(data.spend.total), h),
-              ],
-            ),
-            budget > 0
-              ? h.div(
-                  [h.Class(ui.budget)],
-                  [
-                    h.div(
-                      [h.Class(ui.budgetRow)],
-                      [
-                        h.span([], ["Daily budget"]),
-                        h.span([], [`${usd(data.spend.last24h)} of ${usd(budget)} · ${used}%`]),
-                      ],
-                    ),
-                    h.div(
-                      [h.Class(ui.meter)],
-                      [
-                        h.div([
-                          h.Class(ui.meterFill),
-                          h.Style({
-                            width: `${Math.min(used, 100)}%`,
-                            "background-color": meterColor(used),
-                          }),
-                        ]),
-                      ],
-                    ),
-                  ],
-                )
-              : h.empty,
-          ],
-        ),
+        heroView(data, budget, used, h),
         sectionView("Channels", channelsTable(model, h), h),
         h.div(
           [h.Class(ui.columns)],
@@ -528,7 +621,7 @@ const levelShade = (level: number): string =>
 const memoryLine = (line: typeof ViewLine.Type, h: H): Html => {
   const { start, count: covered } = spanOf(line.label);
   const said = KIND_PREFIX.exec(line.text);
-  const range = covered === 1 ? `#${start}` : `#${start} – #${start + covered - 1}`;
+  const range = covered === 1 ? `#${start}` : `#${start}–${start + covered - 1}`;
   return h.keyed("div")(
     line.label,
     [h.Class(ui.memRow)],
@@ -548,10 +641,7 @@ const memoryLine = (line: typeof ViewLine.Type, h: H): Html => {
         : h.div(
             [h.Class(ui.memSpan)],
             [
-              h.span(
-                [h.Class(`${ui.muted} ${ui.mono}`)],
-                [`${count(covered)} messages, summarised once`],
-              ),
+              h.span([h.Class(`${ui.muted} ${ui.mono}`)], [`${count(covered)} msgs`]),
               h.div([h.Class(ui.clamp4)], [line.text]),
             ],
           ),

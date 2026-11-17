@@ -25,6 +25,8 @@ export const Overview = Schema.Struct({
     Schema.Struct({ id: Schema.Finite, summary: Schema.String, posted: Schema.Boolean }),
   ),
   schedules: Schema.Finite,
+  daily: Schema.Array(Schema.Struct({ day: Schema.String, cost: Schema.Finite })),
+  nextSchedule: Schema.NullOr(Schema.Finite),
 });
 
 export const LogMessage = Schema.Struct({

@@ -95,3 +95,24 @@ test("tool calls are counted by the first word, inside the range only, and the a
     ["deny", true],
   ]);
 });
+
+test("the overview has 14 zero-filled days of spend, oldest first, and the soonest schedule", async () => {
+  const { db, sql } = setup();
+  db.exec(`CREATE TABLE app_usage (at INTEGER, kind TEXT, model TEXT, input INTEGER, output INTEGER, cache_read INTEGER, cost REAL);
+    CREATE TABLE app_schedules (id INTEGER PRIMARY KEY, spec TEXT, prompt TEXT, next_at INTEGER, active INTEGER)`);
+  const now = Date.UTC(2026, 0, 20, 12);
+  const add = db.prepare(`INSERT INTO app_usage VALUES (?, 'turn', 'm', 1, 1, 1, ?)`);
+  add.run(now, 0.5);
+  add.run(now - 2 * 86_400_000, 0.25);
+  add.run(now - 30 * 86_400_000, 9);
+  db.prepare(
+    `INSERT INTO app_schedules VALUES (1, '{}', 'p', ?, 1), (2, '{}', 'p', ?, 1), (3, '{}', 'p', ?, 0)`,
+  ).run(now + 5000, now + 9000, now + 1);
+  const o = await overview(sql, now);
+  expect(o.daily).toHaveLength(14);
+  expect(o.daily.at(-1)).toEqual({ day: "2026-01-20", cost: 0.5 });
+  expect(o.daily.at(-2)?.cost).toBe(0);
+  expect(o.daily.at(-3)).toEqual({ day: "2026-01-18", cost: 0.25 });
+  expect(o.daily[0]?.day).toBe("2026-01-07");
+  expect(o.nextSchedule).toBe(now + 5000);
+});
