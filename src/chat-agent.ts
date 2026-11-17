@@ -10,6 +10,8 @@ import { Host } from "./host.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
+import { Schedules } from "./schedules.ts";
+import { State } from "./state.ts";
 import * as read from "./admin/read.ts";
 
 type Hosted = Context.Service.Shape<typeof Host>;
@@ -157,6 +159,36 @@ export class ChatAgent extends DurableObject<Env> {
       default:
         return undefined;
     }
+  }
+
+  /**
+   * A write from the dashboard, already authorised by the Worker. It goes through the runtime, so
+   * it shares the one SQLite writer with the bot. Every call is audited. False when the item was
+   * already gone.
+   */
+  async act(who: string, action: string, id: number): Promise<boolean> {
+    const done = await this.runtime.runPromise(
+      Effect.gen(function* () {
+        const bot = yield* Bot;
+        if (action === "approve" || action === "deny") {
+          const pending = yield* bot.approve(id, action === "approve");
+          if (!pending) return { ok: false, after: undefined };
+          return { ok: true, after: pending.resume };
+        }
+        if (action === "cancel_schedule") {
+          const schedules = yield* Schedules;
+          return { ok: yield* schedules.cancel(id), after: undefined };
+        }
+        return { ok: false, after: undefined };
+      }),
+    );
+    await this.runtime.runPromise(State.use((state) => state.audit(who, action, id, done.ok)));
+    // Answering an approval resumes Executor and starts a turn: that takes a while, so it goes on after the reply.
+    if (done.after) {
+      const after = done.after;
+      this.ctx.waitUntil(this.runtime.runPromise(after).then(() => this.rearm()));
+    }
+    return done.ok;
   }
 
   override async fetch(request: Request): Promise<Response> {

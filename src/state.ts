@@ -60,6 +60,13 @@ export class State extends Context.Service<
     deleteMeta(key: string): Effect.Effect<void, StateError>;
     /** The channel's own settings: `setting:<name>` rows of the meta table, by name. */
     readonly settings: Effect.Effect<Record<string, string>, StateError>;
+    /** Remember something a person did from the dashboard: who, what, to which item, and whether it worked. */
+    audit(
+      who: string,
+      action: string,
+      target: number,
+      ok: boolean,
+    ): Effect.Effect<void, StateError>;
     /** True the first time it sees `id`: Telegram redelivers an update that was not answered in time. */
     firstSeen(id: string): Effect.Effect<boolean, StateError>;
   }
@@ -83,6 +90,11 @@ export class State extends Context.Service<
           );
           await sql.all(
             `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+          );
+          await sql.all(
+            `CREATE TABLE IF NOT EXISTS app_audit (
+               at INTEGER NOT NULL, who TEXT NOT NULL, action TEXT NOT NULL,
+               target INTEGER NOT NULL, ok INTEGER NOT NULL)`,
           );
           await sql.all(
             `CREATE TABLE IF NOT EXISTS app_seen (id TEXT PRIMARY KEY, at INTEGER NOT NULL)`,
@@ -145,6 +157,19 @@ export class State extends Context.Service<
               );
             }),
           settings: readSettings(sql),
+          audit: (who, action, target, ok) =>
+            run("audit", async () => {
+              const now = Date.now();
+              await sql.all(`DELETE FROM app_audit WHERE at < ?`, now - 90 * 24 * 3600 * 1000);
+              await sql.all(
+                `INSERT INTO app_audit (at, who, action, target, ok) VALUES (?, ?, ?, ?, ?)`,
+                now,
+                who,
+                action,
+                target,
+                ok ? 1 : 0,
+              );
+            }),
           firstSeen: (id) =>
             run("firstSeen", async () => {
               const now = Date.now();

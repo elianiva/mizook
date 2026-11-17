@@ -67,7 +67,8 @@ test("the dashboard is shut when unconfigured, without a token, or for a write",
   const env = { ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD };
   expect((await call(env)).status).toBe(403);
   expect((await call(env, "/admin", {}, { "cf-access-jwt-assertion": "x.y.z" })).status).toBe(403);
-  expect((await call(env, "/admin", { method: "POST" })).status).toBe(405);
+  expect((await call(env, "/admin", { method: "PUT" })).status).toBe(405);
+  expect((await call(env, "/admin/api/approvals/1/approve", { method: "POST" })).status).toBe(403);
   expect((await call(env, "/admin/api/channels")).status).toBe(403);
 });
 
@@ -103,5 +104,39 @@ test("a route of the app gets the app's HTML, a file gets itself, both under a s
   expect(route.headers.get("content-security-policy")).toContain("default-src 'none'");
   expect(file.headers.get("content-security-policy")).toContain("script-src 'self'");
   expect((await call(configured(), "/admin", undefined, headers)).status).toBe(503);
+  vi.unstubAllGlobals();
+});
+
+test("a write needs the token, the csrf header and this origin, and acts once", async () => {
+  const token = await signedIn();
+  const calls: unknown[][] = [];
+  const env = configured({
+    ChatAgent: {
+      getByName: () => ({
+        act: async (...args: unknown[]) => {
+          calls.push(args);
+          return calls.length === 1;
+        },
+      }),
+    } as never,
+  });
+  const post = (path: string, headers: Record<string, string>) =>
+    call(env, path, { method: "POST" }, { "cf-access-jwt-assertion": token, ...headers });
+  const good = { "x-mizook-csrf": "1", origin: "https://x.test" };
+  const path = "/admin/api/approvals/7/deny?c=-100%3A1";
+
+  expect((await post(path, { origin: "https://x.test" })).status).toBe(403);
+  expect((await post(path, { "x-mizook-csrf": "1", origin: "https://evil.test" })).status).toBe(
+    403,
+  );
+  expect(calls).toEqual([]);
+
+  expect((await post(path, good)).status).toBe(200);
+  expect(calls).toEqual([["me@example.com", "deny", 7]]);
+  expect((await post(path, good)).status).toBe(409);
+  expect((await post("/admin/api/schedules/3/cancel?c=-100%3A1", good)).status).toBe(409);
+  expect(calls.at(-1)).toEqual(["me@example.com", "cancel_schedule", 3]);
+  expect((await post("/admin/api/schedules/3/approve?c=-100%3A1", good)).status).toBe(404);
+  expect((await post("/admin/api/approvals/7/deny?c=nope", good)).status).toBe(404);
   vi.unstubAllGlobals();
 });

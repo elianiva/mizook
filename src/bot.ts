@@ -51,6 +51,14 @@ export class Bot extends Context.Service<
     readonly recover: Effect.Effect<number, AgentError | TelegramError>;
     /** A webhook call: start a turn with its body. False when the channel is silent or over its hourly limit. */
     hook(body: string): Effect.Effect<boolean, AgentError | StateError | TelegramError>;
+    /**
+     * Take an approval off the list. Undefined when it was already answered; otherwise the work of
+     * answering it (resume Executor, tell the chat), for the caller to run when it chooses.
+     */
+    approve(
+      id: number,
+      approved: boolean,
+    ): Effect.Effect<{ readonly resume: Effect.Effect<void> } | undefined, StateError>;
     /** Start a turn for each schedule that is due. */
     readonly wake: Effect.Effect<void, AgentError | StateError>;
     /** When the Durable Object's alarm should ring next: a pending turn's recovery or the next schedule. */
@@ -359,29 +367,42 @@ export class Bot extends Context.Service<
         return times.length === 0 ? undefined : Math.min(...times);
       });
 
+      const approve = (id: number, approved: boolean) =>
+        Effect.gen(function* () {
+          const taken = yield* approvals.take(id);
+          if (!taken) return undefined;
+          const resume = Effect.gen(function* () {
+            const result = yield* executor
+              .call("resume", {
+                executionId: taken.executionId,
+                action: approved ? "accept" : "decline",
+              })
+              .pipe(Effect.catch((error) => Effect.succeed(`Error: ${error.message}`)));
+            yield* fire(
+              approved
+                ? `[approval] The user approved. Executor's result:\n${clipToolOutput(result)}`
+                : `[approval] The user denied it. Do not try again or work around it. Executor said:\n${clipToolOutput(result, 2_000)}`,
+              `approval:${id}`,
+            );
+          }).pipe(
+            Effect.asVoid,
+            Effect.catchCause((cause) => Effect.logError("approval failed", cause)),
+          );
+          return { resume };
+        });
+
       const answer = (actionId: string, userId: string, threadId: string) =>
         Effect.gen(function* () {
           if (!settings.allowedUserIds.has(userId)) return;
           const [verb, rawId] = actionId.split(":");
           const approved = verb === "approve";
           if ((!approved && verb !== "deny") || rawId === undefined) return;
-          const taken = yield* approvals.take(Number(rawId));
-          if (!taken) {
+          const pending = yield* approve(Number(rawId), approved);
+          if (!pending) {
             yield* post(threadId, "That question was already answered.");
             return;
           }
-          const result = yield* executor
-            .call("resume", {
-              executionId: taken.executionId,
-              action: approved ? "accept" : "decline",
-            })
-            .pipe(Effect.catch((error) => Effect.succeed(`Error: ${error.message}`)));
-          yield* fire(
-            approved
-              ? `[approval] The user approved. Executor's result:\n${clipToolOutput(result)}`
-              : `[approval] The user denied it. Do not try again or work around it. Executor said:\n${clipToolOutput(result, 2_000)}`,
-            `approval:${rawId}`,
-          );
+          yield* pending.resume;
         });
 
       chat.onAction((event) =>
@@ -448,6 +469,7 @@ export class Bot extends Context.Service<
       chat.onNewMessage(onMessage);
 
       return Bot.of({
+        approve,
         wake,
         hook,
         nextWake,
