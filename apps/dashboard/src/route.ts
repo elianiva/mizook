@@ -11,6 +11,8 @@ export const AppRoute = defineRouteUnion({
   Memory: { channel: MaybeString },
   Usage: { channel: MaybeString, days: MaybeString },
   Schedules: { channel: MaybeString },
+  Settings: { channel: MaybeString },
+  Audit: { channel: MaybeString },
   NotFound: { path: Schema.String },
 });
 
@@ -62,12 +64,28 @@ export const schedulesRouter = pipe(
   Route.mapTo(AppRoute.Schedules),
 );
 
+export const settingsRouter = pipe(
+  admin,
+  slash(literal("settings")),
+  Route.query(Schema.Struct({ channel: optional })),
+  Route.mapTo(AppRoute.Settings),
+);
+
+export const auditRouter = pipe(
+  admin,
+  slash(literal("audit")),
+  Route.query(Schema.Struct({ channel: optional })),
+  Route.mapTo(AppRoute.Audit),
+);
+
 const routeParser = Route.oneOf(
   entryRouter,
   logRouter,
   memoryRouter,
   usageRouter,
   schedulesRouter,
+  settingsRouter,
+  auditRouter,
   overviewRouter,
 );
 
@@ -81,6 +99,8 @@ export const routeChannel = (route: AppRoute): Option.Option<string> =>
     Memory: ({ channel }) => channel,
     Usage: ({ channel }) => channel,
     Schedules: ({ channel }) => channel,
+    Settings: ({ channel }) => channel,
+    Audit: ({ channel }) => channel,
     NotFound: () => Option.none(),
   });
 
@@ -92,6 +112,8 @@ export const routeHref = (route: AppRoute): string =>
     Memory: memoryRouter,
     Usage: usageRouter,
     Schedules: schedulesRouter,
+    Settings: settingsRouter,
+    Audit: auditRouter,
     NotFound: () => overviewRouter({ channel: Option.none() }),
   });
 
@@ -111,6 +133,8 @@ export const routeOnChannel = (route: AppRoute, channel: string): AppRoute => {
     Memory: () => AppRoute.Memory({ channel: selected }),
     Usage: ({ days }) => AppRoute.Usage({ channel: selected, days }),
     Schedules: () => AppRoute.Schedules({ channel: selected }),
+    Settings: () => AppRoute.Settings({ channel: selected }),
+    Audit: () => AppRoute.Audit({ channel: selected }),
     NotFound: () => AppRoute.Overview({ channel: selected }),
   });
 };

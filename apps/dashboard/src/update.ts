@@ -1,4 +1,4 @@
-import { Array, Duration, Effect, Option, Schema, Stream, pipe } from "effect";
+import { Array, Duration, Effect, Option, Record, Schema, Stream, pipe } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
@@ -6,12 +6,17 @@ import { type Url, toString as urlToString } from "foldkit/url";
 
 import {
   ActionKind,
+  SettingKey,
+  auditQuery,
   channelsQuery,
   entryQuery,
   logQuery,
   memoryQuery,
   overviewQuery,
   postAction,
+  postSetting,
+  recentQuery,
+  summaryQuery,
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
@@ -53,6 +58,16 @@ const PostAction = Command.define("PostAction", {
     ),
 });
 
+const SaveSetting = Command.define("SaveSetting", {
+  args: { channel: Schema.String, key: SettingKey, value: Schema.String },
+  messages: [Message.SucceededSetting, Message.FailedAction],
+  execute: ({ channel, key, value }) =>
+    postSetting(channel, key, value).pipe(
+      Effect.map((said) => Message.SucceededSetting({ key, said })),
+      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+    ),
+});
+
 // QUERIES
 
 const channels = channelsQuery.lift<Model, Message>({
@@ -78,6 +93,18 @@ const memory = memoryQuery.lift<Model, Message>({
 const usage = usageQuery.lift<Model, Message>({
   parentField: "usage",
   toParentMessage: (message) => Message.GotUsageMessage({ message }),
+});
+const summary = summaryQuery.lift<Model, Message>({
+  parentField: "summary",
+  toParentMessage: (message) => Message.GotSummaryMessage({ message }),
+});
+const audit = auditQuery.lift<Model, Message>({
+  parentField: "audit",
+  toParentMessage: (message) => Message.GotAuditMessage({ message }),
+});
+const recent = recentQuery.lift<Model, Message>({
+  parentField: "recent",
+  toParentMessage: (message) => Message.GotRecentMessage({ message }),
 });
 const schedules = schedulesQuery.lift<Model, Message>({
   parentField: "schedules",
@@ -107,6 +134,8 @@ const draftsOf = (route: AppRoute) =>
     Memory: () => ({ draftKind: "", draftSearch: "" }),
     Usage: () => ({ draftKind: "", draftSearch: "" }),
     Schedules: () => ({ draftKind: "", draftSearch: "" }),
+    Settings: () => ({ draftKind: "", draftSearch: "" }),
+    Audit: () => ({ draftKind: "", draftSearch: "" }),
     NotFound: () => ({ draftKind: "", draftSearch: "" }),
   });
 
@@ -132,7 +161,12 @@ const loadRoute: Step = (model) =>
     onNone: () => ({ model }),
     onSome: (channel) =>
       AppRoute.match<UpdateReturn>(model.route, {
-        Overview: () => overview.revalidateOrLoad(model, { channel }),
+        Overview: () =>
+          Update.combine(model, [
+            (stepModel) => overview.revalidateOrLoad(stepModel, { channel }),
+            (stepModel) => recent.revalidateOrLoad(stepModel, { channel }),
+            (stepModel) => summary.revalidateOrLoad(stepModel),
+          ]),
         Log: ({ kind, q, before }) =>
           log.revalidateOrLoad(model, {
             channel,
@@ -144,6 +178,8 @@ const loadRoute: Step = (model) =>
         Memory: () => memory.revalidateOrLoad(model, { channel }),
         Usage: ({ days }) => usage.revalidateOrLoad(model, { channel, days: daysOf(days) }),
         Schedules: () => schedules.revalidateOrLoad(model, { channel }),
+        Settings: () => overview.revalidateOrLoad(model, { channel }),
+        Audit: () => audit.revalidateOrLoad(model, { channel }),
         NotFound: () => ({ model }),
       }),
   });
@@ -167,6 +203,10 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     schedules: schedulesQuery.init(),
     draftKind: drafts.draftKind,
     draftSearch: drafts.draftSearch,
+    summary: summaryQuery.init(),
+    audit: auditQuery.init(),
+    recent: recentQuery.init(),
+    drafts: {},
     armed: Option.none(),
     notice: Option.none(),
   });
@@ -198,6 +238,40 @@ export const update = (model: Model, message: Message) =>
     GotMemoryMessage: ({ message }) => memory.fold(model, message),
     GotUsageMessage: ({ message }) => usage.fold(model, message),
     GotSchedulesMessage: ({ message }) => schedules.fold(model, message),
+    GotSummaryMessage: ({ message }) => summary.fold(model, message),
+    GotAuditMessage: ({ message }) => audit.fold(model, message),
+    GotRecentMessage: ({ message }) => recent.fold(model, message),
+
+    UpdatedDraft: ({ key, value }) => ({
+      model: modifyFields(model, { drafts: (drafts) => Record.set(drafts, key, value) }),
+    }),
+    ClickedSave: ({ key }) =>
+      Option.match(currentChannel(model), {
+        onNone: () => ({ model }),
+        onSome: (channel) =>
+          Option.match(Record.get(model.drafts, key), {
+            onNone: () => ({ model }),
+            onSome: (value) => ({
+              model: modifyFields(model, { notice: () => Option.none() }),
+              commands: [SaveSetting({ channel, key, value })],
+            }),
+          }),
+      }),
+    ClickedResetSetting: ({ key }) =>
+      Option.match(currentChannel(model), {
+        onNone: () => ({ model }),
+        onSome: (channel) => ({
+          model: modifyFields(model, { notice: () => Option.none() }),
+          commands: [SaveSetting({ channel, key, value: "" })],
+        }),
+      }),
+    SucceededSetting: ({ key, said }) =>
+      loadRoute(
+        modifyFields(model, {
+          drafts: (drafts) => Record.remove(drafts, key),
+          notice: () => Option.some(said),
+        }),
+      ),
 
     SelectedChannel: ({ channel }) => navigate(model, routeOnChannel(model.route, channel)),
 
@@ -243,7 +317,12 @@ export const update = (model: Model, message: Message) =>
     TickedOverviewRefresh: () =>
       Option.match(currentChannel(model), {
         onNone: () => ({ model }),
-        onSome: (channel) => overview.revalidate(model, { channel }),
+        onSome: (channel) =>
+          Update.combine(model, [
+            (stepModel) => overview.revalidate(stepModel, { channel }),
+            (stepModel) => recent.revalidate(stepModel, { channel }),
+            (stepModel) => summary.revalidate(stepModel),
+          ]),
       }),
   });
 

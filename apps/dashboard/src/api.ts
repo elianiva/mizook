@@ -54,8 +54,16 @@ export const ViewLine = Schema.Struct({
 
 export const UsageReport = Schema.Struct({
   byDay: Schema.Array(
-    Schema.Struct({ day: Schema.String, cost: Schema.Finite, calls: Schema.Finite }),
+    Schema.Struct({
+      day: Schema.String,
+      cost: Schema.Finite,
+      calls: Schema.Finite,
+      input: Schema.Finite,
+      output: Schema.Finite,
+      cacheRead: Schema.Finite,
+    }),
   ),
+  byTool: Schema.Array(Schema.Struct({ tool: Schema.String, calls: Schema.Finite })),
   byModel: Schema.Array(
     Schema.Struct({
       model: Schema.String,
@@ -166,27 +174,98 @@ export const schedulesQuery = Query.define({
   execute: ({ channel }) => fetchJson(Schema.Array(ScheduleRow), "schedules", { c: channel }),
 });
 
-export const ActionKind = Schema.Literals(["approve", "deny", "cancel"]);
+export const Summary = Schema.Struct({
+  doName: Schema.String,
+  name: Schema.String,
+  lastActive: Schema.Finite,
+  messages: Schema.Finite,
+  spend24h: Schema.Finite,
+  spend7d: Schema.Finite,
+  pending: Schema.Finite,
+  approvals: Schema.Finite,
+  schedules: Schema.Finite,
+  budget: Schema.Finite,
+});
+
+export const AuditRow = Schema.Struct({
+  at: Schema.Finite,
+  who: Schema.String,
+  action: Schema.String,
+  target: Schema.Finite,
+  ok: Schema.Boolean,
+});
+
+export const summaryQuery = Query.define({
+  name: "Summary",
+  data: Schema.Array(Summary),
+  error: Schema.String,
+  execute: fetchJson(Schema.Array(Summary), "summary", {}),
+});
+
+export const auditQuery = Query.define({
+  name: "Audit",
+  args: channelArgs,
+  data: Schema.Array(AuditRow),
+  error: Schema.String,
+  execute: ({ channel }) => fetchJson(Schema.Array(AuditRow), "audit", { c: channel }),
+});
+
+/** The newest few messages, for the overview. The Log page pages through the rest. */
+export const recentQuery = Query.define({
+  name: "Recent",
+  args: channelArgs,
+  data: Schema.Array(LogMessage),
+  error: Schema.String,
+  execute: ({ channel }) =>
+    fetchJson(Schema.Array(LogMessage), "messages", { c: channel, limit: 8 }),
+});
+
+export const ActionKind = Schema.Literals(["approve", "deny", "cancel", "stop"]);
 export type ActionKind = typeof ActionKind.Type;
 
+export const SettingKey = Schema.Literals(["model", "budget", "timezone", "instructions"]);
+export type SettingKey = typeof SettingKey.Type;
+
 /** A write. The header and same-origin post are what the Worker checks besides the Access token. */
+const write = (path: string, channel: string, body?: unknown): Effect.Effect<unknown, string> =>
+  Effect.tryPromise({
+    try: async () => {
+      const response = await fetch(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
+        method: "POST",
+        headers: { "x-mizook-csrf": "1", "content-type": "application/json" },
+        ...(body !== undefined && { body: JSON.stringify(body) }),
+      });
+      const reply = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        throw new Error(
+          response.status === 409
+            ? "It was already handled"
+            : (reply.error ?? `Request failed (${response.status})`),
+        );
+      }
+      return reply;
+    },
+    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+  });
+
 export const postAction = (
   channel: string,
   action: ActionKind,
   id: number,
 ): Effect.Effect<void, string> =>
-  Effect.tryPromise({
-    try: async () => {
-      const resource = action === "cancel" ? "schedules" : "approvals";
-      const url = `/admin/api/${resource}/${id}/${action}?c=${encodeURIComponent(channel)}`;
-      const response = await fetch(url, { method: "POST", headers: { "x-mizook-csrf": "1" } });
-      if (!response.ok) {
-        throw new Error(
-          response.status === 409
-            ? "It was already handled"
-            : `Request failed (${response.status})`,
-        );
-      }
-    },
-    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-  });
+  write(
+    action === "stop"
+      ? "stop"
+      : `${action === "cancel" ? "schedules" : "approvals"}/${id}/${action}`,
+    channel,
+  ).pipe(Effect.asVoid);
+
+/** An empty value puts the setting back to its default. Gives the channel's reply. */
+export const postSetting = (
+  channel: string,
+  key: SettingKey,
+  value: string,
+): Effect.Effect<string, string> =>
+  write(`settings/${key}`, channel, { value }).pipe(
+    Effect.map((reply) => String((reply as { said?: string }).said ?? "Saved.")),
+  );

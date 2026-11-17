@@ -94,7 +94,7 @@ The deploy job points Telegram at the Worker after each deploy. To do it by hand
 
 ## Dashboard
 
-A dashboard lives at `/admin`: status and spend, the chat log, the memory view, usage, and schedules, per channel. It can answer an approval (approve or deny) and cancel a schedule, each after a second click. Writes need the Access token, a same-origin post with an `x-mizook-csrf` header, and are logged in the channel's `app_audit` table. It is a Foldkit app in `apps/dashboard`, styled with Panda, and the Worker serves its build as static assets next to a JSON API at `/admin/api`.
+A dashboard lives at `/admin`, per channel: an overview (every channel's spend and what waits on you, the running turn, approvals, recent messages, a budget warning), the log, the memory view, usage (per day, model, kind and tool), schedules, settings, and an audit of what was done from it. It can answer an approval, cancel a schedule and stop the running turn, each after a second click, and it edits a channel's model, budget, time zone and instructions through the same code as the slash commands. Writes need the Access token, a same-origin post with an `x-mizook-csrf` header, and are logged in the channel's `app_audit` table. It is a Foldkit app in `apps/dashboard`, styled with Panda, and the Worker serves its build as static assets next to a JSON API at `/admin/api`.
 
 To work on it, run the mock-free path: `pnpm --filter @mizook/dashboard dev` proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`). `pnpm deploy` builds it before `alchemy deploy`.
 

@@ -5,11 +5,15 @@ import { Url } from "foldkit/url";
 
 import {
   ActionKind,
+  SettingKey,
+  auditQuery,
   channelsQuery,
   entryQuery,
   logQuery,
   memoryQuery,
   overviewQuery,
+  recentQuery,
+  summaryQuery,
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
@@ -33,6 +37,13 @@ export const Message = defineMessageUnion({
   ClickedRetry: {},
   ClickedAction: { action: ActionKind, id: Schema.Finite },
   SucceededAction: {},
+  GotSummaryMessage: { message: summaryQuery.Message },
+  GotAuditMessage: { message: auditQuery.Message },
+  GotRecentMessage: { message: recentQuery.Message },
+  UpdatedDraft: { key: SettingKey, value: Schema.String },
+  ClickedSave: { key: SettingKey },
+  ClickedResetSetting: { key: SettingKey },
+  SucceededSetting: { key: SettingKey, said: Schema.String },
   FailedAction: { reason: Schema.String },
   TickedOverviewRefresh: {},
 });
