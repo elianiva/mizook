@@ -269,6 +269,133 @@ export const schedules = async (sql: SqlDriver): Promise<ScheduleRow[]> =>
     )
   ).map((s) => ({ id: s.id, spec: s.spec, prompt: s.prompt, nextAt: s.next_at }));
 
+export interface SkillRow {
+  readonly name: string;
+  readonly description: string;
+  readonly pinned: boolean;
+  readonly useCount: number;
+  readonly usedAt: number | null;
+  readonly updated: number;
+}
+
+/** The channel's procedures, by name. A table that has not been created yet reads empty. */
+export const skills = async (sql: SqlDriver): Promise<SkillRow[]> =>
+  (
+    await rows<{
+      name: string;
+      description: string;
+      pinned: number;
+      use_count: number;
+      used_at: number | null;
+      updated: number;
+    }>(
+      sql,
+      `SELECT name, description, pinned, use_count, used_at, updated FROM app_skills ORDER BY name`,
+    )
+  ).map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    pinned: skill.pinned === 1,
+    useCount: skill.use_count,
+    usedAt: skill.used_at,
+    updated: skill.updated,
+  }));
+
+export interface IntentRow {
+  readonly id: number;
+  readonly description: string;
+  readonly triggers: ReadonlyArray<string>;
+  readonly state: string;
+  readonly fireCount: number;
+  readonly maxFires: number;
+  readonly expires: number;
+  readonly lastFired: number | null;
+}
+
+const triggersOf = (json: string): string[] => {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+export const intents = async (sql: SqlDriver): Promise<IntentRow[]> =>
+  (
+    await rows<{
+      id: number;
+      description: string;
+      triggers: string;
+      state: string;
+      fire_count: number;
+      max_fires: number;
+      expires: number;
+      last_fired: number | null;
+    }>(
+      sql,
+      `SELECT id, description, triggers, state, fire_count, max_fires, expires, last_fired
+       FROM app_intents ORDER BY id`,
+    )
+  ).map((intent) => ({
+    id: intent.id,
+    description: intent.description,
+    triggers: triggersOf(intent.triggers),
+    state: intent.state,
+    fireCount: intent.fire_count,
+    maxFires: intent.max_fires,
+    expires: intent.expires,
+    lastFired: intent.last_fired,
+  }));
+
+export interface PolicyRow {
+  readonly id: number;
+  readonly match: string;
+  readonly decision: string;
+}
+
+export const policies = async (sql: SqlDriver): Promise<PolicyRow[]> =>
+  rows<PolicyRow>(sql, `SELECT id, match, decision FROM app_policies ORDER BY id`);
+
+export interface RunRow {
+  readonly id: number;
+  readonly scheduleId: number;
+  readonly status: string;
+  readonly started: number;
+  readonly finished: number | null;
+  readonly output: string;
+  readonly error: string | null;
+}
+
+/** The newest runs, for the dashboard. Capped so one busy schedule cannot fill the page. */
+export const runs = async (sql: SqlDriver, limit = 25): Promise<RunRow[]> =>
+  (
+    await rows<{
+      id: number;
+      schedule_id: number;
+      status: string;
+      started: number;
+      finished: number | null;
+      output: string;
+      error: string | null;
+    }>(
+      sql,
+      `SELECT id, schedule_id, status, started, finished, output, error
+       FROM app_runs ORDER BY id DESC LIMIT ?`,
+      Math.min(Math.max(limit, 1), 100),
+    )
+  ).map((run) => ({
+    id: run.id,
+    scheduleId: run.schedule_id,
+    status: run.status,
+    started: run.started,
+    finished: run.finished,
+    output: run.output,
+    error: run.error,
+  }));
+
 export interface AuditRow {
   readonly at: number;
   readonly who: string;

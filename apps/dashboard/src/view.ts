@@ -13,14 +13,23 @@ import {
   artifactQuery,
   artifactsQuery,
   type ArtifactRow,
+  IntentRow,
+  PolicyRow,
+  RunRow,
+  SkillRow,
   auditQuery,
   recentQuery,
   summaryQuery,
   entryQuery,
+  intentsQuery,
   logQuery,
   memoryQuery,
   overviewQuery,
+  policiesQuery,
+  profileQuery,
+  runsQuery,
   schedulesQuery,
+  skillsQuery,
   usageQuery,
 } from "./api.ts";
 import {
@@ -39,6 +48,7 @@ import type { Model } from "./model.ts";
 import {
   AppRoute,
   USAGE_DAYS,
+  agentRouter,
   daysOf,
   entryRouter,
   logRouter,
@@ -46,6 +56,7 @@ import {
   artifactsRouter,
   auditRouter,
   overviewRouter,
+  runsRouter,
   settingsRouter,
   routeChannel,
   routeHref,
@@ -1078,6 +1089,243 @@ const schedulesView = (model: Model, channel: string, h: H): Html =>
     }),
   );
 
+// AGENT
+
+const profileBody = (model: Model, h: H): Html =>
+  remote(profileQuery.read(model.profile), h, skeletonView(h, 1), (profile) =>
+    h.div(
+      [h.Class(ui.stack)],
+      [
+        h.p([h.Class(ui.muted)], ["Shared by every channel."]),
+        h.div(
+          [h.Class(ui.listStatic)],
+          [
+            h.div(
+              [h.Class(ui.keyValue)],
+              [
+                h.span([h.Class(ui.strong)], ["About"]),
+                h.span(
+                  [h.Class(ui.text)],
+                  [profile.about.trim() === "" ? "Nothing saved yet." : profile.about],
+                ),
+              ],
+            ),
+            h.div(
+              [h.Class(ui.keyValue)],
+              [
+                h.span([h.Class(ui.strong)], ["Rules"]),
+                profile.rules.length === 0
+                  ? h.span([h.Class(ui.muted)], ["None yet."])
+                  : h.ul(
+                      [h.Class(ui.bullets)],
+                      profile.rules.map((rule, index) => h.keyed("li")(String(index), [], [rule])),
+                    ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+
+const skillsBody = (model: Model, channel: string, h: H): Html =>
+  remote(skillsQuery.read(model.skills, { channel }), h, skeletonView(h, 1), (rows) =>
+    Array.match(rows, {
+      onEmpty: () => emptyView("No skills yet. The agent saves one after a repeatable task.", h),
+      onNonEmpty: (list) =>
+        tableView(
+          [
+            th("Skill", h),
+            th("When to use it", h),
+            th("Pinned", h),
+            th("Uses", h, true),
+            th("Last used", h),
+          ],
+          Array.map(list, (skill: typeof SkillRow.Type) =>
+            h.keyed("tr")(
+              skill.name,
+              [h.Class(ui.row)],
+              [
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [skill.name]),
+                h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [skill.description])]),
+                h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [skill.pinned ? "yes" : "–"]),
+                h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(skill.useCount)]),
+                h.td(
+                  [h.Class(`${ui.td} ${ui.tdFit}`)],
+                  [skill.usedAt === null ? "never" : ago(skill.usedAt)],
+                ),
+              ],
+            ),
+          ),
+          h,
+        ),
+    }),
+  );
+
+const intentStateColor = (state: string): string =>
+  state === "armed"
+    ? "var(--colors-ok)"
+    : state === "expired"
+      ? "var(--colors-warn)"
+      : "var(--colors-fg-muted)";
+
+const intentsBody = (model: Model, channel: string, h: H): Html =>
+  remote(intentsQuery.read(model.intents, { channel }), h, skeletonView(h, 1), (rows) =>
+    Array.match(rows, {
+      onEmpty: () => emptyView("No standing intents.", h),
+      onNonEmpty: (list) =>
+        tableView(
+          [
+            th("#", h),
+            th("State", h),
+            th("Triggers", h),
+            th("What to do", h),
+            th("Fires", h, true),
+            th("Expires", h),
+          ],
+          Array.map(list, (intent: typeof IntentRow.Type) =>
+            h.keyed("tr")(
+              String(intent.id),
+              [h.Class(ui.row)],
+              [
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${intent.id}`]),
+                h.td(
+                  [h.Class(ui.td)],
+                  [
+                    h.span(
+                      [h.Class(ui.badge), h.Style({ color: intentStateColor(intent.state) })],
+                      [intent.state],
+                    ),
+                  ],
+                ),
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [intent.triggers.join(", ")]),
+                h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [intent.description])]),
+                h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [`${intent.fireCount}/${intent.maxFires}`]),
+                h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [epochDateTime(intent.expires)]),
+              ],
+            ),
+          ),
+          h,
+        ),
+    }),
+  );
+
+const decisionColor = (decision: string): string =>
+  decision === "allow"
+    ? "var(--colors-ok)"
+    : decision === "deny"
+      ? "var(--colors-danger)"
+      : "var(--colors-warn)";
+
+const policiesBody = (model: Model, channel: string, h: H): Html =>
+  remote(policiesQuery.read(model.policies, { channel }), h, skeletonView(h, 1), (rows) =>
+    Array.match(rows, {
+      onEmpty: () =>
+        emptyView("No policies. Every executor action asks or runs as it did before.", h),
+      onNonEmpty: (list) =>
+        tableView(
+          [th("#", h), th("Decision", h), th("Match", h)],
+          Array.map(list, (policy: typeof PolicyRow.Type) =>
+            h.keyed("tr")(
+              String(policy.id),
+              [h.Class(ui.row)],
+              [
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${policy.id}`]),
+                h.td(
+                  [h.Class(ui.td)],
+                  [
+                    h.span(
+                      [h.Class(ui.badge), h.Style({ color: decisionColor(policy.decision) })],
+                      [policy.decision],
+                    ),
+                  ],
+                ),
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [policy.match]),
+              ],
+            ),
+          ),
+          h,
+        ),
+    }),
+  );
+
+const agentView = (model: Model, channel: string, h: H): Html =>
+  h.div(
+    [h.Class(ui.stack)],
+    [
+      sectionView("Profile", profileBody(model, h), h),
+      sectionView("Skills", skillsBody(model, channel, h), h),
+      sectionView("Standing intents", intentsBody(model, channel, h), h),
+      sectionView("Policies", policiesBody(model, channel, h), h),
+    ],
+  );
+
+// RUNS
+
+const runStatusColor = (status: string): string =>
+  status === "succeeded"
+    ? "var(--colors-ok)"
+    : status === "failed"
+      ? "var(--colors-danger)"
+      : status === "running"
+        ? "var(--colors-warn)"
+        : "var(--colors-fg-muted)";
+
+const duration = (run: typeof RunRow.Type): string => {
+  if (run.finished === null) return "running";
+  const ms = Math.max(0, run.finished - run.started);
+  return ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
+};
+
+const runsView = (model: Model, channel: string, h: H): Html =>
+  remote(runsQuery.read(model.runs, { channel }), h, skeletonView(h, 1), (rows) =>
+    Array.match(rows, {
+      onEmpty: () => emptyView("No schedule has run yet.", h),
+      onNonEmpty: (list) =>
+        tableView(
+          [
+            th("#", h),
+            th("Schedule", h),
+            th("Status", h),
+            th("Started", h),
+            th("Took", h),
+            th("Result", h),
+          ],
+          Array.map(list, (run: typeof RunRow.Type) =>
+            h.keyed("tr")(
+              String(run.id),
+              [h.Class(ui.row)],
+              [
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${run.id}`]),
+                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${run.scheduleId}`]),
+                h.td(
+                  [h.Class(ui.td)],
+                  [
+                    h.span(
+                      [h.Class(ui.badge), h.Style({ color: runStatusColor(run.status) })],
+                      [run.status],
+                    ),
+                  ],
+                ),
+                h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [epochDateTime(run.started)]),
+                h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [duration(run)]),
+                h.td(
+                  [h.Class(ui.td)],
+                  [
+                    h.div(
+                      [h.Class(run.error === null ? ui.clamp : `${ui.text} ${ui.danger}`)],
+                      [run.error ?? run.output],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          h,
+        ),
+    }),
+  );
+
 // SETTINGS
 
 const SETTINGS: ReadonlyArray<{
@@ -1480,6 +1728,8 @@ const tabsView = (model: Model, h: H): Html => {
     ["Memory", memoryRouter({ channel }), tag === "Memory"],
     ["Usage", usageRouter({ channel, days: Option.none() }), tag === "Usage"],
     ["Schedules", schedulesRouter({ channel }), tag === "Schedules"],
+    ["Agent", agentRouter({ channel }), tag === "Agent"],
+    ["Runs", runsRouter({ channel }), tag === "Runs"],
     ["Settings", settingsRouter({ channel }), tag === "Settings"],
     ["Artifacts", artifactsRouter({ channel, name: Option.none() }), tag === "Artifacts"],
     ["Audit", auditRouter({ channel }), tag === "Audit"],
@@ -1534,6 +1784,10 @@ const pageView = (model: Model, h: H): Html =>
             [h.Class(ui.page)],
             [titleView("Schedules", [], h), schedulesView(model, channel, h)],
           ),
+        Agent: () =>
+          h.div([h.Class(ui.page)], [titleView("Agent", [], h), agentView(model, channel, h)]),
+        Runs: () =>
+          h.div([h.Class(ui.page)], [titleView("Runs", [], h), runsView(model, channel, h)]),
         Settings: () =>
           h.div(
             [h.Class(ui.page)],

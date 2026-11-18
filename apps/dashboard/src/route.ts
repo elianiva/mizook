@@ -11,6 +11,8 @@ export const AppRoute = defineRouteUnion({
   Memory: { channel: MaybeString },
   Usage: { channel: MaybeString, days: MaybeString },
   Schedules: { channel: MaybeString },
+  Agent: { channel: MaybeString },
+  Runs: { channel: MaybeString },
   Settings: { channel: MaybeString },
   Audit: { channel: MaybeString },
   Artifacts: { channel: MaybeString, name: MaybeString },
@@ -65,6 +67,20 @@ export const schedulesRouter = pipe(
   Route.mapTo(AppRoute.Schedules),
 );
 
+export const agentRouter = pipe(
+  admin,
+  slash(literal("agent")),
+  Route.query(Schema.Struct({ channel: optional })),
+  Route.mapTo(AppRoute.Agent),
+);
+
+export const runsRouter = pipe(
+  admin,
+  slash(literal("runs")),
+  Route.query(Schema.Struct({ channel: optional })),
+  Route.mapTo(AppRoute.Runs),
+);
+
 export const settingsRouter = pipe(
   admin,
   slash(literal("settings")),
@@ -92,6 +108,8 @@ const routeParser = Route.oneOf(
   memoryRouter,
   usageRouter,
   schedulesRouter,
+  agentRouter,
+  runsRouter,
   settingsRouter,
   auditRouter,
   artifactsRouter,
@@ -108,6 +126,8 @@ export const routeChannel = (route: AppRoute): Option.Option<string> =>
     Memory: ({ channel }) => channel,
     Usage: ({ channel }) => channel,
     Schedules: ({ channel }) => channel,
+    Agent: ({ channel }) => channel,
+    Runs: ({ channel }) => channel,
     Settings: ({ channel }) => channel,
     Audit: ({ channel }) => channel,
     Artifacts: ({ channel }) => channel,
@@ -122,6 +142,8 @@ export const routeHref = (route: AppRoute): string =>
     Memory: memoryRouter,
     Usage: usageRouter,
     Schedules: schedulesRouter,
+    Agent: agentRouter,
+    Runs: runsRouter,
     Settings: settingsRouter,
     Audit: auditRouter,
     Artifacts: artifactsRouter,
@@ -144,6 +166,8 @@ export const routeOnChannel = (route: AppRoute, channel: string): AppRoute => {
     Memory: () => AppRoute.Memory({ channel: selected }),
     Usage: ({ days }) => AppRoute.Usage({ channel: selected, days }),
     Schedules: () => AppRoute.Schedules({ channel: selected }),
+    Agent: () => AppRoute.Agent({ channel: selected }),
+    Runs: () => AppRoute.Runs({ channel: selected }),
     Settings: () => AppRoute.Settings({ channel: selected }),
     Audit: () => AppRoute.Audit({ channel: selected }),
     Artifacts: () => AppRoute.Artifacts({ channel: selected, name: Option.none() }),

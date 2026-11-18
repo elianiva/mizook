@@ -1,6 +1,16 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
-import { audit, memoryView, messages, overview, usage } from "../src/admin/read.ts";
+import {
+  audit,
+  intents,
+  memoryView,
+  messages,
+  overview,
+  policies,
+  runs,
+  skills,
+  usage,
+} from "../src/admin/read.ts";
 
 const setup = () => {
   const db = new DatabaseSync(":memory:");
@@ -93,6 +103,90 @@ test("tool calls are counted by the first word, inside the range only, and the a
   expect((await audit(sql)).map((r) => [r.action, r.ok])).toEqual([
     ["stop", false],
     ["deny", true],
+  ]);
+});
+
+test("skills, intents, policies and runs read as the agent stores them", async () => {
+  const { db, sql } = setup();
+  db.exec(`CREATE TABLE app_skills (
+      name TEXT PRIMARY KEY, description TEXT, body TEXT, created INTEGER, updated INTEGER,
+      used_at INTEGER, use_count INTEGER, pinned INTEGER);
+    CREATE TABLE app_intents (
+      id INTEGER PRIMARY KEY, description TEXT, triggers TEXT, created INTEGER, expires INTEGER,
+      cooldown INTEGER, max_fires INTEGER, fire_count INTEGER, last_fired INTEGER, state TEXT);
+    CREATE TABLE app_policies (
+      id INTEGER PRIMARY KEY, match TEXT, decision TEXT, created INTEGER);
+    CREATE TABLE app_runs (
+      id INTEGER PRIMARY KEY, schedule_id INTEGER, started INTEGER, finished INTEGER,
+      status TEXT, output TEXT, error TEXT)`);
+  db.prepare(`INSERT INTO app_skills VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "weekly-review",
+    "Review the week",
+    "steps",
+    1,
+    2,
+    3,
+    4,
+    1,
+  );
+  db.prepare(`INSERT INTO app_intents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    7,
+    "Check the rollback owner",
+    JSON.stringify(["launch", "rollback"]),
+    10,
+    20,
+    30,
+    2,
+    1,
+    null,
+    "armed",
+  );
+  db.prepare(`INSERT INTO app_policies VALUES (?, ?, ?, ?)`).run(3, "gmail.send", "ask", 1);
+  db.prepare(`INSERT INTO app_runs VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    1,
+    7,
+    100,
+    250,
+    "succeeded",
+    "ok",
+    null,
+  );
+  db.prepare(`INSERT INTO app_runs VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    2,
+    7,
+    300,
+    400,
+    "failed",
+    "",
+    "boom",
+  );
+
+  expect(await skills(sql)).toEqual([
+    {
+      name: "weekly-review",
+      description: "Review the week",
+      pinned: true,
+      useCount: 4,
+      usedAt: 3,
+      updated: 2,
+    },
+  ]);
+  expect(await intents(sql)).toEqual([
+    {
+      id: 7,
+      description: "Check the rollback owner",
+      triggers: ["launch", "rollback"],
+      state: "armed",
+      fireCount: 1,
+      maxFires: 2,
+      expires: 20,
+      lastFired: null,
+    },
+  ]);
+  expect(await policies(sql)).toEqual([{ id: 3, match: "gmail.send", decision: "ask" }]);
+  expect((await runs(sql, 10)).map((run) => [run.id, run.status, run.error])).toEqual([
+    [2, "failed", "boom"],
+    [1, "succeeded", null],
   ]);
 });
 

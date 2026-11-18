@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { Env } from "../env.ts";
-import type { ChannelInfo } from "../host.ts";
+import type { ChannelInfo, Profile } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
 import { makeVerifier, type Verifier } from "./access.ts";
 
@@ -37,6 +37,10 @@ const PAGES = new Set([
   "memory",
   "usage",
   "schedules",
+  "skills",
+  "intents",
+  "policies",
+  "runs",
   "audit",
   "artifacts",
   "artifact",
@@ -50,9 +54,13 @@ const SHELL_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const api = async (name: string, url: URL, env: Env): Promise<Response> => {
-  const hub = env.Hub.getByName("hub") as unknown as { list(): Promise<ChannelInfo[]> };
+  const hub = env.Hub.getByName("hub") as unknown as {
+    list(): Promise<ChannelInfo[]>;
+    profile(): Promise<Profile>;
+  };
   const channels = await hub.list();
   if (name === "channels") return json(channels);
+  if (name === "profile") return json(await hub.profile());
   if (name === "summary") {
     // One line per channel, for the overview: what each costs and what waits on a person.
     const lines = await Promise.all(

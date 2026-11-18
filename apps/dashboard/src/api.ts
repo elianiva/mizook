@@ -88,6 +88,47 @@ export const ScheduleRow = Schema.Struct({
   nextAt: Schema.Finite,
 });
 
+export const Profile = Schema.Struct({
+  about: Schema.String,
+  rules: Schema.Array(Schema.String),
+});
+
+export const SkillRow = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  pinned: Schema.Boolean,
+  useCount: Schema.Finite,
+  usedAt: Schema.NullOr(Schema.Finite),
+  updated: Schema.Finite,
+});
+
+export const IntentRow = Schema.Struct({
+  id: Schema.Finite,
+  description: Schema.String,
+  triggers: Schema.Array(Schema.String),
+  state: Schema.String,
+  fireCount: Schema.Finite,
+  maxFires: Schema.Finite,
+  expires: Schema.Finite,
+  lastFired: Schema.NullOr(Schema.Finite),
+});
+
+export const PolicyRow = Schema.Struct({
+  id: Schema.Finite,
+  match: Schema.String,
+  decision: Schema.String,
+});
+
+export const RunRow = Schema.Struct({
+  id: Schema.Finite,
+  scheduleId: Schema.Finite,
+  status: Schema.String,
+  started: Schema.Finite,
+  finished: Schema.NullOr(Schema.Finite),
+  output: Schema.String,
+  error: Schema.NullOr(Schema.String),
+});
+
 const fetchJson = <A, I>(
   schema: Schema.Codec<A, I>,
   path: string,
@@ -174,6 +215,45 @@ export const schedulesQuery = Query.define({
   data: Schema.Array(ScheduleRow),
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(ScheduleRow), "schedules", { c: channel }),
+});
+
+export const profileQuery = Query.define({
+  name: "Profile",
+  data: Profile,
+  error: Schema.String,
+  execute: fetchJson(Profile, "profile", {}),
+});
+
+export const skillsQuery = Query.define({
+  name: "Skills",
+  args: channelArgs,
+  data: Schema.Array(SkillRow),
+  error: Schema.String,
+  execute: ({ channel }) => fetchJson(Schema.Array(SkillRow), "skills", { c: channel }),
+});
+
+export const intentsQuery = Query.define({
+  name: "Intents",
+  args: channelArgs,
+  data: Schema.Array(IntentRow),
+  error: Schema.String,
+  execute: ({ channel }) => fetchJson(Schema.Array(IntentRow), "intents", { c: channel }),
+});
+
+export const policiesQuery = Query.define({
+  name: "Policies",
+  args: channelArgs,
+  data: Schema.Array(PolicyRow),
+  error: Schema.String,
+  execute: ({ channel }) => fetchJson(Schema.Array(PolicyRow), "policies", { c: channel }),
+});
+
+export const runsQuery = Query.define({
+  name: "Runs",
+  args: channelArgs,
+  data: Schema.Array(RunRow),
+  error: Schema.String,
+  execute: ({ channel }) => fetchJson(Schema.Array(RunRow), "runs", { c: channel, limit: 25 }),
 });
 
 export const Summary = Schema.Struct({

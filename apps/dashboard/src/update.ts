@@ -15,12 +15,17 @@ import {
   auditQuery,
   channelsQuery,
   entryQuery,
+  intentsQuery,
   logQuery,
   memoryQuery,
   overviewQuery,
+  policiesQuery,
   postAction,
   postSetting,
+  profileQuery,
   recentQuery,
+  runsQuery,
+  skillsQuery,
   summaryQuery,
   schedulesQuery,
   usageQuery,
@@ -148,6 +153,26 @@ const schedules = schedulesQuery.lift<Model, Message>({
   parentField: "schedules",
   toParentMessage: (message) => Message.GotSchedulesMessage({ message }),
 });
+const profile = profileQuery.lift<Model, Message>({
+  parentField: "profile",
+  toParentMessage: (message) => Message.GotProfileMessage({ message }),
+});
+const skills = skillsQuery.lift<Model, Message>({
+  parentField: "skills",
+  toParentMessage: (message) => Message.GotSkillsMessage({ message }),
+});
+const intents = intentsQuery.lift<Model, Message>({
+  parentField: "intents",
+  toParentMessage: (message) => Message.GotIntentsMessage({ message }),
+});
+const policies = policiesQuery.lift<Model, Message>({
+  parentField: "policies",
+  toParentMessage: (message) => Message.GotPoliciesMessage({ message }),
+});
+const runs = runsQuery.lift<Model, Message>({
+  parentField: "runs",
+  toParentMessage: (message) => Message.GotRunsMessage({ message }),
+});
 
 /** The channel in the URL, or the most recently active one when the URL names none. */
 export const currentChannel = (model: Model): Option.Option<string> =>
@@ -172,6 +197,8 @@ const draftsOf = (route: AppRoute) =>
     Memory: () => ({ draftKind: "", draftSearch: "" }),
     Usage: () => ({ draftKind: "", draftSearch: "" }),
     Schedules: () => ({ draftKind: "", draftSearch: "" }),
+    Agent: () => ({ draftKind: "", draftSearch: "" }),
+    Runs: () => ({ draftKind: "", draftSearch: "" }),
     Settings: () => ({ draftKind: "", draftSearch: "" }),
     Audit: () => ({ draftKind: "", draftSearch: "" }),
     Artifacts: () => ({ draftKind: "", draftSearch: "" }),
@@ -217,6 +244,14 @@ const loadRoute: Step = (model) =>
         Memory: () => memory.revalidateOrLoad(model, { channel }),
         Usage: ({ days }) => usage.revalidateOrLoad(model, { channel, days: daysOf(days) }),
         Schedules: () => schedules.revalidateOrLoad(model, { channel }),
+        Agent: () =>
+          Update.combine(model, [
+            (stepModel) => profile.revalidateOrLoad(stepModel),
+            (stepModel) => skills.revalidateOrLoad(stepModel, { channel }),
+            (stepModel) => intents.revalidateOrLoad(stepModel, { channel }),
+            (stepModel) => policies.revalidateOrLoad(stepModel, { channel }),
+          ]),
+        Runs: () => runs.revalidateOrLoad(model, { channel }),
         Settings: () => overview.revalidateOrLoad(model, { channel }),
         Audit: () => audit.revalidateOrLoad(model, { channel }),
         Artifacts: ({ name }) =>
@@ -249,6 +284,11 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     memory: memoryQuery.init(),
     usage: usageQuery.init(),
     schedules: schedulesQuery.init(),
+    profile: profileQuery.init(),
+    skills: skillsQuery.init(),
+    intents: intentsQuery.init(),
+    policies: policiesQuery.init(),
+    runs: runsQuery.init(),
     draftKind: drafts.draftKind,
     draftSearch: drafts.draftSearch,
     summary: summaryQuery.init(),
@@ -289,6 +329,11 @@ export const update = (model: Model, message: Message) =>
     GotMemoryMessage: ({ message }) => memory.fold(model, message),
     GotUsageMessage: ({ message }) => usage.fold(model, message),
     GotSchedulesMessage: ({ message }) => schedules.fold(model, message),
+    GotProfileMessage: ({ message }) => profile.fold(model, message),
+    GotSkillsMessage: ({ message }) => skills.fold(model, message),
+    GotIntentsMessage: ({ message }) => intents.fold(model, message),
+    GotPoliciesMessage: ({ message }) => policies.fold(model, message),
+    GotRunsMessage: ({ message }) => runs.fold(model, message),
     GotSummaryMessage: ({ message }) => summary.fold(model, message),
     GotAuditMessage: ({ message }) => audit.fold(model, message),
     GotArtifactsMessage: ({ message }) => artifacts.fold(model, message),

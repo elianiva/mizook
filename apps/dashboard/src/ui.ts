@@ -139,7 +139,15 @@ export const ui = {
     alignItems: "start",
   }),
   muted: css({ color: "fgMuted" }),
+  danger: css({ color: "danger" }),
   mono: css({ fontFamily: "mono", fontSize: "xs" }),
+  bullets: css({
+    margin: 0,
+    paddingInlineStart: "18px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+  }),
 
   select: css({
     ...control,
@@ -294,6 +302,10 @@ export const ui = {
     backgroundColor: "bg",
     maxHeight: "200px",
     overflowY: "auto",
+  }),
+  listStatic: css({
+    border: "1px solid {colors.border}",
+    backgroundColor: "bg",
   }),
   listItem: css({
     padding: "12px 16px",

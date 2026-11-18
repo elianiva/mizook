@@ -176,6 +176,14 @@ export class ChatAgent extends DurableObject<Env> {
         return read.usage(sql, Math.min(Math.max(Number(params.days) || 30, 1), 365), now);
       case "schedules":
         return read.schedules(sql);
+      case "skills":
+        return read.skills(sql);
+      case "intents":
+        return read.intents(sql);
+      case "policies":
+        return read.policies(sql);
+      case "runs":
+        return read.runs(sql, Math.min(Number(params.limit) || 25, 50));
       case "audit":
         return read.audit(sql);
       case "artifacts":
