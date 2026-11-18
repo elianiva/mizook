@@ -7,6 +7,7 @@
  * every update, and the Worker turns away anything without it.
  */
 import { COMMANDS } from "../src/command-list.ts";
+import { callTelegram } from "./telegram.ts";
 
 const [base] = process.argv.slice(2);
 const token = process.env.BOT_TOKEN;
@@ -20,31 +21,28 @@ if (!base || !token || !secret) {
 }
 
 const url = `${base.replace(/\/$/, "")}/telegram/webhook`;
-const response = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
+
+const mustCall = async (method: string, body: unknown) => {
+  const result = await callTelegram(token, method, body);
+  if (!result.ok) {
+    console.error(`${method} failed: ${result.description ?? "unknown error"}`);
+    process.exit(1);
+  }
+  return result;
+};
+
+try {
+  await mustCall("setWebhook", {
     url,
     secret_token: secret,
     allowed_updates: ["message", "callback_query"],
-  }),
-});
-const result = (await response.json()) as { ok: boolean; description?: string };
-if (!result.ok) {
-  console.error(`setWebhook failed: ${result.description ?? response.status}`);
-  process.exit(1);
-}
-console.log(`webhook set: ${url}`);
+  });
+  console.log(`webhook set: ${url}`);
 
-// The menu next to the text box is the same list `/help` prints.
-const menu = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ commands: COMMANDS }),
-});
-const menuResult = (await menu.json()) as { ok: boolean; description?: string };
-if (!menuResult.ok) {
-  console.error(`setMyCommands failed: ${menuResult.description ?? menu.status}`);
+  // The menu next to the text box is the same list `/help` prints.
+  await mustCall("setMyCommands", { commands: COMMANDS });
+  console.log(`menu set: ${COMMANDS.length} commands`);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-console.log(`menu set: ${COMMANDS.length} commands`);
