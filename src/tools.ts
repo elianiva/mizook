@@ -419,7 +419,7 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: "file_read",
     description:
-      "Read a file the user attached, as text. Works for text, markdown, JSON, CSV and code; binary files (images, audio, PDF) come back as a size and type only.",
+      "Read a file the user attached. Text, markdown, JSON, CSV and code are read directly. Voice notes are transcribed, images are described, and PDF or Office files are converted. Other binary files come back as a size and type only.",
     parameters: parametersOf(FileReadArgs),
     replay: "safe",
   },

@@ -9,6 +9,7 @@ import {
   MAX_INTENT_TRIGGERS,
   MAX_TRIGGER_LENGTH,
 } from "./intents.ts";
+import { MEDIA_LABEL, Media } from "./media.ts";
 import { Policies } from "./policies.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
@@ -59,6 +60,7 @@ export class Handlers extends Context.Service<
       const intents = yield* Intents;
       const policies = yield* Policies;
       const skills = yield* Skills;
+      const media = yield* Media;
       const web = yield* Web;
       const outbox = yield* Outbox;
       const executor = yield* Executor;
@@ -146,9 +148,23 @@ export class Handlers extends Context.Service<
               const textual = /^(text\/|application\/(json|xml|x-yaml|javascript))/.test(
                 blob.contentType,
               );
-              return textual
-                ? clipToolOutput(new TextDecoder().decode(blob.body))
-                : `Binary file: ${blob.contentType}, ${blob.body.length} bytes. I cannot read its content.`;
+              if (textual) return clipToolOutput(new TextDecoder().decode(blob.body));
+              const extracted = yield* media
+                .extract({
+                  bytes: blob.body,
+                  contentType: blob.contentType,
+                  name: a.key.split("/").at(-1) ?? a.key,
+                })
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(`media ${a.key} failed: ${error.message}`).pipe(
+                      Effect.as(undefined),
+                    ),
+                  ),
+                );
+              return extracted === undefined
+                ? `Binary file: ${blob.contentType}, ${blob.body.length} bytes. I cannot read its content.`
+                : `${MEDIA_LABEL[extracted.kind]}:\n${clipToolOutput(extracted.text, 16_000)}`;
             });
           case "webhook_link":
             return host.hookUrl;

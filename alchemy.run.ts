@@ -58,6 +58,8 @@ export default Alchemy.Stack(
         Hub: Cloudflare.DurableObject<Hub>("Hub"),
         // Artifacts, exports and backups.
         Files: files,
+        // Voice notes, images and documents the user sends.
+        AI: Cloudflare.Workers.AI(),
         PUBLIC_URL: `https://${DOMAIN}`,
         // The Worker checks the Access token itself: the team and the application's audience.
         ACCESS_TEAM_DOMAIN: teamDomain,

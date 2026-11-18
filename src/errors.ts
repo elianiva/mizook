@@ -87,6 +87,16 @@ export class ExecutorError extends Data.TaggedError("ExecutorError")<{
   }
 }
 
+/** Workers AI could not read an attachment. */
+export class MediaError extends Data.TaggedError("MediaError")<{
+  readonly operation: string;
+  readonly cause: unknown;
+}> {
+  override get message() {
+    return `media ${this.operation} failed: ${String(this.cause)}`;
+  }
+}
+
 /** A dashboard request did not carry a valid Cloudflare Access token. */
 export class AccessDenied extends Data.TaggedError("AccessDenied")<{
   readonly reason: string;

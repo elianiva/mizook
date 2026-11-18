@@ -18,6 +18,7 @@ import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
 import { Outbox } from "./outbox.ts";
 import { Approvals } from "./approvals.ts";
+import { MEDIA_LABEL, Media } from "./media.ts";
 import { Policies } from "./policies.ts";
 import { Runs } from "./runs.ts";
 import { Executor } from "./executor.ts";
@@ -83,6 +84,7 @@ export class Bot extends Context.Service<
       const policies = yield* Policies;
       const runs = yield* Runs;
       const executor = yield* Executor;
+      const media = yield* Media;
       const blobs = yield* Blobs;
       const usage = yield* Usage;
       const host = yield* Host;
@@ -238,8 +240,24 @@ export class Bot extends Context.Service<
               Effect.orElseSucceed(() => false),
             );
           if (stored) {
+            const note = `[attached ${file.type}: ${name}, ${file.mimeType ?? "unknown type"}, ${bytes.length} bytes, key ${key}]`;
+            const extracted = yield* media
+              .extract({
+                bytes,
+                contentType: file.mimeType ?? "application/octet-stream",
+                name,
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning(`media ${key} failed: ${error.message}`).pipe(
+                    Effect.as(undefined),
+                  ),
+                ),
+              );
             saved.push(
-              `[attached ${file.type}: ${name}, ${file.mimeType ?? "unknown type"}, ${bytes.length} bytes, key ${key}]`,
+              extracted === undefined
+                ? note
+                : `${note}\n${MEDIA_LABEL[extracted.kind]}:\n${clipToolOutput(extracted.text, 12_000)}`,
             );
           }
         }

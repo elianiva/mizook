@@ -11,6 +11,7 @@ import type { Env } from "./env.ts";
 import { formatDate } from "./format.ts";
 import { Models } from "./models.ts";
 import { Host } from "./host.ts";
+import { Media } from "./media.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
 import { Runs } from "./runs.ts";
@@ -106,7 +107,7 @@ export const makeRuntime = (
     Layer.provideMerge(Usage.layer(sql)),
     Layer.provideMerge(Layer.succeed(Host, host)),
     Layer.provideMerge(Artifacts.layer(sql)),
-    Layer.provideMerge(Blobs.r2(env.Files)),
+    Layer.provideMerge(Layer.merge(Blobs.r2(env.Files), Media.layer(env.AI))),
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Layer.merge(Schedules.layer(sql, arm), Runs.layer(sql))),
