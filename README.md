@@ -36,6 +36,7 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 - **Web:** `web_search` (Parallel, then Exa; set `SEARCH_PROVIDERS`) and `web_fetch`.
 - **Executor:** one `executor` tool over MCP. A call that needs approval shows Approve, Always allow and Deny buttons in the chat; the press resumes it and the agent sees the result. `/policies allow|ask|deny <match>` sets standing rules, and an approval expires after 30 minutes. Use the plain `/mcp` URL (model mode).
 - **Files:** attachments are stored; `file_read` reads text files. Images, voice and PDF content are not read yet.
+- **Receipt:** a 👀 reaction means the message reached the bot. Typing starts when the model does, so an eye without typing is a slow model, not a lost message.
 - **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /profile /skills /intents /policies /schedules /export`.
 - **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
 

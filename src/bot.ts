@@ -208,6 +208,12 @@ export class Bot extends Context.Service<
           );
           return;
         }
+        // A receipt before any model work: the eye means the message reached the chat's Durable
+        // Object. If it arrives but typing does not, the wait is inference, not delivery.
+        yield* Effect.tryPromise({
+          try: () => telegram.addReaction(thread.id, message.id, "👀"),
+          catch: (cause) => new TelegramError({ operation: "reaction", cause }),
+        }).pipe(Effect.ignore);
         const typed = message.text.trim();
         // Files the user sends are kept in the blob store; the agent is told their names and keys.
         const saved: string[] = [];
