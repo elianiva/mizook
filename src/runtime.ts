@@ -23,6 +23,7 @@ import { Backup } from "./backup.ts";
 import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
 import { Schedules } from "./schedules.ts";
+import { Skills } from "./skills.ts";
 import { SummarizerLive } from "./summarizer.ts";
 import { PERSONA } from "./persona.ts";
 import { TOOL_GUIDE } from "./tools.ts";
@@ -106,6 +107,7 @@ export const makeRuntime = (
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Schedules.layer(sql, arm)),
+    Layer.provideMerge(Skills.layer(sql)),
     Layer.provideMerge(State.layer(sql)),
     Layer.provideMerge(sqliteStore(sql)),
     Layer.provideMerge(memory),

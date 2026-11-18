@@ -12,6 +12,9 @@ long for one message is logged as several in a row.
 **Profile** — the short "about you" and the standing rules every channel shares. It lives in the
 Hub, not in a chat's memory: identity, not history.
 
+**Skill** — a reusable procedure, saved by name. The index goes into a turn; the body is read only
+when a task needs it. A schedule can name one to read when it fires.
+
 **Node** — `node(l, i)` covers the 2^l messages from `i·2^l`. A one-line summary of them, at most
 512 bytes, built once. Named `id+n`.
 

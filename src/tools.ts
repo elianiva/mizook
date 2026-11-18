@@ -33,6 +33,12 @@ export const ScheduleCreateArgs = Schema.Struct({
     Schema.String,
     "What to do when it fires, written as an instruction to yourself. You will see it as a message starting [scheduled #id].",
   ),
+  skill: Schema.optionalKey(
+    described(
+      Schema.String,
+      "A skill to read first when it fires, from skill_manage list. Pin it for as long as the schedule exists.",
+    ),
+  ),
   at: Schema.optionalKey(
     described(
       Schema.String,
@@ -145,6 +151,28 @@ export const ProfileArgs = Schema.Struct({
     described(
       Schema.Array(Schema.String),
       "update: standing instructions such as 'ask before sending email' or 'use metric units'. Empty clears them.",
+    ),
+  ),
+});
+
+export const SkillArgs = Schema.Struct({
+  action: described(
+    Schema.Literals(["list", "read", "save", "delete"]),
+    "list: names and descriptions. read: the full procedure. save: create or replace. delete: remove it.",
+  ),
+  name: Schema.optionalKey(
+    described(
+      Schema.String,
+      "Lowercase letters, digits and dashes, up to 64. Required for read, save and delete.",
+    ),
+  ),
+  description: Schema.optionalKey(
+    described(Schema.String, "save: one line saying when to use it, up to 200 characters."),
+  ),
+  body: Schema.optionalKey(
+    described(
+      Schema.String,
+      "save: the procedure. Steps, inputs, output, what to check, and what needs approval. Up to 24,000 characters.",
     ),
   ),
 });
@@ -275,6 +303,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "unsafe",
   },
   {
+    name: "skill_manage",
+    description:
+      "Keep procedures you can reuse: list, read, save or delete a skill. Save one after you work out a repeatable task. Read it before a task that matches its description. A schedule can name a skill to read when it fires.",
+    parameters: parametersOf(SkillArgs),
+    replay: "unsafe",
+  },
+  {
     name: "executor",
     description:
       "Reach the user's connected apps and accounts (mail, calendar, code hosts, and more) through Executor.",
@@ -345,6 +380,10 @@ ask_channel reads another channel's memory. Use it only when the user's question
 # The user
 
 profile_manage is the one thing every channel shares: who the user is and the rules they want followed. Save a stable preference or rule there when you learn it, not conversation details. Keep the profile short.
+
+# Skills
+
+A skill is a procedure you can reuse. When you work out a repeatable multi-step task, save it with skill_manage: when to use it, the inputs, the steps that matter, the output, and what needs approval. Save the method, not the transcript. Read a skill before a task that matches its description. When a schedule says to read a skill, do that first.
 
 # Artifacts
 

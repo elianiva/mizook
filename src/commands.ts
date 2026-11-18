@@ -5,6 +5,7 @@ import { Settings } from "./config.ts";
 import { formatDate } from "./format.ts";
 import { Host } from "./host.ts";
 import { Schedules } from "./schedules.ts";
+import { Skills } from "./skills.ts";
 import { State } from "./state.ts";
 import type { StateError } from "./errors.ts";
 import { Usage } from "./usage.ts";
@@ -29,6 +30,7 @@ export class Commands extends Context.Service<
       const settings = yield* Settings;
       const state = yield* State;
       const schedules = yield* Schedules;
+      const skills = yield* Skills;
       const usage = yield* Usage;
       const host = yield* Host;
       const agent = yield* Agent;
@@ -115,6 +117,30 @@ export class Commands extends Context.Service<
                   )
                   .join("\n");
           }
+          case "skills": {
+            const [verb = "", ...rest] = arg.split(/\s+/);
+            const name = rest.join(" ").trim();
+            if (verb === "") {
+              const all = yield* skills.list;
+              return all.length === 0
+                ? "No skills yet."
+                : all
+                    .map((s) => `- ${s.name}: ${s.description}${s.pinned ? " (pinned)" : ""}`)
+                    .join("\n");
+            }
+            if (name === "") return "Use /skills, /skills show <name>, or /skills delete <name>.";
+            const skill = yield* skills.get(name);
+            if (!skill) return `No skill "${name}".`;
+            if (verb === "show") return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
+            if (verb === "delete") {
+              if (skill.pinned)
+                return `"${name}" is pinned by a schedule; cancel the schedule first.`;
+              return (yield* skills.remove(name))
+                ? `Deleted skill "${name}".`
+                : `No skill "${name}".`;
+            }
+            return "Use /skills, /skills show <name>, or /skills delete <name>.";
+          }
           case "schedules": {
             const all = yield* schedules.list;
             return all.length === 0
@@ -122,7 +148,7 @@ export class Commands extends Context.Service<
               : all
                   .map(
                     (s) =>
-                      `#${s.id} ${s.spec.kind}, next ${formatDate(new Date(s.nextAt), settings.timezone)}: ${s.prompt}`,
+                      `#${s.id} ${s.spec.kind}${s.skill ? ` [skill ${s.skill}]` : ""}, next ${formatDate(new Date(s.nextAt), settings.timezone)}: ${s.prompt}`,
                   )
                   .join("\n");
           }

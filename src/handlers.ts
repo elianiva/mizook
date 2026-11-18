@@ -5,6 +5,7 @@ import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
+import { MAX_SKILL_BODY, MAX_SKILL_DESCRIPTION, SKILL_NAME, Skills } from "./skills.ts";
 import { KIND_TYPES } from "./artifact-render.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
@@ -29,6 +30,7 @@ import {
   ProfileArgs,
   ScheduleCancelArgs,
   ScheduleCreateArgs,
+  SkillArgs,
   WebFetchArgs,
   WebSearchArgs,
   ZoomArgs,
@@ -44,6 +46,7 @@ export class Handlers extends Context.Service<
     Effect.gen(function* () {
       const memory = yield* Memory;
       const schedules = yield* Schedules;
+      const skills = yield* Skills;
       const web = yield* Web;
       const outbox = yield* Outbox;
       const executor = yield* Executor;
@@ -63,7 +66,7 @@ export class Handlers extends Context.Service<
             : spec.kind === "cron"
               ? `cron "${spec.expr}" (${spec.timezone})`
               : `watch ${spec.url} every ${spec.everyMinutes} min`;
-        return `#${s.id} ${what}; next ${formatDate(new Date(s.nextAt), timezone)}; ${s.prompt}`;
+        return `#${s.id} ${what}${s.skill ? ` [skill ${s.skill}]` : ""}; next ${formatDate(new Date(s.nextAt), timezone)}; ${s.prompt}`;
       };
 
       const specOf = (a: typeof ScheduleCreateArgs.Type): Effect.Effect<Spec, ScheduleError> => {
@@ -252,12 +255,91 @@ export class Handlers extends Context.Service<
                   `${page.status} ${page.contentType}${page.truncated ? " (cut)" : ""}\n${clipToolOutput(page.text)}`,
               ),
             );
+          case "skill_manage":
+            return Effect.gen(function* () {
+              const a = yield* decode(SkillArgs, args);
+              switch (a.action) {
+                case "list": {
+                  const all = yield* skills.list;
+                  return all.length === 0
+                    ? "No skills yet."
+                    : all
+                        .map(
+                          (skill) =>
+                            `- ${skill.name}: ${skill.description}${skill.pinned ? " (pinned)" : ""}`,
+                        )
+                        .join("\n");
+                }
+                case "read": {
+                  if (!a.name) return yield* new ToolError({ reason: "read needs a name" });
+                  const skill = yield* skills.get(a.name);
+                  if (!skill) return yield* new ToolError({ reason: `no skill "${a.name}"` });
+                  yield* skills.touch(a.name);
+                  return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
+                }
+                case "save": {
+                  if (!a.name || !a.description || !a.body) {
+                    return yield* new ToolError({
+                      reason: "save needs name, description and body",
+                    });
+                  }
+                  const name = a.name.trim();
+                  const description = a.description.trim();
+                  const body = a.body.trim();
+                  if (!SKILL_NAME.test(name)) {
+                    return yield* new ToolError({
+                      reason: "name: lowercase letters, digits and dashes, up to 64",
+                    });
+                  }
+                  if (description.length > MAX_SKILL_DESCRIPTION) {
+                    return yield* new ToolError({
+                      reason: `description is longer than ${MAX_SKILL_DESCRIPTION} characters`,
+                    });
+                  }
+                  if (body.length > MAX_SKILL_BODY) {
+                    return yield* new ToolError({
+                      reason: `body is longer than ${MAX_SKILL_BODY} characters`,
+                    });
+                  }
+                  const saved = yield* skills.save(name, description, body);
+                  return `Saved skill "${saved.name}".`;
+                }
+                case "delete": {
+                  if (!a.name) return yield* new ToolError({ reason: "delete needs a name" });
+                  const skill = yield* skills.get(a.name);
+                  if (!skill) return `No skill "${a.name}".`;
+                  if (skill.pinned) {
+                    return yield* new ToolError({
+                      reason: `"${a.name}" is pinned by a schedule; cancel the schedule first`,
+                    });
+                  }
+                  return (yield* skills.remove(a.name))
+                    ? `Deleted skill "${a.name}".`
+                    : `No skill "${a.name}".`;
+                }
+              }
+            });
           case "schedule_create":
             return Effect.gen(function* () {
               const a = yield* decode(ScheduleCreateArgs, args);
               const spec = yield* specOf(a);
               const now = new Date(DateTime.toEpochMillis(yield* DateTime.now));
-              return `Scheduled. ${describe(yield* schedules.create(spec, a.prompt, now))}`;
+              const skill = a.skill?.trim();
+              if (skill !== undefined && skill !== "") {
+                if (!SKILL_NAME.test(skill)) {
+                  return yield* new ToolError({ reason: `"${skill}" is not a skill name` });
+                }
+                const found = yield* skills.get(skill);
+                if (!found) return yield* new ToolError({ reason: `no skill "${skill}"` });
+                yield* skills.pin(skill);
+              }
+              const made = yield* schedules.create(
+                spec,
+                a.prompt,
+                now,
+                skill === "" ? undefined : skill,
+              );
+              return `Scheduled. ${describe(made)}`;
             });
           case "schedule_list":
             return Effect.map(schedules.list, (all) =>

@@ -300,7 +300,8 @@ export class Bot extends Context.Service<
       /** The message a due schedule starts a turn with, or nothing when it stays silent. */
       const textOf = (s: Scheduled) =>
         Effect.gen(function* () {
-          if (s.spec.kind !== "watch") return `[scheduled #${s.id}] ${s.prompt}`;
+          const skill = s.skill === undefined ? "" : `Read skill "${s.skill}" first.\n\n`;
+          if (s.spec.kind !== "watch") return `[scheduled #${s.id}] ${skill}${s.prompt}`;
           const page = yield* web.fetch(s.spec.url).pipe(
             Effect.map((p) => p.text),
             Effect.catch((error) =>
@@ -315,7 +316,7 @@ export class Bot extends Context.Service<
             yield* Effect.promise(() => sha256(page)),
           );
           return changed
-            ? `[watch #${s.id} changed] ${s.prompt}\n\n${s.spec.url} now reads:\n${clipToolOutput(page)}`
+            ? `[watch #${s.id} changed] ${skill}${s.prompt}\n\n${s.spec.url} now reads:\n${clipToolOutput(page)}`
             : undefined;
         });
 

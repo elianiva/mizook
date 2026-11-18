@@ -8,6 +8,8 @@ export interface Schedule {
   readonly spec: Spec;
   /** What the agent is told when it fires. */
   readonly prompt: string;
+  /** A skill to read before the prompt, by name. */
+  readonly skill: string | undefined;
   /** Epoch milliseconds of the next fire. */
   readonly nextAt: number;
   /** For a watch: a hash of what it saw last. */
@@ -18,6 +20,7 @@ const Row = Schema.Struct({
   id: Schema.Finite,
   spec: SpecJson,
   prompt: Schema.String,
+  skill: Schema.NullOr(Schema.String),
   next_at: Schema.Finite,
   last_hash: Schema.NullOr(Schema.String),
 });
@@ -26,6 +29,7 @@ const toSchedule = (row: typeof Row.Type): Schedule => ({
   id: row.id,
   spec: row.spec,
   prompt: row.prompt,
+  skill: row.skill ?? undefined,
   nextAt: row.next_at,
   lastHash: row.last_hash ?? undefined,
 });
@@ -45,6 +49,7 @@ export class Schedules extends Context.Service<
       spec: Spec,
       prompt: string,
       now: Date,
+      skill?: string,
     ): Effect.Effect<Schedule, ScheduleError | StateError>;
     readonly list: Effect.Effect<ReadonlyArray<Schedule>, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
@@ -81,8 +86,12 @@ export class Schedules extends Context.Service<
             `CREATE TABLE IF NOT EXISTS app_schedules (
                id INTEGER PRIMARY KEY AUTOINCREMENT, spec TEXT NOT NULL, prompt TEXT NOT NULL,
                next_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-               created INTEGER NOT NULL, last_hash TEXT)`,
+               created INTEGER NOT NULL, last_hash TEXT, skill TEXT)`,
           );
+          const columns = await sql.all<{ name: string }>(`PRAGMA table_info(app_schedules)`);
+          if (!columns.some((column) => column.name === "skill")) {
+            await sql.all(`ALTER TABLE app_schedules ADD COLUMN skill TEXT`);
+          }
           await sql.all(`CREATE TABLE IF NOT EXISTS app_fires (at INTEGER NOT NULL)`);
         });
 
@@ -100,21 +109,22 @@ export class Schedules extends Context.Service<
           );
         const active = query(
           "active schedules",
-          `SELECT id, spec, prompt, next_at, last_hash FROM app_schedules WHERE active = 1 ORDER BY next_at, id`,
+          `SELECT id, spec, prompt, skill, next_at, last_hash FROM app_schedules WHERE active = 1 ORDER BY next_at, id`,
         );
 
         return Schedules.of({
-          create: (spec, prompt, now) =>
+          create: (spec, prompt, now, skill) =>
             Effect.gen(function* () {
               const at = (yield* firstFire(spec, now)).getTime();
               const [made] = yield* query(
                 "create schedule",
-                `INSERT INTO app_schedules (spec, prompt, next_at, created) VALUES (?, ?, ?, ?)
-                 RETURNING id, spec, prompt, next_at, last_hash`,
+                `INSERT INTO app_schedules (spec, prompt, skill, next_at, created) VALUES (?, ?, ?, ?, ?)
+                 RETURNING id, spec, prompt, skill, next_at, last_hash`,
                 yield* Schema.encodeEffect(SpecJson)(spec).pipe(
                   Effect.mapError((cause) => new StateError({ operation: "encode spec", cause })),
                 ),
                 prompt,
+                skill ?? null,
                 at,
                 now.getTime(),
               );

@@ -12,6 +12,7 @@ export const COMMANDS = [
   { command: "name", description: "Name this channel" },
   { command: "channels", description: "List the channels" },
   { command: "profile", description: "Show or reset the profile every channel shares" },
+  { command: "skills", description: "List, show or delete the agent's skills" },
   { command: "schedules", description: "List this channel's schedules" },
   { command: "export", description: "Export this channel as a file" },
   { command: "help", description: "List the commands" },

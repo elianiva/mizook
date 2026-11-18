@@ -9,6 +9,7 @@ import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
 import { Host, type Profile } from "./host.ts";
 import { Models } from "./models.ts";
+import { Skills } from "./skills.ts";
 import { agentTools } from "./tools.ts";
 import { Outbox } from "./outbox.ts";
 import { Usage } from "./usage.ts";
@@ -38,6 +39,19 @@ const profileText = (profile: Profile): string =>
   ]
     .filter((part) => part !== "")
     .join("\n");
+
+/** The skill catalogue, one line each. The bodies load only when the agent reads one. */
+const skillIndexText = (
+  skills: ReadonlyArray<{ readonly name: string; readonly description: string }>,
+): string => {
+  if (skills.length === 0) return "";
+  const shown = skills.slice(0, 40);
+  return [
+    "Skills you can read with skill_manage:",
+    ...shown.map((skill) => `- ${skill.name}: ${skill.description}`),
+    ...(skills.length > shown.length ? [`... and ${skills.length - shown.length} more`] : []),
+  ].join("\n");
+};
 
 /** The agent: one turn per user message, on pi-durable, with the memory as its only continuity. */
 export class Agent extends Context.Service<
@@ -72,6 +86,7 @@ export class Agent extends Context.Service<
       const usage = yield* Usage;
       const outbox = yield* Outbox;
       const host = yield* Host;
+      const skills = yield* Skills;
       const { main } = yield* Models;
       const { harness, context, turnInputs } = durable;
 
@@ -167,7 +182,11 @@ export class Agent extends Context.Service<
           return "folded" as const;
         }
 
-        const turnContext = [`Now: ${yield* now}`, profileText(yield* host.profile)]
+        const turnContext = [
+          `Now: ${yield* now}`,
+          profileText(yield* host.profile),
+          skillIndexText(yield* skills.index),
+        ]
           .filter((part) => part !== "")
           .join("\n\n");
         const turn = yield* memory.beginTurn(incoming.text, { context: turnContext });
