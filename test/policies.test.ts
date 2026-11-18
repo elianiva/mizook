@@ -28,6 +28,12 @@ test("deny beats ask, ask beats allow, and the same rule is not stored twice", a
       expect(again.id).toBe(allow.id);
       expect(yield* policies.list).toHaveLength(3);
 
+      const changed = yield* policies.update(allow.id, "calendar.list", "allow");
+      expect(changed).toMatchObject({ id: allow.id, match: "calendar.list", decision: "allow" });
+      expect(yield* policies.decide("call calendar.list")).toBe("allow");
+      expect(yield* policies.decide("call gmail.send email")).toBe("ask");
+      expect(yield* policies.update(999, "none", "allow")).toBeUndefined();
+
       expect(yield* policies.remove(deny.id)).toBe(true);
       expect(yield* policies.remove(deny.id)).toBe(false);
       expect(yield* policies.decide("call gmail.send email")).toBe("ask");

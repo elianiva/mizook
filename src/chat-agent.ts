@@ -14,6 +14,7 @@ import { Artifacts } from "./artifacts.ts";
 import { Commands } from "./commands.ts";
 import { State } from "./state.ts";
 import * as read from "./admin/read.ts";
+import { edit as applyEdit, type EditOutcome } from "./admin/edit.ts";
 
 type Hosted = Context.Service.Shape<typeof Host>;
 
@@ -195,6 +196,32 @@ export class ChatAgent extends DurableObject<Env> {
       default:
         return undefined;
     }
+  }
+
+  /** Apply a dashboard edit to the profile, a skill, an intent or a policy. Audited. */
+  async edit(who: string, kind: string, input: unknown): Promise<EditOutcome> {
+    const result = await this.runtime.runPromise(
+      applyEdit(kind, input).pipe(
+        Effect.match({
+          onSuccess: (outcome) => outcome,
+          onFailure: (error) => ({ ok: false as const, error: error.message }),
+        }),
+      ),
+    );
+    const data =
+      input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    const action = typeof data.action === "string" ? data.action : "save";
+    const label =
+      kind === "skills" && typeof data.name === "string" && data.name !== "" ? `:${data.name}` : "";
+    const target = kind === "intents" || kind === "policies" ? Number(data.id) || 0 : 0;
+    await this.runtime
+      .runPromise(
+        State.use((state) =>
+          state.audit(who, `agent:${kind}:${action}${label}`, target, result.ok),
+        ),
+      )
+      .catch(() => undefined);
+    return result;
   }
 
   /**

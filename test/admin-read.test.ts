@@ -165,6 +165,7 @@ test("skills, intents, policies and runs read as the agent stores them", async (
     {
       name: "weekly-review",
       description: "Review the week",
+      body: "steps",
       pinned: true,
       useCount: 4,
       usedAt: 3,
@@ -179,6 +180,7 @@ test("skills, intents, policies and runs read as the agent stores them", async (
       state: "armed",
       fireCount: 1,
       maxFires: 2,
+      cooldown: 30,
       expires: 20,
       lastFired: null,
     },

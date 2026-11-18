@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 
 import {
+  AgentKind,
   artifactQuery,
   artifactsQuery,
   auditQuery,
@@ -43,6 +44,14 @@ export const Model = Schema.Struct({
   artifacts: artifactsQuery.Model,
   artifact: artifactQuery.Model,
   recent: recentQuery.Model,
+  /** The Agent form that is open, if any. `id` is a skill name, intent id or policy id. */
+  editor: Schema.Option(
+    Schema.Struct({
+      kind: AgentKind,
+      id: Schema.String,
+      fields: Schema.Record(Schema.String, Schema.String),
+    }),
+  ),
   /** Setting inputs the person has changed and not saved yet. */
   drafts: Schema.Record(Schema.String, Schema.String),
   /** The artifact being written on the Artifacts page. */

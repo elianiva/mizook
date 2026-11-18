@@ -39,6 +39,11 @@ test("a skill round-trips, counts reads, pins and deletes", async () => {
       yield* skills.pin("weekly-review");
       expect((yield* skills.get("weekly-review"))?.pinned).toBe(true);
 
+      yield* skills.setPinned("weekly-review", false);
+      expect((yield* skills.get("weekly-review"))?.pinned).toBe(false);
+      yield* skills.setPinned("weekly-review", true);
+      expect((yield* skills.get("weekly-review"))?.pinned).toBe(true);
+
       yield* skills.save("weekly-review", "Review the week.", "1. Read the last seven days.");
       expect((yield* skills.get("weekly-review"))?.useCount).toBe(1);
 

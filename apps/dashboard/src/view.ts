@@ -13,6 +13,7 @@ import {
   artifactQuery,
   artifactsQuery,
   type ArtifactRow,
+  AgentKind,
   IntentRow,
   PolicyRow,
   RunRow,
@@ -1091,12 +1092,277 @@ const schedulesView = (model: Model, channel: string, h: H): Html =>
 
 // AGENT
 
-const profileBody = (model: Model, h: H): Html =>
-  remote(profileQuery.read(model.profile), h, skeletonView(h, 1), (profile) =>
+type AgentEditor = {
+  readonly kind: AgentKind;
+  readonly id: string;
+  readonly fields: { readonly [key: string]: string };
+};
+
+const editorFor = (model: Model, kind: AgentKind): Option.Option<AgentEditor> =>
+  Option.flatMap(model.editor, (editor) =>
+    editor.kind === kind ? Option.some(editor) : Option.none(),
+  );
+
+const agentField = (label: string, control: Html, h: H): Html =>
+  h.div(
+    [h.Class(ui.field)],
+    [h.div([h.Class(ui.fieldLabel)], [h.span([h.Class(ui.strong)], [label])]), control, h.empty],
+  );
+
+const agentText = (
+  key: string,
+  label: string,
+  value: string,
+  h: H,
+  placeholder?: string,
+  disabled = false,
+): Html =>
+  agentField(
+    label,
+    h.input([
+      h.Class(`${ui.input} ${ui.fullWidth}`),
+      h.Type("text"),
+      h.AriaLabel(label),
+      ...(placeholder === undefined ? [] : [h.Placeholder(placeholder)]),
+      ...(disabled ? [h.Disabled(true)] : []),
+      h.Value(value),
+      h.OnInput((next) => Message.UpdatedAgentField({ key, value: next })),
+    ]),
+    h,
+  );
+
+const agentTextarea = (
+  key: string,
+  label: string,
+  value: string,
+  h: H,
+  placeholder?: string,
+  tall = false,
+): Html =>
+  agentField(
+    label,
+    h.textarea([
+      h.Class(ui.textarea),
+      ...(tall ? [h.Style({ minHeight: "260px" })] : []),
+      h.AriaLabel(label),
+      ...(placeholder === undefined ? [] : [h.Placeholder(placeholder)]),
+      h.Value(value),
+      h.OnInput((next) => Message.UpdatedAgentField({ key, value: next })),
+    ]),
+    h,
+  );
+
+const agentNumber = (key: string, label: string, value: string, min: string, h: H): Html =>
+  agentField(
+    label,
+    h.input([
+      h.Class(`${ui.input} ${ui.fullWidth}`),
+      h.Type("number"),
+      h.Min(min),
+      h.Step("1"),
+      h.AriaLabel(label),
+      h.Value(value),
+      h.OnInput((next) => Message.UpdatedAgentField({ key, value: next })),
+    ]),
+    h,
+  );
+
+const agentDate = (key: string, label: string, value: string, h: H): Html =>
+  agentField(
+    label,
+    h.input([
+      h.Class(`${ui.input} ${ui.fullWidth}`),
+      h.Type("date"),
+      h.AriaLabel(label),
+      h.Value(value),
+      h.OnInput((next) => Message.UpdatedAgentField({ key, value: next })),
+    ]),
+    h,
+  );
+
+const agentPinned = (value: string, h: H): Html =>
+  agentField("Pinned", h.span([h.Class(ui.badge)], [value === "1" ? "yes" : "no"]), h);
+
+const agentDecision = (value: string, h: H): Html =>
+  agentField(
+    "Decision",
+    h.select(
+      [
+        h.Class(ui.select),
+        h.AriaLabel("Decision"),
+        h.OnChange((next) => Message.UpdatedAgentField({ key: "decision", value: next })),
+      ],
+      Array.map(["allow", "ask", "deny"], (choice) =>
+        h.option([h.Value(choice), h.Selected(value === choice)], [choice]),
+      ),
+    ),
+    h,
+  );
+
+const agentReady = (editor: AgentEditor): boolean => {
+  const fields = editor.fields;
+  if (editor.kind === "profile") return true;
+  if (editor.kind === "skills") {
+    const name = editor.id || (fields.name ?? "");
+    return (
+      /^[a-z0-9][a-z0-9-]{0,63}$/.test(name) &&
+      (fields.description ?? "").trim() !== "" &&
+      (fields.body ?? "").trim() !== ""
+    );
+  }
+  if (editor.kind === "intents") {
+    const maxFires = Number(fields.maxFires);
+    const cooldownHours = Number(fields.cooldownHours);
+    return (
+      (fields.description ?? "").trim() !== "" &&
+      (fields.triggers ?? "").trim() !== "" &&
+      (fields.expires ?? "") !== "" &&
+      Number.isInteger(maxFires) &&
+      maxFires >= 1 &&
+      Number.isFinite(cooldownHours) &&
+      cooldownHours >= 0
+    );
+  }
+  return (fields.match ?? "").trim() !== "";
+};
+
+const agentForm = (
+  model: Model,
+  editor: AgentEditor,
+  h: H,
+  destructive?: { readonly label: string },
+): Html => {
+  const fields = editor.fields;
+  const ready = agentReady(editor);
+  const armed = Option.contains(model.armed, `agent-remove:${editor.kind}:${editor.id}`);
+  const controls =
+    editor.kind === "profile"
+      ? [
+          agentTextarea(
+            "about",
+            "About",
+            fields.about ?? "",
+            h,
+            "Who the user is, in a few lines.",
+          ),
+          agentTextarea("rules", "Rules", fields.rules ?? "", h, "One rule per line."),
+        ]
+      : editor.kind === "skills"
+        ? [
+            agentText(
+              "name",
+              "Name",
+              editor.id || (fields.name ?? ""),
+              h,
+              "weekly-review",
+              editor.id !== "",
+            ),
+            agentText("description", "When to use it", fields.description ?? "", h, "One line."),
+            agentTextarea(
+              "body",
+              "Steps",
+              fields.body ?? "",
+              h,
+              "Inputs, steps, output, checks, and what needs approval.",
+              true,
+            ),
+            agentPinned(fields.pinned ?? "0", h),
+          ]
+        : editor.kind === "intents"
+          ? [
+              agentTextarea(
+                "description",
+                "What to do",
+                fields.description ?? "",
+                h,
+                "An instruction to yourself.",
+              ),
+              agentText("triggers", "Triggers", fields.triggers ?? "", h, "launch, rollback"),
+              agentDate("expires", "Expires", fields.expires ?? "", h),
+              agentNumber("maxFires", "Max fires", fields.maxFires ?? "3", "1", h),
+              agentNumber("cooldownHours", "Cooldown hours", fields.cooldownHours ?? "24", "0", h),
+            ]
+          : [
+              agentText("match", "Match", fields.match ?? "", h, "gmail.send"),
+              agentDecision(fields.decision ?? "ask", h),
+            ];
+
+  return h.div(
+    [h.Class(ui.stack)],
+    [
+      h.div([h.Class(ui.form)], controls),
+      h.div(
+        [h.Class(ui.actions)],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              h.Class(ready ? ui.buttonPrimary : ui.button),
+              h.Disabled(!ready),
+              h.OnClick(Message.ClickedAgentSave()),
+            ],
+            ["Save"],
+          ),
+          ...(destructive === undefined || editor.id === ""
+            ? []
+            : [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.Class(`${ui.button} ${ui.buttonDanger}`),
+                    h.OnClick(
+                      Message.ClickedAgentRemove({
+                        kind: editor.kind,
+                        id: editor.id,
+                      }),
+                    ),
+                  ],
+                  [armed ? `Confirm ${destructive.label.toLowerCase()}` : destructive.label],
+                ),
+              ]),
+          h.button(
+            [h.Type("button"), h.Class(ui.button), h.OnClick(Message.ClickedAgentClose())],
+            ["Close"],
+          ),
+        ],
+      ),
+    ],
+  );
+};
+
+const agentNew = (kind: AgentKind, label: string, h: H): Html =>
+  h.button(
+    [h.Type("button"), h.Class(ui.buttonSmall), h.OnClick(Message.ClickedAgentNew({ kind }))],
+    [label],
+  );
+
+const agentEdit = (kind: AgentKind, id: string, h: H): Html =>
+  h.button(
+    [h.Type("button"), h.Class(ui.buttonSmall), h.OnClick(Message.ClickedAgentEdit({ kind, id }))],
+    ["Edit"],
+  );
+
+const profileBody = (model: Model, h: H) => {
+  const editor = editorFor(model, "profile");
+  if (Option.isSome(editor)) return agentForm(model, editor.value, h);
+  return remote(profileQuery.read(model.profile), h, skeletonView(h, 1), (profile) =>
     h.div(
       [h.Class(ui.stack)],
       [
-        h.p([h.Class(ui.muted)], ["Shared by every channel."]),
+        h.div(
+          [h.Class(ui.titleRow)],
+          [
+            h.p([h.Class(ui.muted)], ["Shared by every channel."]),
+            h.button(
+              [
+                h.Type("button"),
+                h.Class(ui.buttonSmall),
+                h.OnClick(Message.ClickedAgentEdit({ kind: "profile", id: "" })),
+              ],
+              ["Edit"],
+            ),
+          ],
+        ),
         h.div(
           [h.Class(ui.listStatic)],
           [
@@ -1127,40 +1393,60 @@ const profileBody = (model: Model, h: H): Html =>
       ],
     ),
   );
+};
 
-const skillsBody = (model: Model, channel: string, h: H): Html =>
-  remote(skillsQuery.read(model.skills, { channel }), h, skeletonView(h, 1), (rows) =>
-    Array.match(rows, {
-      onEmpty: () => emptyView("No skills yet. The agent saves one after a repeatable task.", h),
-      onNonEmpty: (list) =>
-        tableView(
-          [
-            th("Skill", h),
-            th("When to use it", h),
-            th("Pinned", h),
-            th("Uses", h, true),
-            th("Last used", h),
-          ],
-          Array.map(list, (skill: typeof SkillRow.Type) =>
-            h.keyed("tr")(
-              skill.name,
-              [h.Class(ui.row)],
+const skillsBody = (model: Model, channel: string, h: H): Html => {
+  const editor = editorFor(model, "skills");
+  if (Option.isSome(editor)) {
+    return agentForm(
+      model,
+      editor.value,
+      h,
+      editor.value.fields.pinned === "1" ? undefined : { label: "Delete skill" },
+    );
+  }
+  return remote(skillsQuery.read(model.skills, { channel }), h, skeletonView(h, 1), (rows) =>
+    h.div(
+      [h.Class(ui.section)],
+      [
+        h.div([h.Class(ui.toolbar)], [agentNew("skills", "New skill", h)]),
+        Array.match(rows, {
+          onEmpty: () =>
+            emptyView("No skills yet. The agent saves one after a repeatable task.", h),
+          onNonEmpty: (list) =>
+            tableView(
               [
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [skill.name]),
-                h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [skill.description])]),
-                h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [skill.pinned ? "yes" : "–"]),
-                h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(skill.useCount)]),
-                h.td(
-                  [h.Class(`${ui.td} ${ui.tdFit}`)],
-                  [skill.usedAt === null ? "never" : ago(skill.usedAt)],
-                ),
+                th("Skill", h),
+                th("When to use it", h),
+                th("Pinned", h),
+                th("Uses", h, true),
+                th("Last used", h),
+                th("Actions", h),
               ],
+              Array.map(list, (skill: typeof SkillRow.Type) =>
+                h.keyed("tr")(
+                  skill.name,
+                  [h.Class(ui.row)],
+                  [
+                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [skill.name]),
+                    h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [skill.description])]),
+                    h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [skill.pinned ? "yes" : "–"]),
+                    h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(skill.useCount)]),
+                    h.td(
+                      [h.Class(`${ui.td} ${ui.tdFit}`)],
+                      [skill.usedAt === null ? "never" : ago(skill.usedAt)],
+                    ),
+                    h.td([h.Class(ui.td)], [agentEdit("skills", skill.name, h)]),
+                  ],
+                ),
+              ),
+              h,
             ),
-          ),
-          h,
-        ),
-    }),
+        }),
+      ],
+    ),
   );
+};
 
 const intentStateColor = (state: string): string =>
   state === "armed"
@@ -1169,46 +1455,74 @@ const intentStateColor = (state: string): string =>
       ? "var(--colors-warn)"
       : "var(--colors-fg-muted)";
 
-const intentsBody = (model: Model, channel: string, h: H): Html =>
-  remote(intentsQuery.read(model.intents, { channel }), h, skeletonView(h, 1), (rows) =>
-    Array.match(rows, {
-      onEmpty: () => emptyView("No standing intents.", h),
-      onNonEmpty: (list) =>
-        tableView(
-          [
-            th("#", h),
-            th("State", h),
-            th("Triggers", h),
-            th("What to do", h),
-            th("Fires", h, true),
-            th("Expires", h),
-          ],
-          Array.map(list, (intent: typeof IntentRow.Type) =>
-            h.keyed("tr")(
-              String(intent.id),
-              [h.Class(ui.row)],
+const intentsBody = (model: Model, channel: string, h: H): Html => {
+  const editor = editorFor(model, "intents");
+  if (Option.isSome(editor)) {
+    const current = Option.getOrElse(
+      AsyncData.getData(intentsQuery.read(model.intents, { channel })),
+      () => [],
+    ).find((intent) => String(intent.id) === editor.value.id);
+    return agentForm(
+      model,
+      editor.value,
+      h,
+      current?.state === "armed" ? { label: "Cancel intent" } : undefined,
+    );
+  }
+  return remote(intentsQuery.read(model.intents, { channel }), h, skeletonView(h, 1), (rows) =>
+    h.div(
+      [h.Class(ui.section)],
+      [
+        h.div([h.Class(ui.toolbar)], [agentNew("intents", "New intent", h)]),
+        Array.match(rows, {
+          onEmpty: () => emptyView("No standing intents.", h),
+          onNonEmpty: (list) =>
+            tableView(
               [
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${intent.id}`]),
-                h.td(
-                  [h.Class(ui.td)],
+                th("#", h),
+                th("State", h),
+                th("Triggers", h),
+                th("What to do", h),
+                th("Fires", h, true),
+                th("Expires", h),
+                th("Actions", h),
+              ],
+              Array.map(list, (intent: typeof IntentRow.Type) =>
+                h.keyed("tr")(
+                  String(intent.id),
+                  [h.Class(ui.row)],
                   [
-                    h.span(
-                      [h.Class(ui.badge), h.Style({ color: intentStateColor(intent.state) })],
-                      [intent.state],
+                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${intent.id}`]),
+                    h.td(
+                      [h.Class(ui.td)],
+                      [
+                        h.span(
+                          [h.Class(ui.badge), h.Style({ color: intentStateColor(intent.state) })],
+                          [intent.state],
+                        ),
+                      ],
                     ),
+                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [intent.triggers.join(", ")]),
+                    h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [intent.description])]),
+                    h.td(
+                      [h.Class(`${ui.td} ${ui.tdNum}`)],
+                      [`${intent.fireCount}/${intent.maxFires}`],
+                    ),
+                    h.td(
+                      [h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)],
+                      [epochDateTime(intent.expires)],
+                    ),
+                    h.td([h.Class(ui.td)], [agentEdit("intents", String(intent.id), h)]),
                   ],
                 ),
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [intent.triggers.join(", ")]),
-                h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [intent.description])]),
-                h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [`${intent.fireCount}/${intent.maxFires}`]),
-                h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [epochDateTime(intent.expires)]),
-              ],
+              ),
+              h,
             ),
-          ),
-          h,
-        ),
-    }),
+        }),
+      ],
+    ),
   );
+};
 
 const decisionColor = (decision: string): string =>
   decision === "allow"
@@ -1217,37 +1531,49 @@ const decisionColor = (decision: string): string =>
       ? "var(--colors-danger)"
       : "var(--colors-warn)";
 
-const policiesBody = (model: Model, channel: string, h: H): Html =>
-  remote(policiesQuery.read(model.policies, { channel }), h, skeletonView(h, 1), (rows) =>
-    Array.match(rows, {
-      onEmpty: () =>
-        emptyView("No policies. Every executor action asks or runs as it did before.", h),
-      onNonEmpty: (list) =>
-        tableView(
-          [th("#", h), th("Decision", h), th("Match", h)],
-          Array.map(list, (policy: typeof PolicyRow.Type) =>
-            h.keyed("tr")(
-              String(policy.id),
-              [h.Class(ui.row)],
-              [
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${policy.id}`]),
-                h.td(
-                  [h.Class(ui.td)],
+const policiesBody = (model: Model, channel: string, h: H): Html => {
+  const editor = editorFor(model, "policies");
+  if (Option.isSome(editor)) {
+    return agentForm(model, editor.value, h, { label: "Remove policy" });
+  }
+  return remote(policiesQuery.read(model.policies, { channel }), h, skeletonView(h, 1), (rows) =>
+    h.div(
+      [h.Class(ui.section)],
+      [
+        h.div([h.Class(ui.toolbar)], [agentNew("policies", "New policy", h)]),
+        Array.match(rows, {
+          onEmpty: () =>
+            emptyView("No policies. Every executor action asks or runs as it did before.", h),
+          onNonEmpty: (list) =>
+            tableView(
+              [th("#", h), th("Decision", h), th("Match", h), th("Actions", h)],
+              Array.map(list, (policy: typeof PolicyRow.Type) =>
+                h.keyed("tr")(
+                  String(policy.id),
+                  [h.Class(ui.row)],
                   [
-                    h.span(
-                      [h.Class(ui.badge), h.Style({ color: decisionColor(policy.decision) })],
-                      [policy.decision],
+                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${policy.id}`]),
+                    h.td(
+                      [h.Class(ui.td)],
+                      [
+                        h.span(
+                          [h.Class(ui.badge), h.Style({ color: decisionColor(policy.decision) })],
+                          [policy.decision],
+                        ),
+                      ],
                     ),
+                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [policy.match]),
+                    h.td([h.Class(ui.td)], [agentEdit("policies", String(policy.id), h)]),
                   ],
                 ),
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [policy.match]),
-              ],
+              ),
+              h,
             ),
-          ),
-          h,
-        ),
-    }),
+        }),
+      ],
+    ),
   );
+};
 
 const agentView = (model: Model, channel: string, h: H): Html =>
   h.div(

@@ -33,6 +33,11 @@ export class Policies extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<Policy>, StateError>;
     add(match: string, decision: Decision): Effect.Effect<Policy, StateError>;
+    update(
+      id: number,
+      match: string,
+      decision: Decision,
+    ): Effect.Effect<Policy | undefined, StateError>;
     remove(id: number): Effect.Effect<boolean, StateError>;
     /** The strongest decision for an action. Deny beats ask, ask beats allow. */
     decide(target: string): Effect.Effect<Decision | undefined, StateError>;
@@ -91,6 +96,15 @@ export class Policies extends Context.Service<
               );
               return rows[0]!;
             }),
+          update: (id, match, decision) =>
+            query(
+              "update policy",
+              `UPDATE app_policies SET match = ?, decision = ? WHERE id = ?
+               RETURNING id, match, decision`,
+              match,
+              decision,
+              id,
+            ).pipe(Effect.map((rows) => rows[0])),
           remove: (id) =>
             run("remove policy", () =>
               sql.all(`DELETE FROM app_policies WHERE id = ? RETURNING id`, id),

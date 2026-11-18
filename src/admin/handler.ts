@@ -15,6 +15,11 @@ interface ChannelRpc {
     content: string,
     contentType: string,
   ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+  edit(
+    who: string,
+    kind: string,
+    input: unknown,
+  ): Promise<{ ok: true; said: string } | { ok: false; error: string }>;
   setting(who: string, key: string, value: string | undefined): Promise<string>;
 }
 
@@ -161,6 +166,15 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
       return json({ error: "bad request" }, 400);
     const made = await rpc.publishArtifact(who, body.name.trim(), body.content, KIND_TYPES[kind]);
     return made.ok ? json(made) : json({ error: made.error }, 400);
+  }
+
+  const edit = /^\/admin\/api\/(profile|skills|intents|policies)$/.exec(url.pathname);
+  if (edit) {
+    const body = await request.json().catch(() => undefined);
+    if (body === null || typeof body !== "object" || Array.isArray(body))
+      return json({ error: "bad request" }, 400);
+    const result = await rpc.edit(who, edit[1]!, body);
+    return result.ok ? json(result) : json(result, 400);
   }
 
   const artifact =

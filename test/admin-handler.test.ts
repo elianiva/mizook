@@ -179,6 +179,49 @@ test("stop and settings are writes too, and settings are checked before they rea
   vi.unstubAllGlobals();
 });
 
+test("agent edits go through the channel, and a bad body or refusal is a 400", async () => {
+  const token = await signedIn();
+  const calls: unknown[][] = [];
+  const env = configured({
+    ChatAgent: {
+      getByName: () => ({
+        edit: async (...args: unknown[]) => {
+          calls.push(args);
+          return args[2] !== null && typeof args[2] === "object" && "fail" in args[2]
+            ? { ok: false, error: "Nope" }
+            : { ok: true, said: "Saved." };
+        },
+      }),
+    } as never,
+  });
+  const post = (body?: unknown) =>
+    call(
+      env,
+      "/admin/api/skills?c=-100%3A1",
+      {
+        method: "POST",
+        ...(body === undefined
+          ? {}
+          : { body: typeof body === "string" ? body : JSON.stringify(body) }),
+      },
+      { "cf-access-jwt-assertion": token, "x-mizook-csrf": "1", origin: "https://x.test" },
+    );
+
+  expect((await post()).status).toBe(400);
+  expect((await post([])).status).toBe(400);
+  expect(calls).toEqual([]);
+
+  const saved = await post({ action: "save", name: "weekly-review" });
+  expect(saved.status).toBe(200);
+  expect(await saved.json()).toEqual({ ok: true, said: "Saved." });
+  expect(calls).toEqual([["me@example.com", "skills", { action: "save", name: "weekly-review" }]]);
+
+  const refused = await post({ fail: true });
+  expect(refused.status).toBe(400);
+  expect(await refused.json()).toEqual({ ok: false, error: "Nope" });
+  vi.unstubAllGlobals();
+});
+
 test("the summary has one line per channel", async () => {
   const headers = { "cf-access-jwt-assertion": await signedIn() };
   const env = configured({

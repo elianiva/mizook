@@ -272,6 +272,7 @@ export const schedules = async (sql: SqlDriver): Promise<ScheduleRow[]> =>
 export interface SkillRow {
   readonly name: string;
   readonly description: string;
+  readonly body: string;
   readonly pinned: boolean;
   readonly useCount: number;
   readonly usedAt: number | null;
@@ -284,17 +285,19 @@ export const skills = async (sql: SqlDriver): Promise<SkillRow[]> =>
     await rows<{
       name: string;
       description: string;
+      body: string;
       pinned: number;
       use_count: number;
       used_at: number | null;
       updated: number;
     }>(
       sql,
-      `SELECT name, description, pinned, use_count, used_at, updated FROM app_skills ORDER BY name`,
+      `SELECT name, description, body, pinned, use_count, used_at, updated FROM app_skills ORDER BY name`,
     )
   ).map((skill) => ({
     name: skill.name,
     description: skill.description,
+    body: skill.body,
     pinned: skill.pinned === 1,
     useCount: skill.use_count,
     usedAt: skill.used_at,
@@ -308,6 +311,7 @@ export interface IntentRow {
   readonly state: string;
   readonly fireCount: number;
   readonly maxFires: number;
+  readonly cooldown: number;
   readonly expires: number;
   readonly lastFired: number | null;
 }
@@ -332,11 +336,12 @@ export const intents = async (sql: SqlDriver): Promise<IntentRow[]> =>
       state: string;
       fire_count: number;
       max_fires: number;
+      cooldown: number;
       expires: number;
       last_fired: number | null;
     }>(
       sql,
-      `SELECT id, description, triggers, state, fire_count, max_fires, expires, last_fired
+      `SELECT id, description, triggers, state, fire_count, max_fires, cooldown, expires, last_fired
        FROM app_intents ORDER BY id`,
     )
   ).map((intent) => ({
@@ -346,6 +351,7 @@ export const intents = async (sql: SqlDriver): Promise<IntentRow[]> =>
     state: intent.state,
     fireCount: intent.fire_count,
     maxFires: intent.max_fires,
+    cooldown: intent.cooldown,
     expires: intent.expires,
     lastFired: intent.last_fired,
   }));

@@ -18,6 +18,7 @@ const control = {
   transition: "border-color 120ms, background-color 120ms",
   _hover: { borderColor: "borderStrong" },
   _focusVisible: { borderColor: "accent", outline: "none" },
+  _disabled: { opacity: "0.5", cursor: "not-allowed", backgroundColor: "bgSubtle" },
 };
 
 const buttonBase = {
@@ -187,6 +188,7 @@ export const ui = {
     color: "fgMuted",
     fontWeight: "500",
     _hover: { color: "fg", backgroundColor: "bgHover" },
+    _disabled: { opacity: "0.5", cursor: "not-allowed" },
     '&[aria-current="page"]': { backgroundColor: "accent", color: "bg" },
   }),
 
@@ -291,6 +293,8 @@ export const ui = {
     display: "inline-flex",
     alignItems: "center",
     height: "22px",
+    width: "fit-content",
+    justifySelf: "start",
     paddingInline: "8px",
     border: "1px solid {colors.border}",
     fontFamily: "mono",
@@ -408,6 +412,7 @@ export const ui = {
     _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
   }),
   buttonArmed: css({ borderColor: "danger", color: "danger" }),
+  buttonDanger: css({ borderColor: "danger", color: "danger" }),
   notice: css({
     border: "1px solid {colors.border}",
     backgroundColor: "bgSubtle",
@@ -482,7 +487,7 @@ export const ui = {
     whiteSpace: "nowrap",
   }),
   urlOff: css({ color: "fgFaint", borderColor: "border" }),
-  composerBody: css({ minHeight: "220px", fontSize: "sm" }),
+  composerBody: css({ minHeight: "260px", fontSize: "sm" }),
   actionsRow: css({ display: "flex", gap: "6px", flexWrap: "wrap" }),
   clamp3: css({ lineClamp: "3", wordBreak: "break-word", lineHeight: "1.55" }),
   clamp4: css({
@@ -643,7 +648,7 @@ export const ui = {
   form: css({ border: "1px solid {colors.border}", backgroundColor: "bg" }),
   field: css({
     display: "grid",
-    gridTemplateColumns: "170px 1fr auto",
+    gridTemplateColumns: { base: "1fr", md: "170px 1fr auto" },
     gap: "8px",
     alignItems: "start",
     padding: "14px 16px",

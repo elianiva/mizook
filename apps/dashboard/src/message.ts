@@ -5,6 +5,7 @@ import { Url } from "foldkit/url";
 
 import {
   ActionKind,
+  AgentKind,
   ArtifactAction,
   artifactQuery,
   artifactsQuery,
@@ -43,6 +44,16 @@ export const Message = defineMessageUnion({
   GotIntentsMessage: { message: intentsQuery.Message },
   GotPoliciesMessage: { message: policiesQuery.Message },
   GotRunsMessage: { message: runsQuery.Message },
+  ClickedAgentEdit: { kind: AgentKind, id: Schema.String },
+  ClickedAgentNew: { kind: AgentKind },
+  UpdatedAgentField: { key: Schema.String, value: Schema.String },
+  ClickedAgentClose: {},
+  ClickedAgentSave: {},
+  ClickedAgentRemove: {
+    kind: AgentKind,
+    id: Schema.String,
+  },
+  SucceededAgentEdit: { said: Schema.String },
   SelectedChannel: { channel: Schema.String },
   UpdatedKindDraft: { value: Schema.String },
   UpdatedSearchDraft: { value: Schema.String },

@@ -71,6 +71,63 @@ test("a cancelled intent never fires and an expired one is marked", async () => 
   );
 });
 
+test("an intent can be reworded and retimed, and a missing one stays missing", async () => {
+  const now = Date.now();
+  await go(
+    Effect.gen(function* () {
+      const intents = yield* Intents;
+      const made = yield* intents.create("Check the old plan.", ["plan"], {
+        expiresAt: now + DAY,
+        cooldownMs: HOUR,
+        maxFires: 3,
+      });
+
+      const changed = yield* intents.update(made.id, {
+        description: "Check the new plan.",
+        triggers: ["plan", "review"],
+        expires: now + 2 * DAY,
+        cooldown: 0,
+        maxFires: 5,
+      });
+      expect(changed).toMatchObject({
+        description: "Check the new plan.",
+        triggers: ["plan", "review"],
+        expires: now + 2 * DAY,
+        cooldown: 0,
+        maxFires: 5,
+        state: "armed",
+      });
+
+      const expired = yield* intents.update(made.id, {
+        description: "Check the new plan.",
+        triggers: ["plan"],
+        expires: now - 1,
+        cooldown: 0,
+        maxFires: 5,
+      });
+      expect(expired?.state).toBe("expired");
+      const rearmed = yield* intents.update(made.id, {
+        description: "Check the new plan.",
+        triggers: ["plan"],
+        expires: now + DAY,
+        cooldown: 0,
+        maxFires: 5,
+      });
+      expect(rearmed?.state).toBe("armed");
+
+      expect(
+        yield* intents.update(999, {
+          description: "Nothing.",
+          triggers: ["none"],
+          expires: now + DAY,
+          cooldown: 0,
+          maxFires: 1,
+        }),
+      ).toBeUndefined();
+    }),
+  );
+});
+
 test("a trigger matches whole words, and CJK matches as a substring", () => {
   expect(matchesTrigger("the launch is tomorrow", "launch")).toBe(true);
   expect(matchesTrigger("relaunch the site", "launch")).toBe(false);

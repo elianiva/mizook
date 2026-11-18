@@ -57,6 +57,8 @@ export class Skills extends Context.Service<
     touch(name: string): Effect.Effect<void, StateError>;
     /** Keep a skill a schedule depends on. */
     pin(name: string): Effect.Effect<void, StateError>;
+    /** Set whether a skill stays at hand, from the dashboard or a schedule. */
+    setPinned(name: string, pinned: boolean): Effect.Effect<void, StateError>;
     /** The names and descriptions a turn can see, cheapest form of progressive disclosure. */
     readonly index: Effect.Effect<ReadonlyArray<{ name: string; description: string }>, StateError>;
   }
@@ -130,6 +132,10 @@ export class Skills extends Context.Service<
           pin: (name) =>
             run("pin skill", () =>
               sql.all(`UPDATE app_skills SET pinned = 1 WHERE name = ?`, name),
+            ).pipe(Effect.asVoid),
+          setPinned: (name, pinned) =>
+            run("pin skill", () =>
+              sql.all(`UPDATE app_skills SET pinned = ? WHERE name = ?`, pinned ? 1 : 0, name),
             ).pipe(Effect.asVoid),
           index: run("skill index", () =>
             sql.all<{ name: string; description: string }>(

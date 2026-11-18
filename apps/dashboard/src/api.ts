@@ -96,6 +96,7 @@ export const Profile = Schema.Struct({
 export const SkillRow = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
+  body: Schema.String,
   pinned: Schema.Boolean,
   useCount: Schema.Finite,
   usedAt: Schema.NullOr(Schema.Finite),
@@ -109,6 +110,7 @@ export const IntentRow = Schema.Struct({
   state: Schema.String,
   fireCount: Schema.Finite,
   maxFires: Schema.Finite,
+  cooldown: Schema.Finite,
   expires: Schema.Finite,
   lastFired: Schema.NullOr(Schema.Finite),
 });
@@ -128,6 +130,28 @@ export const RunRow = Schema.Struct({
   output: Schema.String,
   error: Schema.NullOr(Schema.String),
 });
+
+export const AgentKind = Schema.Literals(["profile", "skills", "intents", "policies"]);
+export type AgentKind = typeof AgentKind.Type;
+
+export const AgentEdit = Schema.Struct({
+  kind: AgentKind,
+  action: Schema.Literals(["save", "delete", "remove", "cancel"]),
+  id: Schema.optionalKey(Schema.Finite),
+  about: Schema.optionalKey(Schema.String),
+  rules: Schema.optionalKey(Schema.Array(Schema.String)),
+  name: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  body: Schema.optionalKey(Schema.String),
+  pinned: Schema.optionalKey(Schema.Boolean),
+  triggers: Schema.optionalKey(Schema.Array(Schema.String)),
+  expires: Schema.optionalKey(Schema.Finite),
+  maxFires: Schema.optionalKey(Schema.Finite),
+  cooldownHours: Schema.optionalKey(Schema.Finite),
+  match: Schema.optionalKey(Schema.String),
+  decision: Schema.optionalKey(Schema.String),
+});
+export type AgentEdit = typeof AgentEdit.Type;
 
 const fetchJson = <A, I>(
   schema: Schema.Codec<A, I>,
@@ -402,3 +426,11 @@ export const postSetting = (
   write(`settings/${key}`, channel, { value }).pipe(
     Effect.map((reply) => String((reply as { said?: string }).said ?? "Saved.")),
   );
+
+/** Save or remove one of the agent's own records. Gives the reply to show. */
+export const postAgent = (channel: string, edit: AgentEdit): Effect.Effect<string, string> => {
+  const { kind, ...body } = edit;
+  return write(kind, channel, body).pipe(
+    Effect.map((reply) => String((reply as { said?: string }).said ?? "Saved.")),
+  );
+};

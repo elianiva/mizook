@@ -93,6 +93,17 @@ export class Intents extends Context.Service<
       options: IntentOptions,
     ): Effect.Effect<Intent, StateError>;
     readonly list: Effect.Effect<ReadonlyArray<Intent>, StateError>;
+    /** Change an armed intent's wording, triggers or limits. */
+    update(
+      id: number,
+      input: {
+        readonly description: string;
+        readonly triggers: ReadonlyArray<string>;
+        readonly expires: number;
+        readonly cooldown: number;
+        readonly maxFires: number;
+      },
+    ): Effect.Effect<Intent | undefined, StateError>;
     /** Put an exported intent back with its counters and state. */
     restore(input: Omit<Intent, "id">): Effect.Effect<Intent, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
@@ -154,6 +165,30 @@ export class Intents extends Context.Service<
               return made!;
             }),
           list: query("list intents", `${SELECT} ORDER BY id`),
+          update: (id, input) =>
+            one(
+              "update intent",
+              `UPDATE app_intents
+               SET description = ?, triggers = ?, expires = ?, cooldown = ?, max_fires = ?,
+                   state = CASE
+                     WHEN state = 'cancelled' THEN 'cancelled'
+                     WHEN fire_count >= ? THEN 'done'
+                     WHEN ? < ? THEN 'expired'
+                     ELSE 'armed'
+                   END
+               WHERE id = ?
+               RETURNING id, description, triggers, created, expires, cooldown,
+                 max_fires, fire_count, last_fired, state`,
+              input.description,
+              JSON.stringify(input.triggers),
+              input.expires,
+              input.cooldown,
+              input.maxFires,
+              input.maxFires,
+              input.expires,
+              Date.now(),
+              id,
+            ),
           restore: (input) =>
             one(
               "restore intent",
