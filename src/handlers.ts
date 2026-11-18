@@ -1,5 +1,6 @@
 import { clipToolOutput, Memory } from "@mizook/memory";
 import { Context, DateTime, Effect, Layer, Schema } from "effect";
+import { Browser } from "./browser.ts";
 import { Settings } from "./config.ts";
 import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
@@ -34,6 +35,7 @@ import {
   ArtifactHistoryArgs,
   ArtifactRestoreArgs,
   ArtifactPublishArgs,
+  BrowserReadArgs,
   DateArgs,
   IntentArgs,
   PolicyArgs,
@@ -61,6 +63,7 @@ export class Handlers extends Context.Service<
       const policies = yield* Policies;
       const skills = yield* Skills;
       const media = yield* Media;
+      const browser = yield* Browser;
       const web = yield* Web;
       const outbox = yield* Outbox;
       const executor = yield* Executor;
@@ -355,6 +358,27 @@ export class Handlers extends Context.Service<
                   `${page.status} ${page.contentType}${page.truncated ? " (cut)" : ""}\n${clipToolOutput(page.text)}`,
               ),
             );
+          case "browser_read":
+            return Effect.gen(function* () {
+              const a = yield* decode(BrowserReadArgs, args);
+              const page = yield* browser.read(a.url);
+              const body =
+                page.text === ""
+                  ? "The page loaded but had no readable text."
+                  : clipToolOutput(page.text, 20_000);
+              const heading = page.title ? `${page.title}\n\n` : "";
+              if (!page.screenshot) return `${heading}${body}`;
+              const shot = yield* artifacts
+                .publishBytes(yield* channel, `browser-${Date.now()}`, page.screenshot, "image/png")
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(`browser screenshot failed: ${error.message}`).pipe(
+                      Effect.as(undefined),
+                    ),
+                  ),
+                );
+              return `${heading}${body}${shot ? `\n\nScreenshot: ${shot.url}` : ""}`;
+            });
           case "skill_manage":
             return Effect.gen(function* () {
               const a = yield* decode(SkillArgs, args);

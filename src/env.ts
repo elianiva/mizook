@@ -23,6 +23,8 @@ export interface Env {
   Files: R2Bucket;
   /** Workers AI: voice transcription, image descriptions and document conversion. */
   AI?: Ai;
+  /** Browser Rendering: pages that need JavaScript, and screenshots. */
+  BROWSER?: BrowserRun;
   /** `<team>.cloudflareaccess.com`. The dashboard stays shut while this or the audience is empty. */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;

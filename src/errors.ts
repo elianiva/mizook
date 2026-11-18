@@ -97,6 +97,16 @@ export class MediaError extends Data.TaggedError("MediaError")<{
   }
 }
 
+/** Browser Rendering could not read a page, or the URL was refused. */
+export class BrowserError extends Data.TaggedError("BrowserError")<{
+  readonly url: string;
+  readonly reason: string;
+}> {
+  override get message() {
+    return `browser ${this.url}: ${this.reason}`;
+  }
+}
+
 /** A dashboard request did not carry a valid Cloudflare Access token. */
 export class AccessDenied extends Data.TaggedError("AccessDenied")<{
   readonly reason: string;

@@ -60,6 +60,8 @@ export default Alchemy.Stack(
         Files: files,
         // Voice notes, images and documents the user sends.
         AI: Cloudflare.Workers.AI(),
+        // Pages that need JavaScript, and screenshots.
+        BROWSER: Cloudflare.Workers.Browser(),
         PUBLIC_URL: `https://${DOMAIN}`,
         // The Worker checks the Access token itself: the team and the application's audience.
         ACCESS_TEAM_DOMAIN: teamDomain,

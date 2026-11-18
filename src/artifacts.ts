@@ -65,6 +65,14 @@ export class Artifacts extends Context.Service<
       contentType: string,
       options?: { readonly expiresInHours?: number },
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
+    /** Publish bytes, such as a browser screenshot. Only images are accepted. */
+    publishBytes(
+      channel: string,
+      name: string,
+      body: Uint8Array,
+      contentType: string,
+      options?: { readonly expiresInHours?: number },
+    ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
     readonly list: Effect.Effect<ReadonlyArray<Artifact>, StateError>;
     /** The latest version's text, for the dashboard to show. */
     source(
@@ -165,58 +173,85 @@ export class Artifacts extends Context.Service<
                 : Effect.fail(new ToolError({ reason: `no artifact ${name}` })),
           );
 
+        const validName = (name: string) =>
+          decodeName(name).pipe(
+            Effect.mapError(
+              () =>
+                new ToolError({
+                  reason: `bad name "${name}": use lowercase letters, digits, dots, dashes, at most 61 characters`,
+                }),
+            ),
+          );
+
+        /** Save one version and point the public token at it. Text and binary share this. */
+        const store = (
+          channel: string,
+          name: string,
+          body: Uint8Array,
+          contentType: string,
+          options: { readonly expiresInHours?: number } | undefined,
+        ) =>
+          Effect.gen(function* () {
+            if (body.length > MAX_ARTIFACT_BYTES) {
+              return yield* new ToolError({ reason: `too large: ${body.length} bytes` });
+            }
+            const [current] = yield* query(
+              "find artifact",
+              `SELECT * FROM app_artifacts WHERE name = ?`,
+              name,
+            );
+            const version = (current?.version ?? 0) + 1;
+            const tok = current?.token ?? token();
+            yield* blobs.put(`artifacts/${channel}/${name}/${version}`, body, { contentType });
+            // The public copy is the latest version, found by token alone.
+            yield* blobs.put(`a/${tok}`, body, {
+              contentType,
+              meta: {
+                name,
+                do: doNameOf(channel),
+                visibility: current?.visibility ?? "public",
+                ...(options?.expiresInHours
+                  ? { expires: String(Date.now() + options.expiresInHours * 3_600_000) }
+                  : {}),
+              },
+            });
+            const [saved] = yield* query(
+              "save artifact",
+              `INSERT INTO app_artifacts (name, token, version, content_type, updated)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (name) DO UPDATE SET version = excluded.version,
+                 content_type = excluded.content_type, updated = excluded.updated
+               RETURNING *`,
+              name,
+              tok,
+              version,
+              contentType,
+              Date.now(),
+            );
+            return saved!;
+          });
+
         const self: Context.Service.Shape<typeof Artifacts> = Artifacts.of({
           publish: (channel, name, content, contentType, options) =>
             Effect.gen(function* () {
-              yield* decodeName(name).pipe(
-                Effect.mapError(
-                  () =>
-                    new ToolError({
-                      reason: `bad name "${name}": use lowercase letters, digits, dots, dashes, at most 61 characters`,
-                    }),
-                ),
-              );
+              yield* validName(name);
               const invalid = checkContent(contentType, content);
               if (invalid) return yield* new ToolError({ reason: invalid });
-              const body = new TextEncoder().encode(content);
-              if (body.length > MAX_ARTIFACT_BYTES) {
-                return yield* new ToolError({ reason: `too large: ${body.length} bytes` });
+              return yield* store(
+                channel,
+                name,
+                new TextEncoder().encode(content),
+                contentType,
+                options,
+              );
+            }),
+          publishBytes: (channel, name, body, contentType, options) =>
+            Effect.gen(function* () {
+              yield* validName(name);
+              if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
+                return yield* new ToolError({ reason: `unsupported binary type ${contentType}` });
               }
-              const [current] = yield* query(
-                "find artifact",
-                `SELECT * FROM app_artifacts WHERE name = ?`,
-                name,
-              );
-              const version = (current?.version ?? 0) + 1;
-              const tok = current?.token ?? token();
-              yield* blobs.put(`artifacts/${channel}/${name}/${version}`, body, { contentType });
-              // The public copy is the latest version, found by token alone.
-              // What serves a page needs only this: its kind, its channel (for `say`), when it lapses.
-              yield* blobs.put(`a/${tok}`, body, {
-                contentType,
-                meta: {
-                  name,
-                  do: doNameOf(channel),
-                  visibility: current?.visibility ?? "public",
-                  ...(options?.expiresInHours
-                    ? { expires: String(Date.now() + options.expiresInHours * 3_600_000) }
-                    : {}),
-                },
-              });
-              const [saved] = yield* query(
-                "save artifact",
-                `INSERT INTO app_artifacts (name, token, version, content_type, updated)
-                 VALUES (?, ?, ?, ?, ?)
-                 ON CONFLICT (name) DO UPDATE SET version = excluded.version,
-                   content_type = excluded.content_type, updated = excluded.updated
-                 RETURNING *`,
-                name,
-                tok,
-                version,
-                contentType,
-                Date.now(),
-              );
-              return saved!;
+              return yield* store(channel, name, body, contentType, options);
             }),
           list: all,
           source: (name) =>

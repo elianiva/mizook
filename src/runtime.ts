@@ -5,6 +5,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ConfigProvider, type Context, Effect, Layer, ManagedRuntime } from "effect";
 import { Agent } from "./agent.ts";
 import { Bot } from "./bot.ts";
+import { Browser } from "./browser.ts";
 import { Settings } from "./config.ts";
 import { Durable } from "./durable.ts";
 import type { Env } from "./env.ts";
@@ -107,7 +108,12 @@ export const makeRuntime = (
     Layer.provideMerge(Usage.layer(sql)),
     Layer.provideMerge(Layer.succeed(Host, host)),
     Layer.provideMerge(Artifacts.layer(sql)),
-    Layer.provideMerge(Layer.merge(Blobs.r2(env.Files), Media.layer(env.AI))),
+    Layer.provideMerge(
+      Layer.merge(
+        Layer.merge(Blobs.r2(env.Files), Media.layer(env.AI)),
+        Browser.layer(env.BROWSER),
+      ),
+    ),
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Layer.merge(Schedules.layer(sql, arm), Runs.layer(sql))),

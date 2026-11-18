@@ -33,7 +33,7 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 - **Standing intents:** "when I mention the launch, remind me about rollback" waits for trigger words in a later message. Matching is a token scan, not a model call; `/intents` lists them.
 - **Schedules:** `once`, `cron` and `watch` (polls a URL, wakes the agent only when it changes), plus `webhook_link` for services that notify you. Pause, resume or test one by number; `/runs` shows the last ten and why one failed. Capped at 20 turns an hour.
 - **Artifacts:** pages and files at `https://mzk.elianiva.com/a/<token>/<name>`, sandboxed. Versions are kept in R2.
-- **Web:** `web_search` (Parallel, then Exa; set `SEARCH_PROVIDERS`) and `web_fetch`.
+- **Web:** `web_search` (Parallel, then Exa; set `SEARCH_PROVIDERS`) and `web_fetch`. For pages that need JavaScript, `browser_read` renders them with Cloudflare Browser Rendering and returns markdown plus a screenshot link.
 - **Executor:** one `executor` tool over MCP. A call that needs approval shows Approve, Always allow and Deny buttons in the chat; the press resumes it and the agent sees the result. `/policies allow|ask|deny <match>` sets standing rules, and an approval expires after 30 minutes. Use the plain `/mcp` URL (model mode).
 - **Files:** attachments are stored. Text is read directly, voice notes are transcribed, images are described, and PDF or Office files are converted by Workers AI. `file_read` reads a stored one later.
 - **Receipt:** a 👀 reaction means the message reached the bot. Typing starts when the model does, so an eye without typing is a slow model, not a lost message.
