@@ -220,7 +220,16 @@ export class Bot extends Context.Service<
             );
           }
         }
-        const joined = [typed, ...saved].filter((part) => part !== "").join("\n");
+        // A reply is part of what the user said: the agent sees what it answers, not just its own text.
+        const replied = message.replyTo;
+        const quoted = replied
+          ? `[replying to ${replied.author.userName || "an earlier message"}: ${
+              replied.text.trim() === ""
+                ? `${replied.attachments.length} attachment(s)`
+                : clipToolOutput(replied.text.trim(), 2_000)
+            }]`
+          : "";
+        const joined = [quoted, typed, ...saved].filter((part) => part !== "").join("\n");
         if (joined === "") return;
         if (joined === "/start") {
           yield* post(thread.id, GREETING(settings.agentName));
