@@ -9,7 +9,7 @@ import { Store } from "./store.ts";
 import { Summarizer } from "./summarizer.ts";
 import { byteLength, paginate } from "./text.ts";
 import { children, label, parseLabel } from "./tree.ts";
-import type { Kind, Line, Message, ViewBudget } from "./types.ts";
+import type { Kind, Line, Message, SearchHit, ViewBudget } from "./types.ts";
 import { render, View, type Rendered } from "./view.ts";
 
 export interface MemoryConfig {
@@ -72,6 +72,8 @@ export class Memory extends Context.Service<
     zoom(id: number, n: number): Effect.Effect<string, ZoomError | StoreError>;
     /** `date(id)`: the date and time of message `id`. */
     date(id: number): Effect.Effect<string, ZoomError | StoreError>;
+    /** Find messages by text, most relevant first. The ids feed `zoom(id, 1)`. */
+    search(query: string, limit: number): Effect.Effect<ReadonlyArray<SearchHit>, StoreError>;
     /** The chat view as the next turn would see it. */
     readonly renderView: Effect.Effect<Rendered, StoreError>;
     readonly stats: Effect.Effect<MemoryStats>;
@@ -261,6 +263,10 @@ const make = Effect.fnUntraced(function* (config: MemoryConfig) {
       yield* checkId(`date(${id})`, id);
       const { date } = yield* message(id);
       return config.formatDate ? config.formatDate(new Date(date)) : date;
+    }),
+
+    search: Effect.fn("Memory.search")(function* (query: string, limit: number) {
+      return yield* store.search(query, Math.min(Math.max(limit, 1), 50));
     }),
 
     renderView: exclusive(Effect.suspend(() => renderLines(view.lines))),

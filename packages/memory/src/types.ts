@@ -12,6 +12,14 @@ export interface Message {
   date: string;
 }
 
+/** One message a search found, with a short excerpt around the match. */
+export interface SearchHit {
+  readonly i: number;
+  readonly kind: Kind;
+  readonly date: string;
+  readonly snippet: string;
+}
+
 /** `node(l, i)` covers the 2^l messages from `i * 2^l` on. */
 export interface Node {
   l: number;

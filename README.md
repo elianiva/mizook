@@ -5,7 +5,8 @@ chat that never ends: it remembers everything you say there, and nothing needs r
 
 - **Memory** — [`@mizook/memory`](packages/memory): the whole chat is logged word for word and
   compressed into a binary tree of one-line summaries. Each turn sees a constant-size view of it
-  and zooms where it needs more. See the [package README](packages/memory/README.md).
+  and zooms where it needs more. A full-text index finds exact words when the summary is too
+  coarse. See the [package README](packages/memory/README.md).
 - **Agent** — [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable):
   every turn is a durable run. Model calls and tool calls are committed to the Durable Object's
   SQLite before anything is shown, so a restart picks the turn up where it stopped.

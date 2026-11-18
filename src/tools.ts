@@ -24,6 +24,16 @@ export const DateArgs = Schema.Struct({
   id: described(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), "The message id."),
 });
 
+export const SearchArgs = Schema.Struct({
+  query: described(Schema.String, "Words to find in the log, exact enough to be useful."),
+  limit: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      "How many matches, up to 50. Default 20.",
+    ),
+  ),
+});
+
 export const ScheduleCreateArgs = Schema.Struct({
   kind: described(
     Schema.Literals(["once", "cron", "watch"]),
@@ -272,6 +282,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "safe",
   },
   {
+    name: "search",
+    description:
+      "Find messages in the log by text. Returns message ids, kinds, dates and short excerpts; open one with zoom(id, 1). Use it when the user asks when something was said or you need an exact name or number.",
+    parameters: parametersOf(SearchArgs),
+    replay: "safe",
+  },
+  {
     name: "schedule_create",
     description:
       "Wake this chat later: a one-off reminder, a recurring job, or a watch on a URL. When it fires you get a new turn with your prompt.",
@@ -410,6 +427,10 @@ Reply like a person texting, once per thing the user said. Several messages in a
 answer them together, and do not answer each in turn. Never say again what you already told them;
 when they ask you to put earlier results somewhere else, such as an artifact, use what you know and
 do not repeat the findings in chat.
+
+# Memory
+
+The view is what you see of the chat. When a line is too vague, zoom opens it; date tells you when it was said. When you need an exact name, number or phrase, search finds the message ids, then zoom(id, 1) reads one whole.
 
 # Executor
 

@@ -15,6 +15,7 @@ export type {
   Message,
   Node,
   PersistedViews,
+  SearchHit,
   Snapshot,
   ViewBudget,
   ViewState,

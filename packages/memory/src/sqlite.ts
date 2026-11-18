@@ -1,7 +1,15 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { StoreError } from "./errors.ts";
 import { Store } from "./store.ts";
-import type { Kind, Message, Node, PersistedViews, Snapshot } from "./types.ts";
+import type { Kind, Message, Node, PersistedViews, SearchHit, Snapshot } from "./types.ts";
+
+const SearchRow = Schema.Struct({
+  i: Schema.Finite,
+  kind: Schema.String,
+  date: Schema.String,
+  snippet: Schema.String,
+});
+const decodeSearch = Schema.decodeUnknownEffect(Schema.Array(SearchRow));
 
 /**
  * The little SQL a store needs, sync or async. Rows come back as plain objects.
@@ -38,7 +46,66 @@ export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
         await sql.all(
           `CREATE TABLE IF NOT EXISTS mem_views (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)`,
         );
+        // A derived index: the log stays the only source of truth. Trigram handles CJK and
+        // substrings that a word tokenizer would miss.
+        await sql.all(
+          `CREATE VIRTUAL TABLE IF NOT EXISTS mem_messages_fts USING fts5(
+             text, content='mem_messages', content_rowid='i', tokenize='trigram')`,
+        );
+        await sql.all(
+          `CREATE TRIGGER IF NOT EXISTS mem_messages_ai AFTER INSERT ON mem_messages BEGIN
+             INSERT INTO mem_messages_fts(rowid, text) VALUES (new.i, new.text);
+           END`,
+        );
+        await sql.all(
+          `INSERT INTO mem_messages_fts(rowid, text)
+           SELECT i, text FROM mem_messages
+           WHERE i NOT IN (SELECT rowid FROM mem_messages_fts)`,
+        );
       });
+
+      const search = (query: string, limit: number) =>
+        run("search", async () => {
+          const text = query.trim();
+          if (text === "") return [];
+          const terms = text
+            .split(/\s+/)
+            .filter((term) => term !== "")
+            .map((term) => `"${term.replaceAll('"', '""')}"`);
+          const hits = await sql.all(
+            `SELECT m.i, m.kind, m.date,
+               snippet(mem_messages_fts, 0, '[', ']', '...', 16) AS snippet
+             FROM mem_messages_fts
+             JOIN mem_messages m ON m.i = mem_messages_fts.rowid
+             WHERE mem_messages_fts MATCH ?
+             ORDER BY rank
+             LIMIT ?`,
+            terms.join(" AND "),
+            limit,
+          );
+          if (hits.length > 0) return hits;
+          // The trigram tokenizer ignores one- and two-character terms; a plain scan still finds them.
+          return sql.all(
+            `SELECT i, kind, date, substr(text, 1, 400) AS snippet
+             FROM mem_messages WHERE lower(text) LIKE lower(?)
+             ORDER BY i LIMIT ?`,
+            `%${text}%`,
+            limit,
+          );
+        }).pipe(
+          Effect.flatMap(decodeSearch),
+          Effect.mapError((cause) =>
+            cause instanceof StoreError ? cause : new StoreError({ operation: "search", cause }),
+          ),
+          Effect.map((rows) =>
+            rows.map((row): SearchHit => ({
+              i: row.i,
+              kind: row.kind as Kind,
+              date: row.date,
+              snippet: row.snippet,
+            })),
+          ),
+        );
 
       return Store.of({
         messageCount: run(
@@ -67,6 +134,7 @@ export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
             )[0];
             return row && ({ ...row, kind: row.kind as Kind } satisfies Message);
           }),
+        search,
         putNode: (n: Node) =>
           run("putNode", async () => {
             await sql.all(

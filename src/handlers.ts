@@ -37,6 +37,7 @@ import {
   ProfileArgs,
   ScheduleCancelArgs,
   ScheduleCreateArgs,
+  SearchArgs,
   SkillArgs,
   WebFetchArgs,
   WebSearchArgs,
@@ -105,6 +106,21 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(ZoomArgs, args), (a) => memory.zoom(a.id, a.n));
           case "date":
             return Effect.flatMap(decode(DateArgs, args), (a) => memory.date(a.id));
+          case "search":
+            return Effect.gen(function* () {
+              const a = yield* decode(SearchArgs, args);
+              const query = a.query.trim();
+              if (query === "") return yield* new ToolError({ reason: "search needs a query" });
+              const hits = yield* memory.search(query, a.limit ?? 20);
+              return hits.length === 0
+                ? "No messages match."
+                : hits
+                    .map(
+                      (hit) =>
+                        `${hit.i} ${hit.kind} ${hit.date.slice(0, 10)}: ${hit.snippet.replace(/\s+/g, " ")}`,
+                    )
+                    .join("\n");
+            });
           case "file_read":
             return Effect.gen(function* () {
               const a = yield* decode(FileReadArgs, args);

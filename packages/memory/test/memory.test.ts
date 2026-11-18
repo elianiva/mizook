@@ -260,6 +260,47 @@ test("a long text is logged as several messages in a row, and nothing is cut", a
   );
 });
 
+test("search finds messages by text and respects the limit", async () => {
+  await run(
+    Effect.gen(function* () {
+      const memory = yield* Memory;
+      yield* memory.append("user", "the schema migration is blocked");
+      yield* memory.append("agent", "I will check the schema");
+      yield* memory.append("user", "lunch at noon");
+
+      const hits = yield* memory.search("schema", 10);
+      expect(hits.map((hit) => hit.i)).toEqual([0, 1]);
+      expect(hits[0]?.kind).toBe("user");
+      expect(hits[0]?.snippet).toContain("schema");
+      expect(yield* memory.search("schema", 1)).toHaveLength(1);
+      expect(yield* memory.search("nothing", 10)).toEqual([]);
+    }),
+    { model: fakeSummarizer(newModel()) },
+  );
+});
+
+test("the sqlite store searches through FTS5, including short terms", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "memory-"));
+  const file = join(dir, "chat.sqlite");
+  const db = new DatabaseSync(file);
+  const store = sqliteStore({
+    all: (sql, ...params) => db.prepare(sql).all(...(params as never[])) as never,
+  });
+  await run(
+    Effect.gen(function* () {
+      const memory = yield* Memory;
+      yield* memory.append("user", "alpha beta");
+      yield* memory.append("agent", "gamma beta");
+      yield* memory.append("user", "delta");
+
+      expect((yield* memory.search("beta", 10)).map((hit) => hit.i)).toEqual([0, 1]);
+      expect((yield* memory.search("bet", 10)).map((hit) => hit.i)).toEqual([0, 1]);
+      expect((yield* memory.search("be", 10)).map((hit) => hit.i)).toEqual([0, 1]);
+    }),
+    { model: fakeSummarizer(newModel()), store },
+  );
+});
+
 test("the views are saved: a restart loads them and builds nothing again", async () => {
   const dir = mkdtempSync(join(tmpdir(), "memory-"));
   const file = join(dir, "chat.sqlite");

@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { StoreError } from "./errors.ts";
-import type { Message, Node, PersistedViews, Snapshot } from "./types.ts";
+import type { Message, Node, PersistedViews, SearchHit, Snapshot } from "./types.ts";
 
 /**
  * Where the log lives. Append only: messages and nodes are written once and never edited. Only
@@ -15,6 +15,8 @@ export class Store extends Context.Service<
     readonly messageCount: Effect.Effect<number, StoreError>;
     appendMessage(message: Message): Effect.Effect<void, StoreError>;
     getMessage(i: number): Effect.Effect<Message | undefined, StoreError>;
+    /** Find messages by text, newest relevance first. `limit` is capped by the caller. */
+    search(query: string, limit: number): Effect.Effect<ReadonlyArray<SearchHit>, StoreError>;
     putNode(node: Node): Effect.Effect<void, StoreError>;
     getNode(l: number, i: number): Effect.Effect<Node | undefined, StoreError>;
     /** The size of every built node, to restart the compactor. */
@@ -44,6 +46,20 @@ export class Store extends Context.Service<
               }),
             ),
       getMessage: (i) => Effect.sync(() => messages[i]),
+      search: (query, limit) =>
+        Effect.sync(() => {
+          const needle = query.trim().toLowerCase();
+          if (needle === "") return [];
+          return messages
+            .filter((message) => message.text.toLowerCase().includes(needle))
+            .slice(0, limit)
+            .map((message) => ({
+              i: message.i,
+              kind: message.kind,
+              date: message.date,
+              snippet: message.text.slice(0, 400),
+            }));
+        }),
       putNode: (node) =>
         Effect.sync(() => {
           const key = `${node.l}:${node.i}`;

@@ -43,6 +43,7 @@ const turn = Effect.gen(function* () {
 | `beginTurn`     | view + new message, in cache-sized blocks; logs the message after rendering |
 | `append`        | log a message of any kind (`agent`, `tool`, `echo`, …)                      |
 | `zoom`, `date`  | the two tools                                                               |
+| `search`        | exact words in the log, as message ids and excerpts, for `zoom(id, 1)`      |
 | `idle`, `stats` | for tests and monitoring                                                    |
 
 Send `Summarizer` the same tools the turns use (never called): the compaction then reads the
