@@ -36,6 +36,9 @@ view. A message sent while a turn runs is folded into it between tool calls.
 **Pending turn** — a turn started and not yet delivered. Kept in SQLite so that after a restart
 the reply is still posted.
 
+**Run** — one firing of a schedule, with its status and the reply or error. Kept so a routine can
+be inspected, paused, resumed and tested.
+
 ## One process owns the chat
 
 `ChatAgent` is a single Durable Object: it owns the log, pi-durable's storage, and the bot's state

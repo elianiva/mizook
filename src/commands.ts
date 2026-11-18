@@ -6,6 +6,7 @@ import { formatDate } from "./format.ts";
 import { Host } from "./host.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
+import { Runs } from "./runs.ts";
 import { Schedules } from "./schedules.ts";
 import { Skills } from "./skills.ts";
 import { State } from "./state.ts";
@@ -34,6 +35,7 @@ export class Commands extends Context.Service<
       const schedules = yield* Schedules;
       const intents = yield* Intents;
       const policies = yield* Policies;
+      const runs = yield* Runs;
       const skills = yield* Skills;
       const usage = yield* Usage;
       const host = yield* Host;
@@ -182,14 +184,32 @@ export class Commands extends Context.Service<
               ? "No policies. Use /policies allow|ask|deny <match>."
               : all.map((policy) => `#${policy.id} ${policy.decision} ${policy.match}`).join("\n");
           }
+          case "runs": {
+            const id = arg === "" ? undefined : Number(arg);
+            if (id !== undefined && (!Number.isInteger(id) || id < 1)) {
+              return "Use /runs or /runs <schedule id>.";
+            }
+            const all = yield* runs.list({
+              limit: 10,
+              ...(id === undefined ? {} : { scheduleId: id }),
+            });
+            return all.length === 0
+              ? "No runs yet."
+              : all
+                  .map((r) => {
+                    const detail = r.error ?? r.output;
+                    return `#${r.id} schedule ${r.scheduleId} ${r.status} ${formatDate(new Date(r.started), settings.timezone)}${detail === "" ? "" : `: ${detail.slice(0, 160)}`}`;
+                  })
+                  .join("\n");
+          }
           case "schedules": {
-            const all = yield* schedules.list;
+            const all = yield* schedules.all;
             return all.length === 0
               ? "No schedules."
               : all
                   .map(
                     (s) =>
-                      `#${s.id} ${s.spec.kind}${s.skill ? ` [skill ${s.skill}]` : ""}, next ${formatDate(new Date(s.nextAt), settings.timezone)}: ${s.prompt}`,
+                      `#${s.id} ${s.spec.kind}${s.skill ? ` [skill ${s.skill}]` : ""} ${s.active ? `next ${formatDate(new Date(s.nextAt), settings.timezone)}` : "inactive"}: ${s.prompt}`,
                   )
                   .join("\n");
           }

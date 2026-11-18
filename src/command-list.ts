@@ -16,6 +16,7 @@ export const COMMANDS = [
   { command: "intents", description: "List or cancel standing intents" },
   { command: "policies", description: "List, add or remove approval rules" },
   { command: "schedules", description: "List this channel's schedules" },
+  { command: "runs", description: "Show the last runs of a schedule" },
   { command: "export", description: "Export this channel as a file" },
   { command: "help", description: "List the commands" },
 ] as const;

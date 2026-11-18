@@ -31,13 +31,13 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 - **Profile:** a short "about you" and the rules to follow, shared by every channel. `/profile` shows it; the agent updates it when it learns a stable preference.
 - **Skills:** reusable procedures the agent saves after a repeatable task and reads by name. A schedule can name a skill to read when it fires; a pinned skill cannot be deleted while a schedule needs it.
 - **Standing intents:** "when I mention the launch, remind me about rollback" waits for trigger words in a later message. Matching is a token scan, not a model call; `/intents` lists them.
-- **Schedules:** `once`, `cron` and `watch` (polls a URL, wakes the agent only when it changes), plus `webhook_link` for services that notify you. Capped at 20 turns an hour.
+- **Schedules:** `once`, `cron` and `watch` (polls a URL, wakes the agent only when it changes), plus `webhook_link` for services that notify you. Pause, resume or test one by number; `/runs` shows the last ten and why one failed. Capped at 20 turns an hour.
 - **Artifacts:** pages and files at `https://mzk.elianiva.com/a/<token>/<name>`, sandboxed. Versions are kept in R2.
 - **Web:** `web_search` (Parallel, then Exa; set `SEARCH_PROVIDERS`) and `web_fetch`.
 - **Executor:** one `executor` tool over MCP. A call that needs approval shows Approve, Always allow and Deny buttons in the chat; the press resumes it and the agent sees the result. `/policies allow|ask|deny <match>` sets standing rules, and an approval expires after 30 minutes. Use the plain `/mcp` URL (model mode).
 - **Files:** attachments are stored; `file_read` reads text files. Images, voice and PDF content are not read yet.
 - **Receipt:** a 👀 reaction means the message reached the bot. Typing starts when the model does, so an eye without typing is a slow model, not a lost message.
-- **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /profile /skills /intents /policies /schedules /export`.
+- **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /profile /skills /intents /policies /schedules /runs /export`.
 - **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
 
 ## Setup

@@ -41,6 +41,8 @@ export class Host extends Context.Service<
       about: string | undefined,
       rules: ReadonlyArray<string> | undefined,
     ): Effect.Effect<Profile, StateError>;
+    /** Start one schedule now, in the background. The result goes to the chat. */
+    testSchedule(id: number): Effect.Effect<boolean>;
     /** What every channel spent. */
     readonly spendAll: Effect.Effect<
       ReadonlyArray<{ readonly name: string; readonly spend: Spend }>

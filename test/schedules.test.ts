@@ -62,6 +62,21 @@ test("a bad spec is refused with its reason, and cancel stops a schedule", async
   );
 });
 
+test("a paused schedule is hidden from the active list and resumes at its next time", async () => {
+  await go(
+    Effect.gen(function* () {
+      const s = yield* Schedules;
+      const made = yield* s.create(cron, "tick", t("2026-11-15T00:00:00Z"));
+      expect(yield* s.pause(made.id)).toBe(true);
+      expect(yield* s.list).toEqual([]);
+      expect((yield* s.all)[0]?.active).toBe(false);
+      expect(yield* s.resume(made.id, t("2026-11-15T05:03:00Z"))).toBe(true);
+      expect(yield* s.list).toHaveLength(1);
+      expect(new Date((yield* s.nextAt)!).toISOString()).toBe("2026-11-15T05:10:00.000Z");
+    }),
+  );
+});
+
 test("a watch is silent on the first look and on no change, and speaks on a change", async () => {
   await go(
     Effect.gen(function* () {

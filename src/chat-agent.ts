@@ -91,6 +91,7 @@ export class ChatAgent extends DurableObject<Env> {
           try: () => hub().setProfile(about, rules === undefined ? undefined : [...rules]),
           catch: (cause) => new StateError({ operation: "profile", cause }),
         }),
+      testSchedule: (id) => Effect.sync(() => this.scheduleTest(id)),
       ask: (channel, question) =>
         Effect.gen(function* () {
           const all = yield* Effect.promise(() => hub().list());
@@ -134,6 +135,14 @@ export class ChatAgent extends DurableObject<Env> {
   /** A webhook call, already checked by the Worker. */
   async hook(body: string): Promise<boolean> {
     return this.runtime.runPromise(Bot.use((bot) => bot.hook(body)));
+  }
+
+  /** Start a test run in the background; the result posts to the chat like a scheduled turn. */
+  scheduleTest(id: number): boolean {
+    this.ctx.waitUntil(
+      this.runtime.runPromise(Bot.use((bot) => bot.testSchedule(id))).catch(() => undefined),
+    );
+    return true;
   }
 
   /** What this channel has spent, for `/cost`. */

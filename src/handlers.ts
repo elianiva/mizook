@@ -495,6 +495,39 @@ export class Handlers extends Context.Service<
                 done ? `Cancelled #${id}.` : `No active schedule #${id}.`,
               ),
             );
+          case "schedule_pause":
+            return Effect.flatMap(decode(ScheduleCancelArgs, args), ({ id }) =>
+              Effect.map(schedules.pause(id), (done) =>
+                done ? `Paused #${id}.` : `No active schedule #${id}.`,
+              ),
+            );
+          case "schedule_resume":
+            return Effect.flatMap(decode(ScheduleCancelArgs, args), ({ id }) =>
+              Effect.gen(function* () {
+                const now = new Date(DateTime.toEpochMillis(yield* DateTime.now));
+                const done = yield* schedules.resume(id, now);
+                return done ? `Resumed #${id}.` : `No schedule #${id}.`;
+              }),
+            );
+          case "schedule_test":
+            return Effect.gen(function* () {
+              const a = yield* decode(ScheduleCancelArgs, args);
+              const threadId = yield* state.meta("thread");
+              if (!threadId) {
+                return yield* new ToolError({
+                  reason: "nothing has been said in this channel yet",
+                });
+              }
+              if (yield* state.turn(threadId)) {
+                return yield* new ToolError({ reason: "a turn is already running" });
+              }
+              const found = yield* schedules.get(a.id);
+              if (!found) return yield* new ToolError({ reason: `no schedule #${a.id}` });
+              const started = yield* host.testSchedule(a.id);
+              return started
+                ? `Test #${a.id} started; the result goes to the chat.`
+                : `Could not start #${a.id}.`;
+            });
           default:
             return Effect.succeed(`No tool ${name}.`);
         }

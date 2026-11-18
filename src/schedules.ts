@@ -12,6 +12,8 @@ export interface Schedule {
   readonly skill: string | undefined;
   /** Epoch milliseconds of the next fire. */
   readonly nextAt: number;
+  /** A paused schedule stays in the table but does not fire. */
+  readonly active: boolean;
   /** For a watch: a hash of what it saw last. */
   readonly lastHash: string | undefined;
 }
@@ -22,6 +24,7 @@ const Row = Schema.Struct({
   prompt: Schema.String,
   skill: Schema.NullOr(Schema.String),
   next_at: Schema.Finite,
+  active: Schema.Finite,
   last_hash: Schema.NullOr(Schema.String),
 });
 
@@ -31,6 +34,7 @@ const toSchedule = (row: typeof Row.Type): Schedule => ({
   prompt: row.prompt,
   skill: row.skill ?? undefined,
   nextAt: row.next_at,
+  active: row.active === 1,
   lastHash: row.last_hash ?? undefined,
 });
 
@@ -51,8 +55,15 @@ export class Schedules extends Context.Service<
       now: Date,
       skill?: string,
     ): Effect.Effect<Schedule, ScheduleError | StateError>;
+    /** Active schedules only, soonest first. */
     readonly list: Effect.Effect<ReadonlyArray<Schedule>, StateError>;
+    /** Every schedule, active and paused, for management. */
+    readonly all: Effect.Effect<ReadonlyArray<Schedule>, StateError>;
+    get(id: number): Effect.Effect<Schedule | undefined, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
+    pause(id: number): Effect.Effect<boolean, StateError>;
+    /** Start a paused schedule again, from its next time after `now`. */
+    resume(id: number, now: Date): Effect.Effect<boolean, ScheduleError | StateError>;
     /**
      * Take the schedules due at `now` and move each to its next time, in one step. A cron missed
      * during downtime is returned once. A `once` is finished. At most once: a crash after this and
@@ -107,9 +118,13 @@ export class Schedules extends Context.Service<
             ),
             Effect.map((rows) => rows.map(toSchedule)),
           );
+        const all = query(
+          "all schedules",
+          `SELECT id, spec, prompt, skill, next_at, active, last_hash FROM app_schedules ORDER BY id`,
+        );
         const active = query(
           "active schedules",
-          `SELECT id, spec, prompt, skill, next_at, last_hash FROM app_schedules WHERE active = 1 ORDER BY next_at, id`,
+          `SELECT id, spec, prompt, skill, next_at, active, last_hash FROM app_schedules WHERE active = 1 ORDER BY next_at, id`,
         );
 
         return Schedules.of({
@@ -119,7 +134,7 @@ export class Schedules extends Context.Service<
               const [made] = yield* query(
                 "create schedule",
                 `INSERT INTO app_schedules (spec, prompt, skill, next_at, created) VALUES (?, ?, ?, ?, ?)
-                 RETURNING id, spec, prompt, skill, next_at, last_hash`,
+                 RETURNING id, spec, prompt, skill, next_at, active, last_hash`,
                 yield* Schema.encodeEffect(SpecJson)(spec).pipe(
                   Effect.mapError((cause) => new StateError({ operation: "encode spec", cause })),
                 ),
@@ -132,13 +147,47 @@ export class Schedules extends Context.Service<
               return made!;
             }),
           list: active,
+          all,
+          get: (id) =>
+            query(
+              "get schedule",
+              `SELECT id, spec, prompt, skill, next_at, active, last_hash FROM app_schedules WHERE id = ?`,
+              id,
+            ).pipe(Effect.map((rows) => rows[0])),
           cancel: (id) =>
-            run("cancel schedule", async () => {
-              const rows = await sql.all(
+            run("cancel schedule", () =>
+              sql.all(`DELETE FROM app_schedules WHERE id = ? RETURNING id`, id),
+            ).pipe(Effect.map((rows) => rows.length > 0)),
+          pause: (id) =>
+            run("pause schedule", () =>
+              sql.all(
                 `UPDATE app_schedules SET active = 0 WHERE id = ? AND active = 1 RETURNING id`,
                 id,
+              ),
+            ).pipe(Effect.map((rows) => rows.length > 0)),
+          resume: (id, now) =>
+            Effect.gen(function* () {
+              const found = yield* query(
+                "resume schedule",
+                `SELECT id, spec, prompt, skill, next_at, active, last_hash FROM app_schedules WHERE id = ?`,
+                id,
+              ).pipe(Effect.map((rows) => rows[0]));
+              if (!found) return false;
+              const next = yield* nextFire(found.spec, now);
+              if (!next) {
+                return yield* new ScheduleError({
+                  reason: `schedule #${id} has no next time; create a new one`,
+                });
+              }
+              yield* run("resume schedule", () =>
+                sql.all(
+                  `UPDATE app_schedules SET active = 1, next_at = ? WHERE id = ?`,
+                  next.getTime(),
+                  id,
+                ),
               );
-              return rows.length > 0;
+              yield* run("arm", () => arm(next.getTime()));
+              return true;
             }),
           claim: (now) =>
             lock(

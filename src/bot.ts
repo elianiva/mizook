@@ -19,6 +19,7 @@ import { TelegramError, type StateError } from "./errors.ts";
 import { Outbox } from "./outbox.ts";
 import { Approvals } from "./approvals.ts";
 import { Policies } from "./policies.ts";
+import { Runs } from "./runs.ts";
 import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
@@ -63,6 +64,8 @@ export class Bot extends Context.Service<
     ): Effect.Effect<{ readonly resume: Effect.Effect<void> } | undefined, StateError>;
     /** Start a turn for each schedule that is due. */
     readonly wake: Effect.Effect<void, AgentError | StateError>;
+    /** Run one schedule now, as a test. False when the channel has nowhere to post or is busy. */
+    testSchedule(id: number): Effect.Effect<boolean, AgentError | StateError>;
     /** When the Durable Object's alarm should ring next: a pending turn's recovery or the next schedule. */
     readonly nextWake: Effect.Effect<number | undefined, AgentError | StateError>;
   }
@@ -78,6 +81,7 @@ export class Bot extends Context.Service<
       const outbox = yield* Outbox;
       const approvals = yield* Approvals;
       const policies = yield* Policies;
+      const runs = yield* Runs;
       const executor = yield* Executor;
       const blobs = yield* Blobs;
       const usage = yield* Usage;
@@ -194,6 +198,7 @@ export class Bot extends Context.Service<
           const reply = yield* agent.finish(chatId);
           if (reply.trim() !== "") yield* post(threadId, reply);
           yield* postApprovals(threadId);
+          return reply;
         }).pipe(Effect.scoped);
 
       const handleMessage = Effect.fn("Bot.message")(function* (thread: Thread, message: Message) {
@@ -353,6 +358,7 @@ export class Bot extends Context.Service<
             );
             continue;
           }
+          const runId = yield* runs.start(s.id);
           yield* Effect.scoped(
             Effect.gen(function* () {
               yield* hold(threadId);
@@ -363,9 +369,20 @@ export class Bot extends Context.Service<
                 requestId: `sched:${s.id}:${s.nextAt}`,
                 source: "scheduled",
               });
-              if (started === "started") yield* deliver(threadId, threadId);
+              if (started === "folded") {
+                yield* runs.finish(runId, "skipped");
+                return;
+              }
+              const reply = yield* deliver(threadId, threadId);
+              yield* runs.finish(runId, "succeeded", reply);
             }),
-          ).pipe(Effect.catchCause((cause) => Effect.logError(`schedule #${s.id} failed`, cause)));
+          ).pipe(
+            Effect.catchCause((cause) =>
+              runs
+                .finish(runId, "failed", "", String(cause).slice(0, 1_000))
+                .pipe(Effect.andThen(Effect.logError(`schedule #${s.id} failed`, cause))),
+            ),
+          );
         }
       });
 
@@ -506,9 +523,49 @@ export class Bot extends Context.Service<
       // Plain messages in a group topic: not a DM, not a mention, and the thread is not subscribed.
       chat.onNewMessage(onMessage);
 
+      const testSchedule = Effect.fn("Bot.testSchedule")(function* (id: number) {
+        const threadId = yield* state.meta("thread");
+        if (!threadId) return false;
+        if (yield* state.turn(threadId)) return false;
+        const schedule = yield* schedules.get(id);
+        if (!schedule) return false;
+        const skill =
+          schedule.skill === undefined ? "" : `Read skill "${schedule.skill}" first.\n\n`;
+        const runId = yield* runs.start(id);
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* hold(threadId);
+            const started = yield* agent.begin({
+              chatId: threadId,
+              threadId,
+              text: `[test #${id}] ${skill}${schedule.prompt}`,
+              requestId: `test:${id}:${Date.now()}`,
+              source: "test",
+            });
+            if (started === "folded") {
+              yield* runs.finish(runId, "skipped");
+              return false;
+            }
+            const reply = yield* deliver(threadId, threadId);
+            yield* runs.finish(runId, "succeeded", reply);
+            return true;
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            runs
+              .finish(runId, "failed", "", String(cause).slice(0, 1_000))
+              .pipe(
+                Effect.andThen(Effect.logError(`test of schedule #${id} failed`, cause)),
+                Effect.as(false),
+              ),
+          ),
+        );
+      });
+
       return Bot.of({
         approve,
         wake,
+        testSchedule,
         hook,
         nextWake,
         webhook: (request, waitUntil) =>
