@@ -93,6 +93,8 @@ export class Intents extends Context.Service<
       options: IntentOptions,
     ): Effect.Effect<Intent, StateError>;
     readonly list: Effect.Effect<ReadonlyArray<Intent>, StateError>;
+    /** Put an exported intent back with its counters and state. */
+    restore(input: Omit<Intent, "id">): Effect.Effect<Intent, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
     /** The intents this text wakes. Increments their counters and advances their state. */
     match(text: string, now: Date): Effect.Effect<ReadonlyArray<Intent>, StateError>;
@@ -152,6 +154,30 @@ export class Intents extends Context.Service<
               return made!;
             }),
           list: query("list intents", `${SELECT} ORDER BY id`),
+          restore: (input) =>
+            one(
+              "restore intent",
+              `INSERT INTO app_intents
+                 (description, triggers, created, expires, cooldown, max_fires,
+                  fire_count, last_fired, state)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               RETURNING id, description, triggers, created, expires, cooldown,
+                 max_fires, fire_count, last_fired, state`,
+              input.description,
+              JSON.stringify(input.triggers),
+              input.created,
+              input.expires,
+              input.cooldown,
+              input.maxFires,
+              input.fireCount,
+              input.lastFired ?? null,
+              input.state,
+            ).pipe(
+              Effect.filterOrFail(
+                (found): found is Intent => found !== undefined,
+                () => new StateError({ operation: "restore intent", cause: "no row" }),
+              ),
+            ),
           cancel: (id) =>
             run("cancel intent", () =>
               sql.all(

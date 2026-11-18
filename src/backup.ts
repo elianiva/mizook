@@ -4,8 +4,11 @@ import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
 import { Settings } from "./config.ts";
 import type { BlobError, ScheduleError, StateError, ToolError } from "./errors.ts";
+import { Intents } from "./intents.ts";
+import { Policies } from "./policies.ts";
 import { Schedules } from "./schedules.ts";
 import { Spec } from "./schedule.ts";
+import { Skills } from "./skills.ts";
 import { channelKey, State } from "./state.ts";
 import { packTar, unpackTar } from "./tar.ts";
 
@@ -16,12 +19,52 @@ const DAY = 24 * 3_600_000;
 const LINK_LIFETIME = 3_600_000;
 
 const SchedulesFile = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ spec: Spec, prompt: Schema.String })),
+  Schema.Array(
+    Schema.Struct({
+      spec: Spec,
+      prompt: Schema.String,
+      skill: Schema.optionalKey(Schema.String),
+      active: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
 );
 const SettingsFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const DataFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const ArtifactsFile = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ name: Schema.String, contentType: Schema.String })),
+);
+const SkillsFile = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      body: Schema.String,
+      pinned: Schema.Boolean,
+    }),
+  ),
+);
+const IntentsFile = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      description: Schema.String,
+      triggers: Schema.Array(Schema.String),
+      created: Schema.Finite,
+      expires: Schema.Finite,
+      cooldown: Schema.Finite,
+      maxFires: Schema.Finite,
+      fireCount: Schema.Finite,
+      lastFired: Schema.NullOr(Schema.Finite),
+      state: Schema.Literals(["armed", "done", "cancelled", "expired"]),
+    }),
+  ),
+);
+const PoliciesFile = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      match: Schema.String,
+      decision: Schema.Literals(["allow", "ask", "deny"]),
+    }),
+  ),
 );
 
 const token = () => {
@@ -56,6 +99,9 @@ export class Backup extends Context.Service<
       const store = yield* Store;
       const state = yield* State;
       const schedules = yield* Schedules;
+      const skills = yield* Skills;
+      const intents = yield* Intents;
+      const policies = yield* Policies;
       const artifacts = yield* Artifacts;
       const blobs = yield* Blobs;
       const { publicUrl } = yield* Settings;
@@ -63,7 +109,36 @@ export class Backup extends Context.Service<
       const tar = Effect.gen(function* () {
         const files: Record<string, string | Uint8Array> = { ...toFiles(yield* store.snapshot) };
         files["schedules.json"] = yield* Schema.encodeEffect(SchedulesFile)(
-          (yield* schedules.list).map(({ spec, prompt }) => ({ spec, prompt })),
+          (yield* schedules.all).map(({ spec, prompt, skill, active }) => ({
+            spec,
+            prompt,
+            ...(skill === undefined ? {} : { skill }),
+            active,
+          })),
+        ).pipe(Effect.orDie);
+        files["skills.json"] = yield* Schema.encodeEffect(SkillsFile)(
+          (yield* skills.list).map(({ name, description, body, pinned }) => ({
+            name,
+            description,
+            body,
+            pinned,
+          })),
+        ).pipe(Effect.orDie);
+        files["intents.json"] = yield* Schema.encodeEffect(IntentsFile)(
+          (yield* intents.list).map((intent) => ({
+            description: intent.description,
+            triggers: intent.triggers,
+            created: intent.created,
+            expires: intent.expires,
+            cooldown: intent.cooldown,
+            maxFires: intent.maxFires,
+            fireCount: intent.fireCount,
+            lastFired: intent.lastFired ?? null,
+            state: intent.state,
+          })),
+        ).pipe(Effect.orDie);
+        files["policies.json"] = yield* Schema.encodeEffect(PoliciesFile)(
+          (yield* policies.list).map(({ match, decision }) => ({ match, decision })),
         ).pipe(Effect.orDie);
         files["settings.json"] = yield* Schema.encodeEffect(SettingsFile)(
           yield* state.settings,
@@ -151,8 +226,35 @@ export class Backup extends Context.Service<
             if (list) {
               const all = yield* Schema.decodeEffect(SchedulesFile)(list).pipe(Effect.orDie);
               // A reminder whose time has passed cannot be made again: skip it.
-              for (const { spec, prompt } of all) {
-                yield* schedules.create(spec, prompt, new Date()).pipe(Effect.ignore);
+              for (const { spec, prompt, skill, active } of all) {
+                const made = yield* schedules
+                  .create(spec, prompt, new Date(), skill)
+                  .pipe(Effect.orElseSucceed(() => undefined));
+                if (made && active === false) yield* schedules.pause(made.id).pipe(Effect.ignore);
+              }
+            }
+            const skillsText = text("skills.json");
+            if (skillsText) {
+              const all = yield* Schema.decodeEffect(SkillsFile)(skillsText).pipe(Effect.orDie);
+              for (const { name, description, body, pinned } of all) {
+                yield* skills.save(name, description, body).pipe(Effect.ignore);
+                if (pinned) yield* skills.pin(name).pipe(Effect.ignore);
+              }
+            }
+            const intentsText = text("intents.json");
+            if (intentsText) {
+              const all = yield* Schema.decodeEffect(IntentsFile)(intentsText).pipe(Effect.orDie);
+              for (const intent of all) {
+                yield* intents
+                  .restore({ ...intent, lastFired: intent.lastFired ?? undefined })
+                  .pipe(Effect.ignore);
+              }
+            }
+            const policiesText = text("policies.json");
+            if (policiesText) {
+              const all = yield* Schema.decodeEffect(PoliciesFile)(policiesText).pipe(Effect.orDie);
+              for (const { match, decision } of all) {
+                yield* policies.add(match, decision).pipe(Effect.ignore);
               }
             }
             const meta = text("artifacts.json");

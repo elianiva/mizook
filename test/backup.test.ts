@@ -6,7 +6,10 @@ import { Artifacts } from "../src/artifacts.ts";
 import { Backup } from "../src/backup.ts";
 import { Blobs } from "../src/blobs.ts";
 import { Settings } from "../src/config.ts";
+import { Intents } from "../src/intents.ts";
+import { Policies } from "../src/policies.ts";
 import { Schedules } from "../src/schedules.ts";
+import { Skills } from "../src/skills.ts";
 import { State } from "../src/state.ts";
 
 const settings = Settings.layer.pipe(
@@ -32,6 +35,9 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
   return Backup.layer.pipe(
     Layer.provideMerge(Artifacts.layer(sql)),
     Layer.provideMerge(Schedules.layer(sql)),
+    Layer.provideMerge(Skills.layer(sql)),
+    Layer.provideMerge(Intents.layer(sql)),
+    Layer.provideMerge(Policies.layer(sql)),
     Layer.provideMerge(State.layer(sql)),
     Layer.provideMerge(sqliteStore(sql)),
     Layer.provideMerge(blobs),
@@ -50,6 +56,9 @@ test("an archive restores a channel into an empty one: log, nodes, view, schedul
           const store = yield* Store;
           const state = yield* State;
           const schedules = yield* Schedules;
+          const skills = yield* Skills;
+          const intents = yield* Intents;
+          const policies = yield* Policies;
           const artifacts = yield* Artifacts;
           for (let i = 0; i < 5; i++) {
             yield* store.appendMessage({
@@ -78,6 +87,14 @@ test("an archive restores a channel into an empty one: log, nodes, view, schedul
             "brief",
             new Date(),
           );
+          yield* skills.save("weekly-review", "Review the week", "1. Read seven days.");
+          yield* skills.pin("weekly-review");
+          yield* intents.create("Check the rollback owner", ["launch"], {
+            expiresAt: Date.now() + 86_400_000,
+            cooldownMs: 0,
+            maxFires: 2,
+          });
+          yield* policies.add("gmail.send", "ask");
           yield* artifacts.publish("telegram:-1:5", "page.html", "<p>hi</p>", "text/html");
           const snapshot = yield* store.snapshot;
           return { tar: yield* (yield* Backup).tar, snapshot };
@@ -92,6 +109,14 @@ test("an archive restores a channel into an empty one: log, nodes, view, schedul
           expect(yield* store.snapshot).toEqual(exported.snapshot);
           expect((yield* state.settings).model).toBe("deepseek-flash");
           expect((yield* (yield* Schedules).list).map((s) => s.prompt)).toEqual(["brief"]);
+          const restoredSkills = yield* (yield* Skills).list;
+          expect(restoredSkills.map((s) => s.name)).toEqual(["weekly-review"]);
+          expect(restoredSkills[0]?.pinned).toBe(true);
+          expect((yield* (yield* Intents).list)[0]?.description).toBe("Check the rollback owner");
+          expect((yield* (yield* Policies).list)[0]).toMatchObject({
+            match: "gmail.send",
+            decision: "ask",
+          });
           const [page] = yield* (yield* Artifacts).list;
           expect(page?.name).toBe("page.html");
           // A second restore into a channel that now has messages is refused.

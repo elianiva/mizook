@@ -38,7 +38,7 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 - **Files:** attachments are stored. Text is read directly, voice notes are transcribed, images are described, and PDF or Office files are converted by Workers AI. `file_read` reads a stored one later.
 - **Receipt:** a 👀 reaction means the message reached the bot. Typing starts when the model does, so an eye without typing is a slow model, not a lost message.
 - **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /profile /skills /intents /policies /schedules /runs /export`.
-- **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
+- **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `skills.json`, `intents.json`, `policies.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
 
 ## Setup
 
