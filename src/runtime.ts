@@ -12,6 +12,7 @@ import { formatDate } from "./format.ts";
 import { Models } from "./models.ts";
 import { Host } from "./host.ts";
 import { Intents } from "./intents.ts";
+import { Policies } from "./policies.ts";
 import { Usage } from "./usage.ts";
 import { readSettings, State } from "./state.ts";
 import { Executor } from "./executor.ts";
@@ -108,7 +109,7 @@ export const makeRuntime = (
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Schedules.layer(sql, arm)),
-    Layer.provideMerge(Intents.layer(sql)),
+    Layer.provideMerge(Layer.merge(Intents.layer(sql), Policies.layer(sql))),
     Layer.provideMerge(Skills.layer(sql)),
     Layer.provideMerge(State.layer(sql)),
     Layer.provideMerge(sqliteStore(sql)),

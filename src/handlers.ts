@@ -9,6 +9,7 @@ import {
   MAX_INTENT_TRIGGERS,
   MAX_TRIGGER_LENGTH,
 } from "./intents.ts";
+import { Policies } from "./policies.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
 import { MAX_SKILL_BODY, MAX_SKILL_DESCRIPTION, SKILL_NAME, Skills } from "./skills.ts";
@@ -34,6 +35,7 @@ import {
   ArtifactPublishArgs,
   DateArgs,
   IntentArgs,
+  PolicyArgs,
   ProfileArgs,
   ScheduleCancelArgs,
   ScheduleCreateArgs,
@@ -55,6 +57,7 @@ export class Handlers extends Context.Service<
       const memory = yield* Memory;
       const schedules = yield* Schedules;
       const intents = yield* Intents;
+      const policies = yield* Policies;
       const skills = yield* Skills;
       const web = yield* Web;
       const outbox = yield* Outbox;
@@ -96,6 +99,17 @@ export class Handlers extends Context.Service<
 
       const decode = <S extends Schema.Decoder<unknown>>(schema: S, args: unknown) =>
         Schema.decodeUnknownEffect(schema)(args);
+
+      /** What a policy matches: the executor tool plus the paths of the calls inside it. */
+      const targetOf = (tool: string, input: Record<string, unknown>): string => {
+        const calls = Array.isArray(input.calls) ? input.calls : [];
+        const paths = calls.flatMap((call) => {
+          if (typeof call !== "object" || call === null || !("path" in call)) return [];
+          const path = (call as { path?: unknown }).path;
+          return typeof path === "string" ? [path] : [];
+        });
+        return [tool, ...paths].join(" ").toLowerCase();
+      };
 
       const run = (
         name: string,
@@ -173,6 +187,39 @@ export class Handlers extends Context.Service<
               const saved = yield* host.updateProfile(about, rules);
               return `Profile saved: ${saved.about === "" ? "no about" : "about"}, ${saved.rules.length} rule(s).`;
             });
+          case "policy_manage":
+            return Effect.gen(function* () {
+              const a = yield* decode(PolicyArgs, args);
+              switch (a.action) {
+                case "list": {
+                  const all = yield* policies.list;
+                  return all.length === 0
+                    ? "No policies."
+                    : all
+                        .map((policy) => `#${policy.id} ${policy.decision} ${policy.match}`)
+                        .join("\n");
+                }
+                case "add": {
+                  const match = a.match?.trim().toLowerCase() ?? "";
+                  if (match === "") return yield* new ToolError({ reason: "add needs a match" });
+                  if (match.length > 200) {
+                    return yield* new ToolError({ reason: "match is longer than 200 characters" });
+                  }
+                  if (a.decision === undefined) {
+                    return yield* new ToolError({ reason: "add needs a decision" });
+                  }
+                  const made = yield* policies.add(match, a.decision);
+                  return `Policy #${made.id}: ${made.decision} ${made.match}.`;
+                }
+                case "remove": {
+                  if (a.id === undefined)
+                    return yield* new ToolError({ reason: "remove needs an id" });
+                  return (yield* policies.remove(a.id))
+                    ? `Removed policy #${a.id}.`
+                    : `No policy #${a.id}.`;
+                }
+              }
+            });
           case "executor":
             return Effect.gen(function* () {
               const a = yield* decode(ExecutorArgs, args);
@@ -183,11 +230,24 @@ export class Handlers extends Context.Service<
               if (typeof input !== "object" || input === null || Array.isArray(input)) {
                 return yield* new ToolError({ reason: "input must be a JSON object" });
               }
-              const out = yield* executor.call(a.tool, input as Record<string, unknown>);
+              const call = input as Record<string, unknown>;
+              const target = targetOf(a.tool, call);
+              const decision = yield* policies.decide(target);
+              if (decision === "deny") {
+                return yield* new ToolError({ reason: `a policy denies ${target}` });
+              }
+              const out = yield* executor.call(a.tool, call);
               const paused = pausedExecution(out);
               if (!paused) return clipToolOutput(out);
-              yield* approvals.add(paused.executionId, paused.summary);
-              return "Waiting for the user's approval. They have been shown Approve and Deny buttons.";
+              if (decision === "allow") {
+                const resumed = yield* executor.call("resume", {
+                  executionId: paused.executionId,
+                  action: "accept",
+                });
+                return clipToolOutput(resumed);
+              }
+              yield* approvals.add(paused.executionId, paused.summary, target);
+              return "Waiting for the user's approval. They have been shown Approve, Always allow and Deny buttons.";
             });
           case "artifact_publish":
             return Effect.gen(function* () {

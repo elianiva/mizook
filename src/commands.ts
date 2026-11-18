@@ -5,6 +5,7 @@ import { Settings } from "./config.ts";
 import { formatDate } from "./format.ts";
 import { Host } from "./host.ts";
 import { Intents } from "./intents.ts";
+import { Policies } from "./policies.ts";
 import { Schedules } from "./schedules.ts";
 import { Skills } from "./skills.ts";
 import { State } from "./state.ts";
@@ -32,6 +33,7 @@ export class Commands extends Context.Service<
       const state = yield* State;
       const schedules = yield* Schedules;
       const intents = yield* Intents;
+      const policies = yield* Policies;
       const skills = yield* Skills;
       const usage = yield* Usage;
       const host = yield* Host;
@@ -161,6 +163,24 @@ export class Commands extends Context.Service<
                       `#${intent.id} ${intent.state} [${intent.triggers.join(", ")}] ${intent.description} (fires ${intent.fireCount}/${intent.maxFires}, expires ${formatDate(new Date(intent.expires), settings.timezone)})`,
                   )
                   .join("\n");
+          }
+          case "policies": {
+            const [verb = "", ...rest] = arg.split(/\s+/);
+            const match = rest.join(" ").trim();
+            if (verb === "remove") {
+              const id = Number(match);
+              if (!Number.isInteger(id) || id < 1) return "Use /policies remove <id>.";
+              return (yield* policies.remove(id)) ? `Removed policy #${id}.` : `No policy #${id}.`;
+            }
+            if (verb === "allow" || verb === "ask" || verb === "deny") {
+              if (match === "") return `Use /policies ${verb} <match>.`;
+              const made = yield* policies.add(match.toLowerCase(), verb);
+              return `Policy #${made.id}: ${made.decision} ${made.match}.`;
+            }
+            const all = yield* policies.list;
+            return all.length === 0
+              ? "No policies. Use /policies allow|ask|deny <match>."
+              : all.map((policy) => `#${policy.id} ${policy.decision} ${policy.match}`).join("\n");
           }
           case "schedules": {
             const all = yield* schedules.list;

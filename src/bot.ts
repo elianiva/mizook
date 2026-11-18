@@ -18,6 +18,7 @@ import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
 import { Outbox } from "./outbox.ts";
 import { Approvals } from "./approvals.ts";
+import { Policies } from "./policies.ts";
 import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
@@ -58,6 +59,7 @@ export class Bot extends Context.Service<
     approve(
       id: number,
       approved: boolean,
+      always?: boolean,
     ): Effect.Effect<{ readonly resume: Effect.Effect<void> } | undefined, StateError>;
     /** Start a turn for each schedule that is due. */
     readonly wake: Effect.Effect<void, AgentError | StateError>;
@@ -75,6 +77,7 @@ export class Bot extends Context.Service<
       const commands = yield* Commands;
       const outbox = yield* Outbox;
       const approvals = yield* Approvals;
+      const policies = yield* Policies;
       const executor = yield* Executor;
       const blobs = yield* Blobs;
       const usage = yield* Usage;
@@ -163,6 +166,15 @@ export class Bot extends Context.Service<
                       CardText(a.summary),
                       Actions([
                         Button({ id: `approve:${a.id}`, label: "Approve", style: "primary" }),
+                        ...(a.match === ""
+                          ? []
+                          : [
+                              Button({
+                                id: `always:${a.id}`,
+                                label: "Always allow",
+                                style: "primary",
+                              }),
+                            ]),
                         Button({ id: `deny:${a.id}`, label: "Deny", style: "danger" }),
                       ]),
                     ],
@@ -384,10 +396,11 @@ export class Bot extends Context.Service<
         return times.length === 0 ? undefined : Math.min(...times);
       });
 
-      const approve = (id: number, approved: boolean) =>
+      const approve = (id: number, approved: boolean, always = false) =>
         Effect.gen(function* () {
           const taken = yield* approvals.take(id);
           if (!taken) return undefined;
+          if (always && taken.match !== "") yield* policies.add(taken.match, "allow");
           const resume = Effect.gen(function* () {
             const result = yield* executor
               .call("resume", {
@@ -413,11 +426,12 @@ export class Bot extends Context.Service<
         Effect.gen(function* () {
           if (!settings.allowedUserIds.has(userId)) return;
           const [verb, rawId] = actionId.split(":");
-          const approved = verb === "approve";
+          const approved = verb === "approve" || verb === "always";
+          const always = verb === "always";
           if ((!approved && verb !== "deny") || rawId === undefined) return;
-          const pending = yield* approve(Number(rawId), approved);
+          const pending = yield* approve(Number(rawId), approved, always);
           if (!pending) {
-            yield* post(threadId, "That question was already answered.");
+            yield* post(threadId, "That question expired or was already answered.");
             return;
           }
           yield* pending.resume;

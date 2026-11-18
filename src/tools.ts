@@ -227,6 +227,28 @@ export const IntentArgs = Schema.Struct({
   ),
 });
 
+export const PolicyArgs = Schema.Struct({
+  action: described(
+    Schema.Literals(["list", "add", "remove"]),
+    "list: every rule. add: save a rule. remove: delete one by id.",
+  ),
+  match: Schema.optionalKey(
+    described(
+      Schema.String,
+      "add: a lowercase substring of the action, such as gmail.send, delete, or merchant.",
+    ),
+  ),
+  decision: Schema.optionalKey(
+    described(
+      Schema.Literals(["allow", "ask", "deny"]),
+      "add: run it, ask first, or refuse it. Deny beats ask, ask beats allow.",
+    ),
+  ),
+  id: Schema.optionalKey(
+    described(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)), "remove: the rule number."),
+  ),
+});
+
 export const ExecutorArgs = Schema.Struct({
   tool: described(
     Schema.Literals(["skills", "search", "describe", "call", "execute"]),
@@ -374,6 +396,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "unsafe",
   },
   {
+    name: "policy_manage",
+    description:
+      "Set how much rope an executor action gets: run it, ask first, or refuse. Use ask or deny for sending, deleting, publishing and payments. A deny beats an allow.",
+    parameters: parametersOf(PolicyArgs),
+    replay: "unsafe",
+  },
+  {
     name: "executor",
     description:
       "Reach the user's connected apps and accounts (mail, calendar, code hosts, and more) through Executor.",
@@ -456,6 +485,10 @@ A skill is a procedure you can reuse. When you work out a repeatable multi-step 
 # Standing intents
 
 An intent waits for the user to mention something, such as "when I mention the launch, remind me about rollback". It is not a timer: use a schedule for a clock time. Keep triggers specific, and tell the user what you armed.
+
+# Policies
+
+policy_manage decides what an executor action gets: run it, ask first, or refuse. A deny always wins. Use ask or deny for sending, deleting, publishing, and payments, and tell the user which rule you added.
 
 # Artifacts
 

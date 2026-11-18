@@ -16,8 +16,10 @@ test("an approval is shown once and answered once", async () => {
   await go(
     Effect.gen(function* () {
       const approvals = yield* Approvals;
-      const a = yield* approvals.add("exec_1", "Send mail?");
+      const a = yield* approvals.add("exec_1", "Send mail?", "gmail.send");
       const b = yield* approvals.add("exec_2", "Delete?");
+      expect(a.match).toBe("gmail.send");
+      expect(b.match).toBe("");
       expect((yield* approvals.unposted).map((x) => x.id)).toEqual([a.id, b.id]);
       yield* approvals.markPosted(a.id);
       expect((yield* approvals.unposted).map((x) => x.id)).toEqual([b.id]);
