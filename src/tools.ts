@@ -177,6 +177,46 @@ export const SkillArgs = Schema.Struct({
   ),
 });
 
+export const IntentArgs = Schema.Struct({
+  action: described(
+    Schema.Literals(["create", "list", "cancel"]),
+    "create: wait for a future message. list: show what is armed. cancel: stop one.",
+  ),
+  description: Schema.optionalKey(
+    described(
+      Schema.String,
+      "create: what to do when the trigger appears, as an instruction to yourself.",
+    ),
+  ),
+  triggers: Schema.optionalKey(
+    described(
+      Schema.Array(Schema.String),
+      "create: words or phrases that must all appear in a later message. Use specific terms.",
+    ),
+  ),
+  days: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      "create: days until it expires. Default 90.",
+    ),
+  ),
+  max_fires: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      "create: how many times it may fire. Default 3.",
+    ),
+  ),
+  cooldown_hours: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      "create: hours between fires. Default 24; 0 means no wait.",
+    ),
+  ),
+  id: Schema.optionalKey(
+    described(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)), "cancel: the intent number."),
+  ),
+});
+
 export const ExecutorArgs = Schema.Struct({
   tool: described(
     Schema.Literals(["skills", "search", "describe", "call", "execute"]),
@@ -310,6 +350,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "unsafe",
   },
   {
+    name: "intent_manage",
+    description:
+      "Remember what to do when a future message mentions something. A standing intent waits for its trigger words; it is not a timer. Use schedule_create for a clock time.",
+    parameters: parametersOf(IntentArgs),
+    replay: "unsafe",
+  },
+  {
     name: "executor",
     description:
       "Reach the user's connected apps and accounts (mail, calendar, code hosts, and more) through Executor.",
@@ -384,6 +431,10 @@ profile_manage is the one thing every channel shares: who the user is and the ru
 # Skills
 
 A skill is a procedure you can reuse. When you work out a repeatable multi-step task, save it with skill_manage: when to use it, the inputs, the steps that matter, the output, and what needs approval. Save the method, not the transcript. Read a skill before a task that matches its description. When a schedule says to read a skill, do that first.
+
+# Standing intents
+
+An intent waits for the user to mention something, such as "when I mention the launch, remind me about rollback". It is not a timer: use a schedule for a clock time. Keep triggers specific, and tell the user what you armed.
 
 # Artifacts
 

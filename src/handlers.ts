@@ -3,6 +3,12 @@ import { Context, DateTime, Effect, Layer, Schema } from "effect";
 import { Settings } from "./config.ts";
 import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
+import {
+  Intents,
+  MAX_INTENT_DESCRIPTION,
+  MAX_INTENT_TRIGGERS,
+  MAX_TRIGGER_LENGTH,
+} from "./intents.ts";
 import { Schedules, type Schedule } from "./schedules.ts";
 import type { Spec } from "./schedule.ts";
 import { MAX_SKILL_BODY, MAX_SKILL_DESCRIPTION, SKILL_NAME, Skills } from "./skills.ts";
@@ -27,6 +33,7 @@ import {
   ArtifactRestoreArgs,
   ArtifactPublishArgs,
   DateArgs,
+  IntentArgs,
   ProfileArgs,
   ScheduleCancelArgs,
   ScheduleCreateArgs,
@@ -46,6 +53,7 @@ export class Handlers extends Context.Service<
     Effect.gen(function* () {
       const memory = yield* Memory;
       const schedules = yield* Schedules;
+      const intents = yield* Intents;
       const skills = yield* Skills;
       const web = yield* Web;
       const outbox = yield* Outbox;
@@ -316,6 +324,66 @@ export class Handlers extends Context.Service<
                   return (yield* skills.remove(a.name))
                     ? `Deleted skill "${a.name}".`
                     : `No skill "${a.name}".`;
+                }
+              }
+            });
+          case "intent_manage":
+            return Effect.gen(function* () {
+              const a = yield* decode(IntentArgs, args);
+              switch (a.action) {
+                case "create": {
+                  const description = a.description?.trim() ?? "";
+                  const triggers = (a.triggers ?? [])
+                    .map((trigger) => trigger.trim())
+                    .filter((trigger) => trigger !== "");
+                  if (description === "") {
+                    return yield* new ToolError({ reason: "create needs a description" });
+                  }
+                  if (triggers.length === 0) {
+                    return yield* new ToolError({ reason: "create needs at least one trigger" });
+                  }
+                  if (description.length > MAX_INTENT_DESCRIPTION) {
+                    return yield* new ToolError({
+                      reason: `description is longer than ${MAX_INTENT_DESCRIPTION} characters`,
+                    });
+                  }
+                  if (triggers.length > MAX_INTENT_TRIGGERS) {
+                    return yield* new ToolError({
+                      reason: `keep triggers to ${MAX_INTENT_TRIGGERS} or fewer`,
+                    });
+                  }
+                  const long = triggers.find((trigger) => trigger.length > MAX_TRIGGER_LENGTH);
+                  if (long !== undefined) {
+                    return yield* new ToolError({
+                      reason: `trigger "${long}" is longer than ${MAX_TRIGGER_LENGTH} characters`,
+                    });
+                  }
+                  const days = a.days ?? 90;
+                  const made = yield* intents.create(description, triggers, {
+                    expiresAt: Date.now() + days * 86_400_000,
+                    cooldownMs: (a.cooldown_hours ?? 24) * 3_600_000,
+                    maxFires: a.max_fires ?? 3,
+                  });
+                  return `Standing intent #${made.id} armed for: ${triggers.join(", ")}.`;
+                }
+                case "list": {
+                  const all = yield* intents.list;
+                  return all.length === 0
+                    ? "No standing intents."
+                    : all
+                        .map(
+                          (intent) =>
+                            `#${intent.id} ${intent.state} [${intent.triggers.join(", ")}] ${intent.description} (fires ${intent.fireCount}/${intent.maxFires}, expires ${formatDate(new Date(intent.expires), timezone)})`,
+                        )
+                        .join("\n");
+                }
+                case "cancel": {
+                  if (a.id === undefined) {
+                    return yield* new ToolError({ reason: "cancel needs an id" });
+                  }
+                  return (yield* intents.cancel(a.id))
+                    ? `Cancelled #${a.id}.`
+                    : `No armed intent #${a.id}.`;
                 }
               }
             });

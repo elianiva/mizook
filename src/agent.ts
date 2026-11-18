@@ -8,6 +8,7 @@ import { DurableError, type StateError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
 import { Host, type Profile } from "./host.ts";
+import { Intents, type Intent } from "./intents.ts";
 import { Models } from "./models.ts";
 import { Skills } from "./skills.ts";
 import { agentTools } from "./tools.ts";
@@ -24,6 +25,8 @@ export interface Incoming {
   readonly text: string;
   /** The id of the message, so a retry finds the same submission. */
   readonly requestId: string;
+  /** What started the turn. Only a user message matches standing intents. */
+  readonly source?: "user" | "scheduled" | "webhook" | "approval" | "test";
 }
 
 const textOf = (message: AssistantMessage | ToolResultMessage): string =>
@@ -52,6 +55,16 @@ const skillIndexText = (
     ...(skills.length > shown.length ? [`... and ${skills.length - shown.length} more`] : []),
   ].join("\n");
 };
+
+/** The intents this message woke, as context the user never typed. */
+const intentText = (intents: ReadonlyArray<Intent>): string =>
+  intents.length === 0
+    ? ""
+    : [
+        "Standing intent the user set for a moment like this:",
+        ...intents.map((intent) => `- ${intent.description}`),
+        "If one applies now, act on it in your reply.",
+      ].join("\n");
 
 /** The agent: one turn per user message, on pi-durable, with the memory as its only continuity. */
 export class Agent extends Context.Service<
@@ -87,6 +100,7 @@ export class Agent extends Context.Service<
       const outbox = yield* Outbox;
       const host = yield* Host;
       const skills = yield* Skills;
+      const intents = yield* Intents;
       const { main } = yield* Models;
       const { harness, context, turnInputs } = durable;
 
@@ -105,9 +119,8 @@ export class Agent extends Context.Service<
         return conversation;
       });
 
-      const now = Effect.gen(function* () {
-        return formatDate(new Date(DateTime.toEpochMillis(yield* DateTime.now)), settings.timezone);
-      });
+      const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
+      const now = Effect.map(nowDate, (date) => formatDate(date, settings.timezone));
 
       const entriesOf = (conversation: Conversation) =>
         call("entries", async () => {
@@ -182,10 +195,15 @@ export class Agent extends Context.Service<
           return "folded" as const;
         }
 
+        const woke =
+          (incoming.source ?? "user") === "user"
+            ? yield* intents.match(incoming.text, yield* nowDate)
+            : [];
         const turnContext = [
           `Now: ${yield* now}`,
           profileText(yield* host.profile),
           skillIndexText(yield* skills.index),
+          intentText(woke),
         ]
           .filter((part) => part !== "")
           .join("\n\n");

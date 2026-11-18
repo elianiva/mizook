@@ -343,6 +343,7 @@ export class Bot extends Context.Service<
                 threadId,
                 text,
                 requestId: `sched:${s.id}:${s.nextAt}`,
+                source: "scheduled",
               });
               if (started === "started") yield* deliver(threadId, threadId);
             }),
@@ -351,7 +352,7 @@ export class Bot extends Context.Service<
       });
 
       /** Start a turn from something that is not a Telegram message. Silent when nothing was said here yet. */
-      const fire = (text: string, requestId: string) =>
+      const fire = (text: string, requestId: string, source: "webhook" | "approval") =>
         Effect.gen(function* () {
           const threadId = yield* state.meta("thread");
           if (!threadId) return false;
@@ -359,7 +360,13 @@ export class Bot extends Context.Service<
           yield* Effect.scoped(
             Effect.gen(function* () {
               yield* hold(threadId);
-              const started = yield* agent.begin({ chatId: threadId, threadId, text, requestId });
+              const started = yield* agent.begin({
+                chatId: threadId,
+                threadId,
+                text,
+                requestId,
+                source,
+              });
               if (started === "started") yield* deliver(threadId, threadId);
             }),
           );
@@ -367,7 +374,7 @@ export class Bot extends Context.Service<
         });
 
       const hook = (body: string) =>
-        fire(`[webhook] ${clipToolOutput(body, 8_000)}`, `hook:${crypto.randomUUID()}`);
+        fire(`[webhook] ${clipToolOutput(body, 8_000)}`, `hook:${crypto.randomUUID()}`, "webhook");
 
       const nextWake = Effect.gen(function* () {
         const pending =
@@ -393,6 +400,7 @@ export class Bot extends Context.Service<
                 ? `[approval] The user approved. Executor's result:\n${clipToolOutput(result)}`
                 : `[approval] The user denied it. Do not try again or work around it. Executor said:\n${clipToolOutput(result, 2_000)}`,
               `approval:${id}`,
+              "approval",
             );
           }).pipe(
             Effect.asVoid,

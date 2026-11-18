@@ -4,6 +4,7 @@ import { COMMANDS } from "./command-list.ts";
 import { Settings } from "./config.ts";
 import { formatDate } from "./format.ts";
 import { Host } from "./host.ts";
+import { Intents } from "./intents.ts";
 import { Schedules } from "./schedules.ts";
 import { Skills } from "./skills.ts";
 import { State } from "./state.ts";
@@ -30,6 +31,7 @@ export class Commands extends Context.Service<
       const settings = yield* Settings;
       const state = yield* State;
       const schedules = yield* Schedules;
+      const intents = yield* Intents;
       const skills = yield* Skills;
       const usage = yield* Usage;
       const host = yield* Host;
@@ -140,6 +142,25 @@ export class Commands extends Context.Service<
                 : `No skill "${name}".`;
             }
             return "Use /skills, /skills show <name>, or /skills delete <name>.";
+          }
+          case "intents": {
+            const [verb = "", rawId = ""] = arg.split(/\s+/);
+            if (verb === "cancel") {
+              const id = Number(rawId);
+              if (!Number.isInteger(id) || id < 1) return "Use /intents cancel <id>.";
+              return (yield* intents.cancel(id))
+                ? `Cancelled intent #${id}.`
+                : `No armed intent #${id}.`;
+            }
+            const all = yield* intents.list;
+            return all.length === 0
+              ? "No standing intents."
+              : all
+                  .map(
+                    (intent) =>
+                      `#${intent.id} ${intent.state} [${intent.triggers.join(", ")}] ${intent.description} (fires ${intent.fireCount}/${intent.maxFires}, expires ${formatDate(new Date(intent.expires), settings.timezone)})`,
+                  )
+                  .join("\n");
           }
           case "schedules": {
             const all = yield* schedules.list;

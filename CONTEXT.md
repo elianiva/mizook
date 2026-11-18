@@ -15,6 +15,9 @@ Hub, not in a chat's memory: identity, not history.
 **Skill** — a reusable procedure, saved by name. The index goes into a turn; the body is read only
 when a task needs it. A schedule can name one to read when it fires.
 
+**Intent** — an instruction that waits for a later message to mention its trigger words. It is
+prospective memory, not a timer: a schedule handles clock time.
+
 **Node** — `node(l, i)` covers the 2^l messages from `i·2^l`. A one-line summary of them, at most
 512 bytes, built once. Named `id+n`.
 
