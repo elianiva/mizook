@@ -5,9 +5,8 @@ cd "$(dirname "$0")/.."
 echo "==> pnpm"
 want="$(node -p "require('./package.json').packageManager")"
 if [ "$(pnpm -v 2>/dev/null || true)" != "${want#pnpm@}" ]; then
-  command -v corepack >/dev/null 2>&1 || npm install -g --force corepack
-  corepack enable
-  corepack prepare "$want" --activate
+  # Node 26 no longer ships corepack; install the pinned pnpm directly.
+  npm install -g --force "$want"
 fi
 
 echo "==> pnpm install"
