@@ -26,6 +26,7 @@ import {
   ArtifactRestoreArgs,
   ArtifactPublishArgs,
   DateArgs,
+  ProfileArgs,
   ScheduleCancelArgs,
   ScheduleCreateArgs,
   WebFetchArgs,
@@ -114,6 +115,37 @@ export class Handlers extends Context.Service<
             return Effect.flatMap(decode(AskChannelArgs, args), (a) =>
               host.ask(a.channel, a.question),
             );
+          case "profile_manage":
+            return Effect.gen(function* () {
+              const a = yield* decode(ProfileArgs, args);
+              if (a.action === "get") {
+                const profile = yield* host.profile;
+                if (profile.about.trim() === "" && profile.rules.length === 0) {
+                  return "No profile yet.";
+                }
+                return [
+                  profile.about.trim() === "" ? "" : `About: ${profile.about.trim()}`,
+                  profile.rules.length === 0
+                    ? ""
+                    : `Rules:\n${profile.rules.map((rule) => `- ${rule}`).join("\n")}`,
+                ]
+                  .filter((part) => part !== "")
+                  .join("\n\n");
+              }
+              const about = a.about?.trim();
+              const rules = a.rules?.map((rule) => rule.trim()).filter((rule) => rule !== "");
+              if (about === undefined && rules === undefined) {
+                return yield* new ToolError({ reason: "update needs about, rules, or both" });
+              }
+              if (about !== undefined && about.length > 4_000) {
+                return yield* new ToolError({ reason: "about is longer than 4,000 characters" });
+              }
+              if (rules !== undefined && rules.length > 20) {
+                return yield* new ToolError({ reason: "keep rules to 20 entries or fewer" });
+              }
+              const saved = yield* host.updateProfile(about, rules);
+              return `Profile saved: ${saved.about === "" ? "no about" : "about"}, ${saved.rules.length} rule(s).`;
+            });
           case "executor":
             return Effect.gen(function* () {
               const a = yield* decode(ExecutorArgs, args);

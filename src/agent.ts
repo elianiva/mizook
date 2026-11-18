@@ -7,6 +7,7 @@ import { Durable } from "./durable.ts";
 import { DurableError, type StateError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
+import { Host, type Profile } from "./host.ts";
 import { Models } from "./models.ts";
 import { agentTools } from "./tools.ts";
 import { Outbox } from "./outbox.ts";
@@ -26,6 +27,17 @@ export interface Incoming {
 
 const textOf = (message: AssistantMessage | ToolResultMessage): string =>
   message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+
+/** The shared profile, as one block of turn context. Empty when the user has not filled it. */
+const profileText = (profile: Profile): string =>
+  [
+    profile.about.trim() === "" ? "" : `About the user: ${profile.about.trim()}`,
+    profile.rules.length === 0
+      ? ""
+      : `Rules from the user:\n${profile.rules.map((rule) => `- ${rule}`).join("\n")}`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
 
 /** The agent: one turn per user message, on pi-durable, with the memory as its only continuity. */
 export class Agent extends Context.Service<
@@ -59,6 +71,7 @@ export class Agent extends Context.Service<
       const handlers = yield* Handlers;
       const usage = yield* Usage;
       const outbox = yield* Outbox;
+      const host = yield* Host;
       const { main } = yield* Models;
       const { harness, context, turnInputs } = durable;
 
@@ -154,7 +167,10 @@ export class Agent extends Context.Service<
           return "folded" as const;
         }
 
-        const turn = yield* memory.beginTurn(incoming.text, { context: `Now: ${yield* now}` });
+        const turnContext = [`Now: ${yield* now}`, profileText(yield* host.profile)]
+          .filter((part) => part !== "")
+          .join("\n\n");
+        const turn = yield* memory.beginTurn(incoming.text, { context: turnContext });
         const conversation = yield* call("createConversation", () =>
           harness.createConversation(
             {
@@ -253,13 +269,16 @@ export class Agent extends Context.Service<
       const askTools = agentTools.filter((tool) => tool.name === "zoom" || tool.name === "date");
       const ask = Effect.fn("Agent.ask")(function* (question: string) {
         const view = yield* memory.renderView;
+        const turnContext = [`Now: ${yield* now}`, profileText(yield* host.profile)]
+          .filter((part) => part !== "")
+          .join("\n\n");
         const messages: Message[] = [
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: `${view.text}\n\nNow: ${yield* now}\n\nAnother channel of the same user asks you a question. Answer from your memory only, and say so if you do not know.\n\n${question}`,
+                text: `${view.text}\n\n${turnContext}\n\nAnother channel of the same user asks you a question. Answer from your memory only, and say so if you do not know.\n\n${question}`,
               },
             ],
             timestamp: Date.now(),

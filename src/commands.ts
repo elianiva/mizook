@@ -126,6 +126,24 @@ export class Commands extends Context.Service<
                   )
                   .join("\n");
           }
+          case "profile": {
+            if (arg === "reset") {
+              yield* host.updateProfile("", []);
+              return "Profile cleared.";
+            }
+            const profile = yield* host.profile;
+            if (profile.about.trim() === "" && profile.rules.length === 0) {
+              return "No profile yet. Tell the agent about yourself and it will remember across channels.";
+            }
+            return [
+              profile.about.trim() === "" ? "" : `About: ${profile.about.trim()}`,
+              profile.rules.length === 0
+                ? ""
+                : `Rules:\n${profile.rules.map((rule) => `- ${rule}`).join("\n")}`,
+            ]
+              .filter((part) => part !== "")
+              .join("\n\n");
+          }
           case "export":
             return `Your export of this channel (works for one hour): ${yield* host.exportNow}`;
           case "help":

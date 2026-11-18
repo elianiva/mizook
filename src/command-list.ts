@@ -11,6 +11,7 @@ export const COMMANDS = [
   { command: "budget", description: "Show or set the daily budget" },
   { command: "name", description: "Name this channel" },
   { command: "channels", description: "List the channels" },
+  { command: "profile", description: "Show or reset the profile every channel shares" },
   { command: "schedules", description: "List this channel's schedules" },
   { command: "export", description: "Export this channel as a file" },
   { command: "help", description: "List the commands" },

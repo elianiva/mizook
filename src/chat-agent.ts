@@ -4,9 +4,8 @@ import { Agent } from "./agent.ts";
 import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
 import type { Env } from "./env.ts";
-import { ToolError } from "./errors.ts";
-import type { ChannelInfo } from "./host.ts";
-import { Host } from "./host.ts";
+import { StateError, ToolError } from "./errors.ts";
+import { EMPTY_PROFILE, Host, type ChannelInfo, type Profile } from "./host.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
@@ -22,6 +21,8 @@ type Hosted = Context.Service.Shape<typeof Host>;
 interface HubApi {
   register(doName: string, threadId: string, name: string | undefined): Promise<void>;
   list(): Promise<ChannelInfo[]>;
+  profile(): Promise<Profile>;
+  setProfile(about: string | undefined, rules: string[] | undefined): Promise<Profile>;
 }
 
 interface ChannelApi {
@@ -82,6 +83,14 @@ export class ChatAgent extends DurableObject<Env> {
       }),
       register: (threadId, name) => Effect.promise(() => hub().register(doName, threadId, name)),
       channels: Effect.promise(() => hub().list()),
+      profile: Effect.tryPromise({ try: () => hub().profile(), catch: () => undefined }).pipe(
+        Effect.orElseSucceed(() => EMPTY_PROFILE),
+      ),
+      updateProfile: (about, rules) =>
+        Effect.tryPromise({
+          try: () => hub().setProfile(about, rules === undefined ? undefined : [...rules]),
+          catch: (cause) => new StateError({ operation: "profile", cause }),
+        }),
       ask: (channel, question) =>
         Effect.gen(function* () {
           const all = yield* Effect.promise(() => hub().list());

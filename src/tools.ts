@@ -130,6 +130,25 @@ export const AskChannelArgs = Schema.Struct({
   question: described(Schema.String, "What to ask. It answers from its own memory, read-only."),
 });
 
+export const ProfileArgs = Schema.Struct({
+  action: described(
+    Schema.Literals(["get", "update"]),
+    "get: read the profile. update: change the fields you give and keep the rest.",
+  ),
+  about: Schema.optionalKey(
+    described(
+      Schema.String,
+      "update: who the user is, in a few lines. Name, work, language, stable preferences. Empty clears it.",
+    ),
+  ),
+  rules: Schema.optionalKey(
+    described(
+      Schema.Array(Schema.String),
+      "update: standing instructions such as 'ask before sending email' or 'use metric units'. Empty clears them.",
+    ),
+  ),
+});
+
 export const ExecutorArgs = Schema.Struct({
   tool: described(
     Schema.Literals(["skills", "search", "describe", "call", "execute"]),
@@ -249,6 +268,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "safe",
   },
   {
+    name: "profile_manage",
+    description:
+      "Read or change what every channel knows about the user. Use it when you learn a stable fact about them, or a rule they want followed everywhere. Do not put conversation details here.",
+    parameters: parametersOf(ProfileArgs),
+    replay: "unsafe",
+  },
+  {
     name: "executor",
     description:
       "Reach the user's connected apps and accounts (mail, calendar, code hosts, and more) through Executor.",
@@ -315,6 +341,10 @@ answer arrives as a message starting [approval]. Never run the call again to get
 webhook_link gives a URL that starts a turn here when called; give it to services that should notify the user.
 
 ask_channel reads another channel's memory. Use it only when the user's question is about that channel.
+
+# The user
+
+profile_manage is the one thing every channel shares: who the user is and the rules they want followed. Save a stable preference or rule there when you learn it, not conversation details. Keep the profile short.
 
 # Artifacts
 

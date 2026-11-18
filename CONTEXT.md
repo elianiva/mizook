@@ -9,6 +9,9 @@ memory.
 (a tool call), `echo` (its result), `note` (imported memory). Thoughts are never logged. A text too
 long for one message is logged as several in a row.
 
+**Profile** — the short "about you" and the standing rules every channel shares. It lives in the
+Hub, not in a chat's memory: identity, not history.
+
 **Node** — `node(l, i)` covers the 2^l messages from `i·2^l`. A one-line summary of them, at most
 512 bytes, built once. Named `id+n`.
 
