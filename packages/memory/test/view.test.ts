@@ -24,6 +24,18 @@ const starts = (states: States): number[] => {
 const shape = (view: View) =>
   view.lines.map(({ l, i }) => [first(l, i), last(l, i) - first(l, i) + 1] as const);
 
+/** Index of the first line that differs from `previous`, if any. */
+const changedLine = (
+  lines: ReadonlyArray<{ l: number; i: number }>,
+  previous: ReadonlyArray<readonly [number, number]>,
+): number | undefined => {
+  for (let k = 0; k < previous.length; k++) {
+    const line = lines[k];
+    if (!line || line.l !== previous[k]![0] || line.i !== previous[k]![1]) return k;
+  }
+  return undefined;
+};
+
 test("with the push list's length as budget, the view merges exactly as push does", () => {
   const built = new BuiltIndex();
   // Every node is built, so only the merge order is under test.
@@ -102,16 +114,17 @@ test("over 5,000 messages the view stays between lo and hi and only grows at its
   for (let t = 0; t < 5_000; t++) {
     view.append(0, t);
     const merged = view.shrink(t + 1);
-    const now = view.lines.map(({ l, i }) => [l, i] as const);
+    const bytes = view.bytes();
     if (merged.length > 0) {
       batches++;
-      expect(view.bytes(), `t=${t}`).toBeLessThanOrEqual(64_000);
+      expect(bytes, `t=${t}`).toBeLessThanOrEqual(64_000);
     } else {
-      // No batch: every earlier line is unchanged, so the prompt cache holds.
-      expect(now.slice(0, previous.length), `t=${t}`).toEqual(previous);
+      // No batch: every earlier line is unchanged, so the prompt cache holds. A deep equal here
+      // costs seconds over 5,000 steps of a few hundred lines, so compare the values directly.
+      expect(changedLine(view.lines, previous), `t=${t}`).toBeUndefined();
     }
-    expect(view.bytes()).toBeLessThanOrEqual(128_000 + 300);
-    previous = now;
+    expect(bytes).toBeLessThanOrEqual(128_000 + 300);
+    previous = view.lines.map(({ l, i }) => [l, i] as const);
   }
   expect(batches).toBeGreaterThan(3);
   // The view covers the whole chat once, in order.
