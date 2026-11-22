@@ -3,28 +3,25 @@ import { ToolError } from "./errors.ts";
 import { State } from "./state.ts";
 import type { StateError } from "./errors.ts";
 
-/** Puts one bubble in front of the user. Set once by the bot, which owns the Telegram connection. */
 export type Sink = (threadId: string, text: string) => Effect.Effect<void>;
 
-/** How long a person takes to type the next bubble: a beat, longer for a longer one. */
-export const typingPause = (text: string): Duration.Duration =>
-  Duration.millis(Math.min(1_500, 300 + 25 * text.length));
+const BASE_TYPING_PAUSE_MS = 300;
+const TYPING_MS_PER_CHARACTER = 25;
+const MAX_TYPING_PAUSE_MS = 1_500;
 
-/**
- * How the agent talks: `send_to_user` puts bubbles in the chat while the turn goes on, like a person
- * texting, so the final text of a turn is not what the user reads. Counts what a turn sent, so a
- * turn that sent nothing still gets its final text posted.
- */
+export const typingPause = (text: string): Duration.Duration =>
+  Duration.millis(
+    Math.min(MAX_TYPING_PAUSE_MS, BASE_TYPING_PAUSE_MS + TYPING_MS_PER_CHARACTER * text.length),
+  );
+
 export class Outbox extends Context.Service<
   Outbox,
   {
     attach(sink: Sink): Effect.Effect<void>;
-    /** Send the bubbles in order, with a typing pause between them. */
     send(
       threadId: string,
       texts: ReadonlyArray<string>,
     ): Effect.Effect<void, ToolError | StateError>;
-    /** How many bubbles the turn of this chat sent; resets the count. */
     take(threadId: string): Effect.Effect<number, StateError>;
   }
 >()("mizook/Outbox") {

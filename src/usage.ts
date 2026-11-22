@@ -4,7 +4,6 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
 
 export interface Spend {
-  /** Dollars, from the catalog prices pi-ai reports. */
   readonly last24h: number;
   readonly last7d: number;
   readonly total: number;
@@ -13,9 +12,10 @@ export interface Spend {
 const Total = Schema.Array(Schema.Struct({ total: Schema.NullOr(Schema.Finite) }));
 const decodeTotal = Schema.decodeUnknownEffect(Total);
 
-const HOUR = 3_600_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
 
-/** What the model calls cost: every turn and every compaction writes a row. */
 export class Usage extends Context.Service<
   Usage,
   {
@@ -24,8 +24,7 @@ export class Usage extends Context.Service<
       model: string,
       usage: ModelUsage,
     ): Effect.Effect<void, StateError>;
-    /** Dollars spent since `since`, epoch milliseconds. */
-    spentSince(since: number): Effect.Effect<number, StateError>;
+    spentSince(sinceEpochMs: number): Effect.Effect<number, StateError>;
     readonly spend: Effect.Effect<Spend, StateError>;
   }
 >()("mizook/Usage") {
@@ -46,9 +45,9 @@ export class Usage extends Context.Service<
                cost REAL NOT NULL)`,
           ),
         );
-        const spentSince = (since: number) =>
+        const spentDollarsSince = (sinceEpochMs: number) =>
           run("spent", () =>
-            sql.all(`SELECT SUM(cost) AS total FROM app_usage WHERE at >= ?`, since),
+            sql.all(`SELECT SUM(cost) AS total FROM app_usage WHERE at >= ?`, sinceEpochMs),
           ).pipe(
             Effect.flatMap(decodeTotal),
             Effect.mapError((cause) =>
@@ -71,13 +70,13 @@ export class Usage extends Context.Service<
                 usage.cost.total,
               ),
             ).pipe(Effect.asVoid),
-          spentSince,
+          spentSince: spentDollarsSince,
           spend: Effect.gen(function* () {
             const now = Date.now();
             return {
-              last24h: yield* spentSince(now - 24 * HOUR),
-              last7d: yield* spentSince(now - 168 * HOUR),
-              total: yield* spentSince(0),
+              last24h: yield* spentDollarsSince(now - DAY_MS),
+              last7d: yield* spentDollarsSince(now - WEEK_MS),
+              total: yield* spentDollarsSince(0),
             };
           }),
         });

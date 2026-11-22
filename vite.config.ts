@@ -1,6 +1,6 @@
 import { defineConfig } from "vite-plus";
 
-const ignored = [
+const ignoredPaths = [
   ".git/**",
   ".alchemy/**",
   ".wrangler/**",
@@ -11,10 +11,9 @@ const ignored = [
 ];
 
 export default defineConfig({
-  fmt: { ignorePatterns: [...ignored, "**/*.d.ts"] },
+  fmt: { ignorePatterns: [...ignoredPaths, "**/*.d.ts"] },
   lint: {
-    ignorePatterns: ignored,
-    // Oxlint's type-aware rules and type checks run on tsrs (tsrs-lint), which Vite+ ships.
+    ignorePatterns: ignoredPaths,
     options: { typeAware: true, typeCheck: true },
     plugins: ["typescript", "unicorn", "oxc"],
     rules: {

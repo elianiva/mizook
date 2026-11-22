@@ -11,7 +11,6 @@ export interface SearchResult {
   readonly snippet: string;
 }
 
-/** A web search backend. Add one by writing a function of this shape and listing it in `providers`. */
 export interface SearchProvider {
   readonly name: string;
   search(
@@ -91,27 +90,29 @@ const exa: SearchProvider = {
 
 export const providers: Record<string, SearchProvider> = { parallel, exa };
 
-/** Which backend answers: the first of the configured list with a key that does not fail. */
 export const searchWith = (
-  order: ReadonlyArray<{ readonly provider: SearchProvider; readonly key: string }>,
+  providersByPreference: ReadonlyArray<{ readonly provider: SearchProvider; readonly key: string }>,
   query: string,
   limit: number,
 ): Effect.Effect<ReadonlyArray<SearchResult>, WebError, HttpClient.HttpClient> =>
-  order.reduceRight<Effect.Effect<ReadonlyArray<SearchResult>, WebError, HttpClient.HttpClient>>(
-    (next, { provider, key }) =>
+  providersByPreference.reduceRight<
+    Effect.Effect<ReadonlyArray<SearchResult>, WebError, HttpClient.HttpClient>
+  >(
+    (tryRemainingProviders, { provider, key }) =>
       provider
         .search(query, limit, key)
         .pipe(
           Effect.catch((error) =>
             Effect.logWarning(`search provider ${provider.name} failed: ${error.message}`).pipe(
-              Effect.andThen(next),
+              Effect.andThen(tryRemainingProviders),
             ),
           ),
         ),
     Effect.fail(new WebError({ url: "search", reason: "no search provider answered" })),
   );
 
-/** The agent's window on the web: search through the configured providers, and fetch a page. */
+const DEFAULT_SEARCH_RESULT_COUNT = 6;
+
 export class Web extends Context.Service<
   Web,
   {
@@ -124,14 +125,14 @@ export class Web extends Context.Service<
     Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient;
       const settings = yield* Settings;
-      const order = settings.searchProviders.flatMap((name) => {
+      const configuredProvidersWithKeys = settings.searchProviders.flatMap((name) => {
         const provider = providers[name];
         const key = settings.searchKeys[name] ? Redacted.value(settings.searchKeys[name]) : "";
         return provider && key !== "" ? [{ provider, key }] : [];
       });
       return Web.of({
-        search: (query, limit = 6) =>
-          searchWith(order, query, limit).pipe(
+        search: (query, limit = DEFAULT_SEARCH_RESULT_COUNT) =>
+          searchWith(configuredProvidersWithKeys, query, limit).pipe(
             Effect.provideService(HttpClient.HttpClient, http),
             Effect.map((results) =>
               results.length === 0

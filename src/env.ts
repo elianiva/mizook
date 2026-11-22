@@ -2,7 +2,6 @@ import type { AgentObject } from "./agent-object.ts";
 import type { AutomationsObject } from "./automations-object.ts";
 import type { Hub } from "./hub.ts";
 
-/** The Worker's bindings: what `alchemy.run.ts` declares. */
 export interface Env {
   AgentObject: DurableObjectNamespace<AgentObject>;
   Hub: DurableObjectNamespace<Hub>;
@@ -23,14 +22,10 @@ export interface Env {
   PUBLIC_URL?: string;
   BUDGET_DAILY?: string;
   Files: R2Bucket;
-  /** Workers AI: voice transcription, image descriptions and document conversion. */
   AI?: Ai;
-  /** Browser Rendering: pages that need JavaScript, and screenshots. */
   BROWSER?: BrowserRun;
-  /** `<team>.cloudflareaccess.com`. The dashboard stays shut while this or the audience is empty. */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
-  /** The built dashboard, served only after the Access check. */
   ASSETS?: Fetcher;
   PARALLEL_API_KEY?: string;
   EXA_API_KEY?: string;

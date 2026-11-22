@@ -150,7 +150,6 @@ export const routeHref = (route: AppRoute): string =>
     NotFound: () => overviewRouter({ channel: Option.none() }),
   });
 
-/** The same page on another channel. Anything channel-specific, such as a log page, starts over. */
 export const routeOnChannel = (route: AppRoute, channel: string): AppRoute => {
   const selected = Option.some(channel);
   return AppRoute.match<AppRoute>(route, {
@@ -177,10 +176,11 @@ export const routeOnChannel = (route: AppRoute, channel: string): AppRoute => {
 
 export const USAGE_DAYS = [7, 30, 90] as const;
 
-/** The range a usage route asks for: one of the offered ones, 30 days by default. */
+const DEFAULT_USAGE_DAYS = 30;
+
 export const daysOf = (days: Option.Option<string>): number => {
   const asked = Number(Option.getOrElse(days, () => ""));
-  return USAGE_DAYS.find((allowed) => allowed === asked) ?? 30;
+  return USAGE_DAYS.find((offered) => offered === asked) ?? DEFAULT_USAGE_DAYS;
 };
 
 export const textOf = (value: Option.Option<string>): string => Option.getOrElse(value, () => "");

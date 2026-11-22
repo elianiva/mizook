@@ -11,13 +11,31 @@ export { AgentObject } from "./agent-object.ts";
 export { Hub } from "./hub.ts";
 export { AutomationsObject } from "./automations-object.ts";
 
-/** Constant-time comparison of two secrets of any length. */
-const sameSecret = async (a: string, b: string): Promise<boolean> => {
+const secretsEqualInConstantTime = async (a: string, b: string): Promise<boolean> => {
   const encoder = new TextEncoder();
   const [x, y] = await Promise.all(
     [a, b].map((s) => crypto.subtle.digest("SHA-256", encoder.encode(s))),
   );
   return crypto.subtle.timingSafeEqual(x!, y!);
+};
+
+const PUBLISHED_ARTIFACT_PATH = /^\/a\/([\w-]{16,64})(?:\/.*)?$/;
+const ARTIFACT_DATA_PATH = /^\/d\/([\w-]{16,64})(?:\/([^/]*))?$/;
+const ONE_HOUR_EXPORT_PATH = /^\/x\/([\w-]{16,64})$/;
+const AUTOMATION_HOOK_PATH = /^\/hook\/(\d+)\/([\w-]{16,64})$/;
+const MAX_HOOK_BODY_CHARS = 100_000;
+
+const isPubliclyVisibleArtifact = <T extends R2Object>(object: T | null): object is T => {
+  if (!object || object.customMetadata?.visibility === "private") return false;
+  const expiresAtMs = Number(object.customMetadata?.expires ?? 0);
+  const hasExpiry = expiresAtMs > 0;
+  return !hasExpiry || Date.now() <= expiresAtMs;
+};
+
+const ANY_ORIGIN_READ_ONLY_CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "content-type",
 };
 
 export default {
@@ -27,35 +45,25 @@ export default {
     if (pathname === "/admin" || pathname.startsWith("/admin/")) return handleAdmin(request, env);
 
     if (pathname === "/telegram/webhook" && request.method === "POST") {
-      // Turn away anything Telegram did not send before it wakes the chat.
-      const secret = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
-      if (!(await sameSecret(secret, env.MIZOOK_WEBHOOK_SECRET))) {
+      const secretSentByTelegram = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
+      if (!(await secretsEqualInConstantTime(secretSentByTelegram, env.MIZOOK_WEBHOOK_SECRET))) {
         return new Response("Unauthorized", { status: 401 });
       }
-      // One Durable Object per agent. The Hub says which agent this update is for: the one a
-      // command or a button names, the one bound to the place, or the default.
       const body = await request.text();
       const routing = await Effect.runPromise(Effect.option(routeOf(body)));
       if (routing._tag === "None") return new Response("Bad request", { status: 400 });
       const { place, command, agentId } = routing.value;
       const hub = env.Hub.getByName("hub") as unknown as HubApi;
-      const agent = await hub.route(place, command, agentId);
-      return env.AgentObject.getByName(agent.doName).fetch(
+      const agentForUpdate = await hub.route(place, command, agentId);
+      return env.AgentObject.getByName(agentForUpdate.doName).fetch(
         new Request(request.url, { method: "POST", headers: request.headers, body }),
       );
     }
 
-    // Published artifacts: the token is the secret. The policy gives the page an opaque origin, so
-    // its scripts can run but cannot read this site's storage or call it as the user.
-    const artifact = /^\/a\/([\w-]{16,64})(?:\/.*)?$/.exec(pathname);
+    const artifact = PUBLISHED_ARTIFACT_PATH.exec(pathname);
     if (artifact && request.method === "GET") {
       const object = await env.Files.get(`a/${artifact[1]}`);
-      const expires = Number(object?.customMetadata?.expires ?? 0);
-      if (
-        !object ||
-        object.customMetadata?.visibility === "private" ||
-        (expires > 0 && Date.now() > expires)
-      ) {
+      if (!isPubliclyVisibleArtifact(object)) {
         return new Response("Not found", { status: 404 });
       }
       const type = object.httpMetadata?.contentType ?? "text/plain; charset=utf-8";
@@ -67,55 +75,43 @@ export default {
       return new Response(page ?? object.body, { headers: artifactHeaders(type) });
     }
 
-    // What the agent saved for a page, read-only. The page's own token is the key. The page
-    // runs in an opaque origin, so these answer any origin: the token, not the origin, is the secret.
-    const data = /^\/d\/([\w-]{16,64})(?:\/([^/]*))?$/.exec(pathname);
+    const data = ARTIFACT_DATA_PATH.exec(pathname);
     if (data) {
-      const cors = {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET, OPTIONS",
-        "access-control-allow-headers": "content-type",
-      };
+      const cors = ANY_ORIGIN_READ_ONLY_CORS;
       const reply = (body: BodyInit | null, status = 200, type = "application/json") =>
         new Response(body, {
           status,
           headers: { ...cors, "content-type": type, "cache-control": "no-store" },
         });
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-      const token = data[1]!;
-      const page = await env.Files.head(`a/${token}`);
-      const expires = Number(page?.customMetadata?.expires ?? 0);
-      if (
-        !page ||
-        page.customMetadata?.visibility === "private" ||
-        (expires > 0 && Date.now() > expires)
-      )
-        return reply("not found", 404, "text/plain");
+      const pageToken = data[1]!;
+      const page = await env.Files.head(`a/${pageToken}`);
+      if (!isPubliclyVisibleArtifact(page)) return reply("not found", 404, "text/plain");
       const key = data[2] === undefined ? undefined : decodeURIComponent(data[2]);
 
       if (key === undefined && request.method === "GET") {
         const out: Record<string, unknown> = {};
-        for (const object of (await env.Files.list({ prefix: dataPrefix(token), limit: MAX_KEYS }))
-          .objects) {
+        for (const object of (
+          await env.Files.list({ prefix: dataPrefix(pageToken), limit: MAX_KEYS })
+        ).objects) {
           const value = await env.Files.get(object.key);
-          if (value) out[object.key.slice(dataPrefix(token).length)] = await value.json();
+          if (value) out[object.key.slice(dataPrefix(pageToken).length)] = await value.json();
         }
         return reply(JSON.stringify(out));
       }
       if (key === undefined || !DATA_KEY.test(key)) return reply("bad key", 400, "text/plain");
       if (request.method === "GET") {
-        const value = await env.Files.get(dataKey(token, key));
+        const value = await env.Files.get(dataKey(pageToken, key));
         return value ? reply(value.body) : reply("not found", 404, "text/plain");
       }
       return reply("method not allowed", 405, "text/plain");
     }
 
-    // Exports: a one-hour link. The key is the secret, and the file goes when the hour is up.
-    const exported = /^\/x\/([\w-]{16,64})$/.exec(pathname);
+    const exported = ONE_HOUR_EXPORT_PATH.exec(pathname);
     if (exported && request.method === "GET") {
       const object = await env.Files.get(`x/${exported[1]}`);
-      const expires = Number(object?.customMetadata?.expires ?? 0);
-      if (!object || Date.now() > expires) {
+      const expiresAtMs = Number(object?.customMetadata?.expires ?? 0);
+      if (!object || Date.now() > expiresAtMs) {
         if (object) await env.Files.delete(`x/${exported[1]}`);
         return new Response("Not found", { status: 404 });
       }
@@ -128,14 +124,20 @@ export default {
       });
     }
 
-    // Webhook triggers: the token is an HMAC of the automation's number, so a link fires one only.
-    const hooked = /^\/hook\/(\d+)\/([\w-]{16,64})$/.exec(pathname);
+    const hooked = AUTOMATION_HOOK_PATH.exec(pathname);
     if (hooked && request.method === "POST") {
       const id = Number(hooked[1]);
-      if (!(await hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, `auto:${id}`, hooked[2]!))) {
+      const tokenSignedForThisAutomation = hooked[2]!;
+      if (
+        !(await hookTokenValid(
+          env.MIZOOK_WEBHOOK_SECRET,
+          `auto:${id}`,
+          tokenSignedForThisAutomation,
+        ))
+      ) {
         return new Response("Not found", { status: 404 });
       }
-      const body = (await request.text()).slice(0, 100_000);
+      const body = (await request.text()).slice(0, MAX_HOOK_BODY_CHARS);
       const automations = env.Automations.getByName("automations") as unknown as {
         hook(id: number, body: string): Promise<boolean>;
       };

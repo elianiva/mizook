@@ -52,8 +52,7 @@ const PAGES = new Set([
   "artifact",
 ]);
 
-/** An agent in the shape the dashboard lists: until its pages are per agent, each agent is one row. */
-const asChannel = (a: AgentInfo) => ({
+const agentAsChannelRow = (a: AgentInfo) => ({
   doName: a.doName,
   threadId: a.slug,
   name: a.name,
@@ -63,18 +62,12 @@ const asChannel = (a: AgentInfo) => ({
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
-/** What the app may load: itself, its own API, and nothing from anywhere else. */
-const SHELL_POLICY =
+const SELF_ONLY_CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-/** The automations Durable Object, as the dashboard reads it. */
 const automationsOf = (env: Env) =>
   env.Automations.getByName("automations") as unknown as AutomationsObject;
 
-/**
- * An agent's automations and their runs, in the shapes the dashboard's schedule pages read. The
- * per-agent pages are rebuilt with the web UI; until then each automation is a schedule row.
- */
 const agentAutomations = async (env: Env, agent: AgentInfo, page: "schedules" | "runs") => {
   const mine = await automationsOf(env).list(agent.id);
   if (page === "schedules")
@@ -112,12 +105,11 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
     profile(): Promise<Profile>;
   };
   const agents = await hub.agents();
-  const channels = agents.map(asChannel);
+  const channels = agents.map(agentAsChannelRow);
   if (name === "channels") return json(channels);
   if (name === "profile") return json(await hub.profile());
   if (name === "summary") {
-    // One line per channel, for the overview: what each costs and what waits on a person.
-    const lines = await Promise.all(
+    const overviewRowPerChannel = await Promise.all(
       channels.map(async (c) => {
         const rpc = env.AgentObject.getByName(c.doName) as unknown as ChannelRpc;
         const o = (await rpc.dashboard("overview", {})) as {
@@ -143,7 +135,7 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
         };
       }),
     );
-    return json(lines);
+    return json(overviewRowPerChannel);
   }
   if (!PAGES.has(name)) return json({ error: "not found" }, 404);
   const wanted = url.searchParams.get("c") ?? "";
@@ -155,29 +147,32 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const rpc = env.AgentObject.getByName(channel.doName) as unknown as ChannelRpc;
   const data = await rpc.dashboard(name, Object.fromEntries(url.searchParams));
   if (name === "overview" && data !== undefined) {
-    // An agent's automations live in their own Durable Object, not in its SQLite.
-    const active = (await automationsOf(env).list(agent.id)).filter(
+    const activeTimedAutomations = (await automationsOf(env).list(agent.id)).filter(
       (a) => a.active && a.spec.kind !== "webhook",
     );
     return json({
       ...(data as object),
-      schedules: active.length,
-      nextSchedule: active.length === 0 ? null : Math.min(...active.map((a) => a.nextAt)),
+      schedules: activeTimedAutomations.length,
+      nextSchedule:
+        activeTimedAutomations.length === 0
+          ? null
+          : Math.min(...activeTimedAutomations.map((a) => a.nextAt)),
     });
   }
   return data === undefined ? json({ error: "not found" }, 404) : json(data);
 };
 
-/** The built app. Any path that is not a file gets its HTML, and the app routes it. */
-const shell = async (request: Request, env: Env): Promise<Response> => {
+const serveDashboardApp = async (request: Request, env: Env): Promise<Response> => {
   if (!env.ASSETS) return new Response("The dashboard is not built", { status: 503 });
   const url = new URL(request.url);
-  const isFile = /\.[a-z0-9]+$/i.test(url.pathname);
-  const asset = await env.ASSETS.fetch(isFile ? request : new Request(new URL("/admin/", url)));
+  const isStaticFileRequest = /\.[a-z0-9]+$/i.test(url.pathname);
+  const asset = await env.ASSETS.fetch(
+    isStaticFileRequest ? request : new Request(new URL("/admin/", url)),
+  );
   const response = new Response(asset.body, asset);
-  response.headers.set("content-security-policy", SHELL_POLICY);
+  response.headers.set("content-security-policy", SELF_ONLY_CONTENT_SECURITY_POLICY);
   response.headers.set("x-content-type-options", "nosniff");
-  if (!isFile) response.headers.set("cache-control", "no-store");
+  if (!isStaticFileRequest) response.headers.set("cache-control", "no-store");
   return response;
 };
 
@@ -189,9 +184,10 @@ const ACTIONS: Record<string, string> = {
 
 const SETTINGS = ["model", "instructions", "timezone", "budget"];
 
-/** What a setting may be, checked before it reaches the channel's own command. Undefined when fine. */
-const badSetting = (key: string, value: string): string | undefined => {
-  if (value.length > 4_000) return "That is too long";
+const MAX_SETTING_CHARS = 4_000;
+
+const invalidSettingReason = (key: string, value: string): string | undefined => {
+  if (value.length > MAX_SETTING_CHARS) return "That is too long";
   if (key === "budget" && !(Number.isFinite(Number(value)) && Number(value) >= 0))
     return "Give a number of dollars, 0 for none";
   if (key === "timezone") {
@@ -205,13 +201,11 @@ const badSetting = (key: string, value: string): string | undefined => {
   return undefined;
 };
 
-/**
- * A write. A browser sends a cross-site form post with the person's Access cookie, so besides
- * the token it must carry a header a plain form cannot set, and come from this origin.
- */
+const isSameOriginScriptRequest = (request: Request, url: URL) =>
+  request.headers.get("x-mizook-csrf") === "1" && request.headers.get("origin") === url.origin;
+
 const act = async (request: Request, url: URL, who: string, env: Env): Promise<Response> => {
-  if (request.headers.get("x-mizook-csrf") !== "1" || request.headers.get("origin") !== url.origin)
-    return json({ error: "forbidden" }, 403);
+  if (!isSameOriginScriptRequest(request, url)) return json({ error: "forbidden" }, 403);
   const hub = env.Hub.getByName("hub") as unknown as { agents(): Promise<AgentInfo[]> };
   const channel = (await hub.agents()).find((a) => a.doName === url.searchParams.get("c"));
   if (!channel) return json({ error: "no such channel" }, 404);
@@ -259,8 +253,9 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
     const value = typeof body?.value === "string" ? body.value.trim() : undefined;
     if (body === undefined || (body.value !== undefined && value === undefined))
       return json({ error: "bad request" }, 400);
-    const bad = value === undefined || value === "" ? undefined : badSetting(key, value);
-    if (bad) return json({ error: bad }, 400);
+    const invalidReason =
+      value === undefined || value === "" ? undefined : invalidSettingReason(key, value);
+    if (invalidReason) return json({ error: invalidReason }, 400);
     return json({ ok: true, said: await rpc.setting(who, key, value === "" ? undefined : value) });
   }
 
@@ -271,12 +266,12 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
   const action = match && ACTIONS[(match[2] ?? match[4])!];
   if (!match || !action) return json({ error: "not found" }, 404);
   if (action === "cancel_schedule") {
-    // Automations are not the agent's: only one that acts for it may be cancelled from its page.
     const id = Number(match[3]);
-    const found = await automationsOf(env).get(id);
-    const ownId = channel.doName.replace(/^agent:/, "");
-    if (!found || found.action.kind === "webhook" || found.action.agent !== ownId)
-      return json({ error: "already gone" }, 409);
+    const automation = await automationsOf(env).get(id);
+    const agentId = channel.doName.replace(/^agent:/, "");
+    const actsForThisAgent =
+      !!automation && automation.action.kind !== "webhook" && automation.action.agent === agentId;
+    if (!actsForThisAgent) return json({ error: "already gone" }, 409);
     return (await automationsOf(env).cancel(id))
       ? json({ ok: true })
       : json({ error: "already gone" }, 409);
@@ -286,17 +281,13 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
     : json({ error: "already gone" }, 409);
 };
 
-/**
- * The dashboard. Reads are GET; writes are the POSTs of `act`. Every request must carry a token Access signed for this application,
- * checked here as well as at the edge, so a route Access does not cover still stays shut.
- */
 export const handleAdmin = async (request: Request, env: Env): Promise<Response> => {
   if (request.method !== "GET" && request.method !== "POST")
     return new Response("Method not allowed", { status: 405 });
-  const check = verifierFor(env);
-  if (!check) return new Response("The dashboard is not configured", { status: 503 });
+  const accessVerifier = verifierFor(env);
+  if (!accessVerifier) return new Response("The dashboard is not configured", { status: 503 });
   const who = await Effect.runPromise(
-    check
+    accessVerifier
       .verify(request.headers.get("cf-access-jwt-assertion"))
       .pipe(Effect.match({ onSuccess: (email) => email, onFailure: () => undefined })),
   );
@@ -304,7 +295,7 @@ export const handleAdmin = async (request: Request, env: Env): Promise<Response>
 
   const url = new URL(request.url);
   if (request.method === "POST") return act(request, url, who, env);
-  const api_ = /^\/admin\/api\/([a-z]+)$/.exec(url.pathname);
-  if (api_) return api(api_[1]!, url, env);
-  return shell(request, env);
+  const apiRoute = /^\/admin\/api\/([a-z]+)$/.exec(url.pathname);
+  if (apiRoute) return api(apiRoute[1]!, url, env);
+  return serveDashboardApp(request, env);
 };

@@ -9,7 +9,6 @@ const Message = Schema.Struct({
   caption: Schema.optionalKey(Schema.String),
 });
 
-/** The parts of a Telegram update that say where it was said and whom it is for. */
 const Update = Schema.Struct({
   message: Schema.optionalKey(Message),
   edited_message: Schema.optionalKey(Message),
@@ -26,22 +25,19 @@ const Update = Schema.Struct({
 const decodeUpdate = Schema.decodeUnknownEffect(Schema.fromJsonString(Update));
 
 export interface Routing {
-  /** Where the update was said: the Chat SDK thread id, `telegram:<chat>` or `telegram:<chat>:<topic>`. */
   readonly place: string;
-  /** The command the message starts with, without its slash or `@bot`. */
   readonly command: string | undefined;
-  /** The agent a button belongs to: approval buttons carry it, since any agent may post one anywhere. */
   readonly agentId: string | undefined;
 }
 
-/** The agent id inside a button's callback data, as `bot.ts` writes it: `<verb>:<agentId>:<n>`. */
+const CHAT_SDK_ACTION_PREFIX = "chat:";
+
 const agentOfCallback = (data: string | undefined): string | undefined => {
   if (data === undefined) return undefined;
   let action = data;
-  // The Chat SDK wraps an action id as `chat:{"a":"<id>"}`.
-  if (data.startsWith("chat:")) {
+  if (data.startsWith(CHAT_SDK_ACTION_PREFIX)) {
     try {
-      const decoded = JSON.parse(data.slice(5)) as { a?: unknown };
+      const decoded = JSON.parse(data.slice(CHAT_SDK_ACTION_PREFIX.length)) as { a?: unknown };
       if (typeof decoded.a === "string") action = decoded.a;
     } catch {
       return undefined;
@@ -50,11 +46,6 @@ const agentOfCallback = (data: string | undefined): string | undefined => {
   return /^(?:approve|always|deny):([a-z0-9]+):\d+$/.exec(action)?.[1];
 };
 
-/**
- * Where an update belongs, the same way the Chat SDK names threads: a forum topic is its own
- * place, and so is a group or a DM. An update that names no chat goes to `telegram:main`. Fails
- * when the body is not a Telegram update.
- */
 export const routeOf = (body: string) =>
   decodeUpdate(body).pipe(
     Effect.map((u): Routing => {

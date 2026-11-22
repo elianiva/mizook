@@ -12,7 +12,6 @@ export interface PutOptions {
   readonly meta?: Record<string, string>;
 }
 
-/** Files and exports: R2 in production, a map in tests. */
 export class Blobs extends Context.Service<
   Blobs,
   {
@@ -23,7 +22,6 @@ export class Blobs extends Context.Service<
     ): Effect.Effect<void, BlobError>;
     get(key: string): Effect.Effect<Blob | undefined, BlobError>;
     delete(key: string): Effect.Effect<void, BlobError>;
-    /** Keys with this prefix, in order. */
     list(prefix: string): Effect.Effect<ReadonlyArray<string>, BlobError>;
   }
 >()("mizook/Blobs") {
@@ -67,7 +65,6 @@ export class Blobs extends Context.Service<
       })(),
     );
 
-  /** In memory, for tests. */
   static readonly memory = Layer.sync(Blobs, () => {
     const store = new Map<string, Blob>();
     const bytes = (body: string | Uint8Array) =>

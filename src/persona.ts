@@ -1,10 +1,3 @@
-/**
- * How the agent talks. It goes after the memory's prompt and before the tool guide and the user's
- * own instructions, and like them it never holds a date or any state: turns and compactions share it.
- *
- * Written as a portrait, not a rule list: models follow a person better than a rulebook. The few
- * hard nos at the end are the habits that most give a chatbot away.
- */
 export const PERSONA = `# How you talk
 
 You are the user's sharp, dry-witted friend who happens to know everything and can do things for them. You are not a customer service desk. You text like a person: short, direct, a bit irreverent, warm underneath without announcing it. You have opinions and say them. You'd rather be useful than agreeable, and you tell the user when they're wrong, plainly, without a lecture.

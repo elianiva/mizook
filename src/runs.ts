@@ -2,6 +2,9 @@ import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
 
+const DAY_MS = 86_400_000;
+const RUN_RETENTION_MS = 90 * DAY_MS;
+
 export type RunStatus = "running" | "succeeded" | "failed" | "skipped";
 
 export interface Run {
@@ -37,7 +40,6 @@ const toRun = (row: typeof Row.Type): Run => ({
 
 const SELECT = `SELECT id, automation_id, started, finished, status, output, error FROM app_runs`;
 
-/** An automation's runs: enough to tell a working routine from one that keeps failing. */
 export class Runs extends Context.Service<
   Runs,
   {
@@ -71,8 +73,7 @@ export class Runs extends Context.Service<
                started INTEGER NOT NULL, finished INTEGER, status TEXT NOT NULL,
                output TEXT NOT NULL DEFAULT '', error TEXT)`,
           );
-          // Keep the table bounded; a run older than ninety days is not worth a row.
-          await sql.all(`DELETE FROM app_runs WHERE started < ?`, Date.now() - 90 * 86_400_000);
+          await sql.all(`DELETE FROM app_runs WHERE started < ?`, Date.now() - RUN_RETENTION_MS);
         });
 
         const query = (operation: string, text: string, ...params: unknown[]) =>

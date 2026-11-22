@@ -1,7 +1,6 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 
-/** Read-only views of one channel's SQLite, for the dashboard. A table that does not exist yet reads as empty. */
-const rows = async <T>(sql: SqlDriver, text: string, ...params: unknown[]): Promise<T[]> => {
+const rowsOrEmpty = async <T>(sql: SqlDriver, text: string, ...params: unknown[]): Promise<T[]> => {
   try {
     return await sql.all<T>(text, ...params);
   } catch {
@@ -11,8 +10,8 @@ const rows = async <T>(sql: SqlDriver, text: string, ...params: unknown[]): Prom
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-/** A message in a list is cut here; open it for the rest. */
-const PREVIEW = 600;
+const MESSAGE_PREVIEW_CHARS = 600;
+const DAILY_SPEND_DAYS = 14;
 
 export interface Overview {
   readonly messages: number;
@@ -23,42 +22,42 @@ export interface Overview {
   readonly turns: ReadonlyArray<{ chatId: string; text: string }>;
   readonly approvals: ReadonlyArray<{ id: number; summary: string; posted: boolean }>;
   readonly schedules: number;
-  /** Spend per UTC day over the last 14 days, oldest first; a day with no spend is 0. */
   readonly daily: ReadonlyArray<{ day: string; cost: number }>;
-  /** When the soonest active schedule fires, epoch milliseconds. */
   readonly nextSchedule: number | null;
 }
 
 const count = async (sql: SqlDriver, table: string) =>
-  (await rows<{ n: number }>(sql, `SELECT COUNT(*) AS n FROM ${table}`))[0]?.n ?? 0;
+  (await rowsOrEmpty<{ n: number }>(sql, `SELECT COUNT(*) AS n FROM ${table}`))[0]?.n ?? 0;
 
 const spentSince = async (sql: SqlDriver, since: number) =>
   (
-    await rows<{ total: number | null }>(
+    await rowsOrEmpty<{ total: number | null }>(
       sql,
       `SELECT SUM(cost) AS total FROM app_usage WHERE at >= ?`,
       since,
     )
   )[0]?.total ?? 0;
 
+const SCHEDULE_COUNT_FILLED_IN_BY_WORKER = 0;
+
 const dailySpend = async (sql: SqlDriver, now: number) => {
-  const found = await rows<{ day: string; cost: number }>(
+  const found = await rowsOrEmpty<{ day: string; cost: number }>(
     sql,
     `SELECT strftime('%Y-%m-%d', at / 1000, 'unixepoch') AS day, SUM(cost) AS cost
      FROM app_usage WHERE at >= ? GROUP BY day`,
-    now - 14 * DAY,
+    now - DAILY_SPEND_DAYS * DAY,
   );
   const byDay = new Map(found.map((r) => [r.day, r.cost]));
-  return Array.from({ length: 14 }, (_, k) => {
+  return Array.from({ length: DAILY_SPEND_DAYS }, (_, k) => {
     const day = new Date(now - (13 - k) * DAY).toISOString().slice(0, 10);
     return { day, cost: byDay.get(day) ?? 0 };
   });
 };
 
 export const overview = async (sql: SqlDriver, now: number): Promise<Overview> => {
-  const views = (await rows<{ json: string }>(sql, `SELECT json FROM mem_views`))[0]?.json;
+  const views = (await rowsOrEmpty<{ json: string }>(sql, `SELECT json FROM mem_views`))[0]?.json;
   const lines = views ? (JSON.parse(views) as { chat: { lines: unknown[] } }).chat.lines.length : 0;
-  const settings = await rows<{ key: string; value: string }>(
+  const settings = await rowsOrEmpty<{ key: string; value: string }>(
     sql,
     `SELECT key, value FROM app_meta WHERE key LIKE 'setting:%'`,
   );
@@ -73,16 +72,18 @@ export const overview = async (sql: SqlDriver, now: number): Promise<Overview> =
     },
     settings: Object.fromEntries(settings.map((s) => [s.key.slice("setting:".length), s.value])),
     turns: (
-      await rows<{ chat_id: string; text: string }>(sql, `SELECT chat_id, text FROM app_turns`)
-    ).map((t) => ({ chatId: t.chat_id, text: t.text.slice(0, PREVIEW) })),
+      await rowsOrEmpty<{ chat_id: string; text: string }>(
+        sql,
+        `SELECT chat_id, text FROM app_turns`,
+      )
+    ).map((t) => ({ chatId: t.chat_id, text: t.text.slice(0, MESSAGE_PREVIEW_CHARS) })),
     approvals: (
-      await rows<{ id: number; summary: string; posted: number }>(
+      await rowsOrEmpty<{ id: number; summary: string; posted: number }>(
         sql,
         `SELECT id, summary, posted FROM app_approvals ORDER BY id`,
       )
     ).map((a) => ({ id: a.id, summary: a.summary, posted: a.posted === 1 })),
-    // The Worker fills these from the automations.
-    schedules: 0,
+    schedules: SCHEDULE_COUNT_FILLED_IN_BY_WORKER,
     daily: await dailySpend(sql, now),
     nextSchedule: null,
   };
@@ -94,13 +95,11 @@ export interface LogMessage {
   readonly text: string;
   readonly size: number;
   readonly date: string;
-  /** The text was cut for the list. */
   readonly cut: boolean;
 }
 
 const KINDS = ["user", "agent", "tool", "echo", "note"];
 
-/** Newest first. `before` is the id to page from; `q` is a plain substring. */
 export const messages = async (
   sql: SqlDriver,
   options: { kind?: string; q?: string; before?: number; limit: number },
@@ -119,27 +118,35 @@ export const messages = async (
     where.push("i < ?");
     params.push(options.before);
   }
-  const found = await rows<{ i: number; kind: string; text: string; size: number; date: string }>(
+  const found = await rowsOrEmpty<{
+    i: number;
+    kind: string;
+    text: string;
+    size: number;
+    date: string;
+  }>(
     sql,
-    `SELECT i, kind, substr(text, 1, ${PREVIEW + 1}) AS text, size, date FROM mem_messages
+    `SELECT i, kind, substr(text, 1, ${MESSAGE_PREVIEW_CHARS + 1}) AS text, size, date FROM mem_messages
      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY i DESC LIMIT ?`,
     ...params,
     options.limit,
   );
   return found.map((m) => ({
     ...m,
-    text: m.text.slice(0, PREVIEW),
-    cut: m.text.length > PREVIEW || m.size > PREVIEW * 4,
+    text: m.text.slice(0, MESSAGE_PREVIEW_CHARS),
+    cut: m.text.length > MESSAGE_PREVIEW_CHARS || m.size > MESSAGE_PREVIEW_CHARS * 4,
   }));
 };
 
 export const message = async (sql: SqlDriver, i: number) =>
   (
-    await rows<{ i: number; kind: string; text: string; size: number; date: string }>(
-      sql,
-      `SELECT i, kind, text, size, date FROM mem_messages WHERE i = ?`,
-      i,
-    )
+    await rowsOrEmpty<{
+      i: number;
+      kind: string;
+      text: string;
+      size: number;
+      date: string;
+    }>(sql, `SELECT i, kind, text, size, date FROM mem_messages WHERE i = ?`, i)
   )[0];
 
 export interface ViewLine {
@@ -149,20 +156,23 @@ export interface ViewLine {
   readonly size: number;
 }
 
-/** The lines the next turn would see, oldest first, named as the agent names them: `id+n`. */
 export const memoryView = async (sql: SqlDriver): Promise<ViewLine[]> => {
-  const json = (await rows<{ json: string }>(sql, `SELECT json FROM mem_views`))[0]?.json;
+  const json = (await rowsOrEmpty<{ json: string }>(sql, `SELECT json FROM mem_views`))[0]?.json;
   if (!json) return [];
   const lines = (JSON.parse(json) as { chat: { lines: Array<[number, number]> } }).chat.lines;
-  const nodes = await rows<{ l: number; i: number; text: string; size: number }>(
-    sql,
-    `SELECT n.l, n.i, n.text, n.size FROM mem_nodes n`,
-  );
+  const nodes = await rowsOrEmpty<{
+    l: number;
+    i: number;
+    text: string;
+    size: number;
+  }>(sql, `SELECT n.l, n.i, n.text, n.size FROM mem_nodes n`);
   const byKey = new Map(nodes.map((n) => [`${n.l}:${n.i}`, n]));
   return lines.map(([l, i]) => {
     const node = byKey.get(`${l}:${i}`);
+    const messagesCovered = 2 ** l;
+    const firstMessageId = i * messagesCovered;
     return {
-      label: `${i * 2 ** l}+${2 ** l}`,
+      label: `${firstMessageId}+${messagesCovered}`,
       level: l,
       text: node?.text ?? "",
       size: node?.size ?? 0,
@@ -179,7 +189,6 @@ export interface UsageReport {
     output: number;
     cacheRead: number;
   }>;
-  /** Tool calls the agent made, by tool name, most used first. */
   readonly byTool: ReadonlyArray<{ tool: string; calls: number }>;
   readonly byModel: ReadonlyArray<{
     model: string;
@@ -192,11 +201,12 @@ export interface UsageReport {
   readonly byKind: ReadonlyArray<{ kind: string; cost: number; calls: number }>;
 }
 
-/** Spend over the last `days` days, by UTC day, model and kind of call. */
+const TOOL_NAME_SQL = "substr(text, 1, instr(text || ' ', ' ') - 1)";
+
 export const usage = async (sql: SqlDriver, days: number, now: number): Promise<UsageReport> => {
   const since = now - days * DAY;
   const byDay = (
-    await rows<{
+    await rowsOrEmpty<{
       day: string;
       cost: number;
       calls: number;
@@ -211,14 +221,13 @@ export const usage = async (sql: SqlDriver, days: number, now: number): Promise<
       since,
     )
   ).map(({ cache_read, ...rest }) => ({ ...rest, cacheRead: cache_read }));
-  // A tool message is `name {json arguments}`: the first word is the tool.
-  const byTool = await rows<{ tool: string; calls: number }>(
+  const byTool = await rowsOrEmpty<{ tool: string; calls: number }>(
     sql,
-    `SELECT substr(text, 1, instr(text || ' ', ' ') - 1) AS tool, COUNT(*) AS calls
+    `SELECT ${TOOL_NAME_SQL} AS tool, COUNT(*) AS calls
      FROM mem_messages WHERE kind = 'tool' AND date >= ? GROUP BY tool ORDER BY calls DESC LIMIT 12`,
     new Date(since).toISOString(),
   );
-  const byModel = await rows<{
+  const byModel = await rowsOrEmpty<{
     model: string;
     cost: number;
     calls: number;
@@ -232,7 +241,7 @@ export const usage = async (sql: SqlDriver, days: number, now: number): Promise<
      FROM app_usage WHERE at >= ? GROUP BY model ORDER BY cost DESC`,
     since,
   );
-  const byKind = await rows<{ kind: string; cost: number; calls: number }>(
+  const byKind = await rowsOrEmpty<{ kind: string; cost: number; calls: number }>(
     sql,
     `SELECT kind, SUM(cost) AS cost, COUNT(*) AS calls FROM app_usage WHERE at >= ?
      GROUP BY kind ORDER BY cost DESC`,
@@ -256,10 +265,9 @@ export interface SkillRow {
   readonly updated: number;
 }
 
-/** The channel's procedures, by name. A table that has not been created yet reads empty. */
 export const skills = async (sql: SqlDriver): Promise<SkillRow[]> =>
   (
-    await rows<{
+    await rowsOrEmpty<{
       name: string;
       description: string;
       body: string;
@@ -306,7 +314,7 @@ const triggersOf = (json: string): string[] => {
 
 export const intents = async (sql: SqlDriver): Promise<IntentRow[]> =>
   (
-    await rows<{
+    await rowsOrEmpty<{
       id: number;
       description: string;
       triggers: string;
@@ -340,7 +348,7 @@ export interface PolicyRow {
 }
 
 export const policies = async (sql: SqlDriver): Promise<PolicyRow[]> =>
-  rows<PolicyRow>(sql, `SELECT id, match, decision FROM app_policies ORDER BY id`);
+  rowsOrEmpty<PolicyRow>(sql, `SELECT id, match, decision FROM app_policies ORDER BY id`);
 
 export interface AuditRow {
   readonly at: number;
@@ -350,11 +358,13 @@ export interface AuditRow {
   readonly ok: boolean;
 }
 
-/** What people did from the dashboard, newest first. */
 export const audit = async (sql: SqlDriver): Promise<AuditRow[]> =>
   (
-    await rows<{ at: number; who: string; action: string; target: number; ok: number }>(
-      sql,
-      `SELECT at, who, action, target, ok FROM app_audit ORDER BY at DESC LIMIT 100`,
-    )
+    await rowsOrEmpty<{
+      at: number;
+      who: string;
+      action: string;
+      target: number;
+      ok: number;
+    }>(sql, `SELECT at, who, action, target, ok FROM app_audit ORDER BY at DESC LIMIT 100`)
   ).map((r) => ({ ...r, ok: r.ok === 1 }));

@@ -47,8 +47,6 @@ import {
 
 const OVERVIEW_REFRESH = Duration.seconds(10);
 
-// COMMAND
-
 export const NavigateInternal = Command.define("NavigateInternal", {
   args: { url: Schema.String },
   messages: [Message.CompletedNavigateInternal],
@@ -115,8 +113,6 @@ const PostAgent = Command.define("PostAgent", {
       Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
     ),
 });
-
-// QUERIES
 
 const channels = channelsQuery.lift<Model, Message>({
   parentField: "channels",
@@ -187,7 +183,6 @@ const runs = runsQuery.lift<Model, Message>({
   toParentMessage: (message) => Message.GotRunsMessage({ message }),
 });
 
-/** The channel in the URL, or the most recently active one when the URL names none. */
 export const currentChannel = (model: Model): Option.Option<string> =>
   Option.orElse(routeChannel(model.route), () =>
     pipe(
@@ -343,8 +338,6 @@ const removalOf = (kind: AgentKind, id: string): AgentEdit | undefined =>
       : kind === "policies"
         ? { kind: "policies", action: "remove", id: Number(id) }
         : undefined;
-
-// UPDATE
 
 type UpdateReturn = Update.Return<Model, Message>;
 type Step = Update.Step<Model, Message>;
@@ -594,8 +587,9 @@ export const update = (model: Model, message: Message) =>
       if (Option.isNone(channel)) {
         return { model };
       }
-      // Deleting asks twice; opening or closing the link does not.
-      if (action === "delete" && !Option.contains(model.armed, key)) {
+      const onlyDeletingAsksTwice = action === "delete";
+      const isFirstClick = !Option.contains(model.armed, key);
+      if (onlyDeletingAsksTwice && isFirstClick) {
         return {
           model: modifyFields(model, {
             armed: () => Option.some(key),
@@ -693,8 +687,6 @@ export const update = (model: Model, message: Message) =>
           ]),
       }),
   });
-
-// SUBSCRIPTION
 
 export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
   refreshOverview: entryOf(

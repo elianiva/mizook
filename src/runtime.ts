@@ -32,30 +32,21 @@ import { PERSONA } from "./persona.ts";
 import { TOOL_GUIDE } from "./tools.ts";
 import { catalogText } from "./codemode.ts";
 
-/**
- * Everything the Durable Object runs, as one layer over its own storage.
- *
- * pi-durable and the memory share one SQLite connection. pi-durable keeps its operations in a
- * queue so a transaction excludes everything else; the memory and the bot's state go through the
- * same database object, so none of their writes can land inside one of its transactions.
- */
 export const makeRuntime = (
   storage: DurableObjectStorage,
   env: Env,
   host: Context.Service.Shape<typeof Host>,
 ) => {
-  const database = new DurableObjectSqliteDatabase(storage);
+  const sharedDatabase = new DurableObjectSqliteDatabase(storage);
   const sql: SqlDriver = {
     all: <T>(query: string, ...params: unknown[]) =>
-      database.all(query, ...(params as never[])) as Promise<T[]>,
+      sharedDatabase.all(query, ...(params as never[])) as Promise<T[]>,
   };
 
-  // A variable left empty in the stack means "use the default".
-  const vars = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
+  const varsSet = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
   const fromEnv = Settings.layer.pipe(
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(vars))),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(varsSet))),
   );
-  // The channel's own settings (`/model`, `/instructions`, …) win over the environment.
   const settings = Layer.effect(
     Settings,
     Effect.gen(function* () {
@@ -74,16 +65,18 @@ export const makeRuntime = (
   const models = Models.layer.pipe(Layer.provideMerge(settings));
   const memory = Layer.unwrap(
     Effect.gen(function* () {
-      const { instructions, timezone } = yield* Settings;
+      const { instructions: userInstructionsLast, timezone } = yield* Settings;
+      const howItTalks = host.self.persona.trim() || PERSONA;
+      const whatItIsFor =
+        host.self.role.trim() === "" ? "" : `# Your role\n\n${host.self.role.trim()}`;
       return Memory.layer({
         name: host.self.name,
-        // The persona says how it talks, the role what it is for; the user's instructions go last.
         instructions: [
-          host.self.persona.trim() || PERSONA,
+          howItTalks,
           TOOL_GUIDE,
           `# Tools\n\n${catalogText(host.self.tools)}`,
-          host.self.role.trim() === "" ? "" : `# Your role\n\n${host.self.role.trim()}`,
-          instructions,
+          whatItIsFor,
+          userInstructionsLast,
         ]
           .filter((part) => part !== "")
           .join("\n\n"),
@@ -100,7 +93,7 @@ export const makeRuntime = (
   const app = Bot.layer.pipe(
     Layer.provideMerge(Commands.layer),
     Layer.provideMerge(Agent.layer),
-    Layer.provideMerge(Durable.layer(database)),
+    Layer.provideMerge(Durable.layer(sharedDatabase)),
     Layer.provideMerge(Handlers.layer),
     Layer.provideMerge(Outbox.layer),
     Layer.provideMerge(Executor.layer),

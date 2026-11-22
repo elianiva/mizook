@@ -12,19 +12,13 @@ import { Runs, type Run } from "./runs.ts";
 import type { Action, Spec } from "./schedule.ts";
 import { Web } from "./search.ts";
 
-/** What an agent's Durable Object does for an automation. */
 interface AgentTarget {
   runTurn(place: string, text: string, requestId: string): Promise<string>;
   postTo(place: string, text: string): Promise<void>;
 }
 
-/** The outcome of a write, for a tool or the dashboard to read. */
 export type AutomationChange = { ok: true; automation: Automation } | { ok: false; error: string };
 
-/**
- * Every automation, for every agent: the triggers, the alarm that fires them, and their runs. An
- * agent creates and manages them through RPC; the action reaches the agent it names.
- */
 export class AutomationsObject extends DurableObject<Env> {
   private readonly runtime;
 
@@ -34,8 +28,7 @@ export class AutomationsObject extends DurableObject<Env> {
       all: <T>(query: string, ...params: unknown[]) =>
         ctx.storage.sql.exec(query, ...(params as never[])).toArray() as T[],
     };
-    /** Move the alarm earlier, never later. */
-    const arm = async (at: number) => {
+    const moveAlarmEarlierTo = async (at: number) => {
       const current = await ctx.storage.getAlarm();
       if (current === null || at < current) await ctx.storage.setAlarm(at);
     };
@@ -81,14 +74,15 @@ export class AutomationsObject extends DurableObject<Env> {
           catch: failed(`${method} ${url} failed`),
         }),
     });
-    // The watch trigger fetches pages the way web_fetch does.
     const vars = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
     const settings = Settings.layer.pipe(
       Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(vars))),
     );
     this.runtime = ManagedRuntime.make(
       Runner.layer.pipe(
-        Layer.provideMerge(Layer.merge(Automations.layer(sql, arm), Runs.layer(sql))),
+        Layer.provideMerge(
+          Layer.merge(Automations.layer(sql, moveAlarmEarlierTo), Runs.layer(sql)),
+        ),
         Layer.provide(Layer.succeed(Targets, targets)),
         Layer.provide(Web.layer.pipe(Layer.provide(Layer.merge(settings, FetchHttpClient.layer)))),
       ),
@@ -99,7 +93,6 @@ export class AutomationsObject extends DurableObject<Env> {
     return this.runtime.runPromise(effect);
   }
 
-  /** Set the alarm to the soonest clock trigger, or clear it. */
   private async rearm(): Promise<void> {
     const next = await this.run(Automations.use((a) => a.nextAt));
     if (next === undefined) await this.ctx.storage.deleteAlarm();
@@ -124,13 +117,11 @@ export class AutomationsObject extends DurableObject<Env> {
     );
   }
 
-  /** The link that fires a webhook trigger. The token is an HMAC, so nothing is stored. */
   async hookUrl(id: number): Promise<string> {
     const token = await hookToken(this.env.MIZOOK_WEBHOOK_SECRET, `auto:${id}`);
     return `${this.env.PUBLIC_URL ?? ""}/hook/${id}/${token}`;
   }
 
-  /** Every automation, active and paused; with `agent`, only those whose action is for it. */
   async list(agent?: string): Promise<ReadonlyArray<Automation>> {
     const all = await this.run(Automations.use((a) => a.all));
     return agent === undefined
@@ -165,7 +156,6 @@ export class AutomationsObject extends DurableObject<Env> {
     );
   }
 
-  /** Fire one now in the background. False when there is no such automation. */
   async test(id: number): Promise<boolean> {
     if (!(await this.get(id))) return false;
     this.ctx.waitUntil(
@@ -176,11 +166,9 @@ export class AutomationsObject extends DurableObject<Env> {
     return true;
   }
 
-  /** A call to a webhook trigger's link, already checked by the Worker. */
   async hook(id: number, body: string): Promise<boolean> {
     const a = await this.get(id);
     if (!a || !a.active || a.spec.kind !== "webhook") return false;
-    // The action can take minutes; the caller gets its answer at once.
     this.ctx.waitUntil(
       this.run(Runner.use((r) => r.hook(id, body))).catch((error) =>
         console.error(`webhook #${id} failed`, error),

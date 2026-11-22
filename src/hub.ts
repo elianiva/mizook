@@ -26,19 +26,27 @@ type AgentRow = {
 
 const COLUMNS = "id, slug, name, role, persona, tools, created, last_active";
 
-/**
- * The registry: the agents and their roles, which Telegram place uses which agent, the names of
- * places, the skills every agent shares, and the profile. Each agent is its own Durable Object
- * and knows nothing of the others; the Hub is how they and the Worker find each other.
- */
+const parseStringList = (json: string): string[] | undefined => {
+  try {
+    const parsed = json === "" ? undefined : (JSON.parse(json) as unknown);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const EVERY_TOOL = undefined;
+
 export class Hub extends DurableObject<Env> {
   private readonly skills: Promise<Skills["Service"]>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
-    // Channels were per topic before agents; their objects are gone with the old class.
-    sql.exec(`DROP TABLE IF EXISTS channels`);
+    const dropLegacyChannels = () => sql.exec(`DROP TABLE IF EXISTS channels`);
+    dropLegacyChannels();
     sql.exec(
       `CREATE TABLE IF NOT EXISTS agents (
          id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -56,8 +64,8 @@ export class Hub extends DurableObject<Env> {
          id INTEGER PRIMARY KEY CHECK (id = 1), about TEXT NOT NULL,
          rules TEXT NOT NULL, updated INTEGER NOT NULL)`,
     );
-    // A fresh install has one agent, and it answers everywhere.
-    if (sql.exec(`SELECT 1 FROM agents LIMIT 1`).toArray().length === 0) {
+    const isFreshInstall = sql.exec(`SELECT 1 FROM agents LIMIT 1`).toArray().length === 0;
+    if (isFreshInstall) {
       const id = randomId();
       sql.exec(
         `INSERT INTO agents (id, slug, name, created) VALUES (?, ?, ?, ?)`,
@@ -68,16 +76,15 @@ export class Hub extends DurableObject<Env> {
       );
       sql.exec(`INSERT INTO hub_meta (key, value) VALUES ('default', ?)`, id);
     }
-    // The global skills use the same code as an agent's own, over the Hub's SQLite.
-    const driver: SqlDriver = {
+    const hubSqlDriver: SqlDriver = {
       all: <T>(query: string, ...params: unknown[]) =>
         sql.exec(query, ...(params as never[])).toArray() as T[],
     };
     this.skills = Effect.runPromise(
-      Skills.use(Effect.succeed).pipe(Effect.provide(Skills.layer(driver))),
+      Skills.use(Effect.succeed).pipe(Effect.provide(Skills.layer(hubSqlDriver))),
     );
-    // A deploy restarts the Hub: the menu goes back up with the agents in it.
-    ctx.waitUntil(this.syncMenu());
+    const republishMenu = this.syncMenu();
+    ctx.waitUntil(republishMenu);
   }
 
   private get defaultId(): string {
@@ -91,13 +98,7 @@ export class Hub extends DurableObject<Env> {
       .exec<{ place: string }>(`SELECT place FROM bindings WHERE agent_id = ?`, row.id)
       .toArray()
       .map((b) => b.place);
-    let tools: string[] | undefined;
-    try {
-      const parsed = row.tools === "" ? undefined : (JSON.parse(row.tools) as unknown);
-      if (Array.isArray(parsed)) tools = parsed.filter((t): t is string => typeof t === "string");
-    } catch {
-      // A broken list reads as every tool; the next update replaces it.
-    }
+    const tools = parseStringList(row.tools) ?? EVERY_TOOL;
     return {
       id: row.id,
       slug: row.slug,
@@ -123,7 +124,6 @@ export class Hub extends DurableObject<Env> {
       .toArray()[0];
   }
 
-  /** Publish the bot menu: the commands and one `/<slug>` per agent. Best effort. */
   private async syncMenu(): Promise<void> {
     if (!this.env.BOT_TOKEN) return;
     const commands = menuWith(this.agents());
@@ -141,13 +141,11 @@ export class Hub extends DurableObject<Env> {
       .map((row) => this.info(row));
   }
 
-  /** One agent, by id or slug. */
   agent(key: string): AgentInfo | undefined {
     const row = this.row(key);
     return row && this.info(row);
   }
 
-  /** What is wrong with a spec, or undefined. `id` is the agent being changed, when it is. */
   private badSpec(spec: Partial<AgentSpec>, id?: string): string | undefined {
     if (spec.slug !== undefined) {
       if (!AGENT_SLUG.test(spec.slug))
@@ -182,7 +180,6 @@ export class Hub extends DurableObject<Env> {
     return { ok: true, agent: this.agent(id)! };
   }
 
-  /** Change the fields given and keep the rest. The agent picks the change up on its next reload. */
   async updateAgent(key: string, patch: Partial<AgentSpec>): Promise<AgentChange> {
     const row = this.row(key);
     if (!row) return { ok: false, error: `no agent "${key}"` };
@@ -214,7 +211,6 @@ export class Hub extends DurableObject<Env> {
     return { ok: true, agent: this.agent(row.id)! };
   }
 
-  /** Remove an agent and everything it stored. The default agent cannot go. */
   async deleteAgent(key: string): Promise<AgentChange> {
     const row = this.row(key);
     if (!row) return { ok: false, error: `no agent "${key}"` };
@@ -230,10 +226,6 @@ export class Hub extends DurableObject<Env> {
     return { ok: true, agent: gone };
   }
 
-  /**
-   * Which agent an update goes to: the agent a button belongs to, the agent a command names
-   * (`/grok …`), the agent bound to the place, or the default.
-   */
   route(place: string, command: string | undefined, agentId: string | undefined): AgentInfo {
     const bound = this.ctx.storage.sql
       .exec<{ agent_id: string }>(`SELECT agent_id FROM bindings WHERE place = ?`, place)
@@ -247,7 +239,6 @@ export class Hub extends DurableObject<Env> {
     return this.info(row);
   }
 
-  /** Make `place` use the agent `key`, or the default when `key` is undefined. */
   bind(place: string, key: string | undefined): AgentInfo | undefined {
     if (key === undefined) {
       this.ctx.storage.sql.exec(`DELETE FROM bindings WHERE place = ?`, place);
@@ -264,7 +255,6 @@ export class Hub extends DurableObject<Env> {
     return this.info(row);
   }
 
-  /** What a place is called: the name the user gave it, or undefined. */
   placeName(place: string): string | undefined {
     return this.ctx.storage.sql
       .exec<{ name: string }>(`SELECT name FROM places WHERE place = ?`, place)
@@ -280,7 +270,6 @@ export class Hub extends DurableObject<Env> {
     );
   }
 
-  /** The skills every agent shares, through the same code as an agent's own. */
   private async withSkills<A>(f: (skills: Skills["Service"]) => Effect.Effect<A, unknown>) {
     return Effect.runPromise(f(await this.skills));
   }
@@ -309,23 +298,15 @@ export class Hub extends DurableObject<Env> {
     return this.withSkills((s) => s.pin(name));
   }
 
-  /** The one profile every agent shares. A missing row is an empty profile. */
   profile(): Profile {
     const row = this.ctx.storage.sql
       .exec<{ about: string; rules: string }>(`SELECT about, rules FROM profile WHERE id = 1`)
       .toArray()[0];
     if (!row) return { about: "", rules: [] };
-    let rules: string[] = [];
-    try {
-      const parsed = JSON.parse(row.rules) as unknown;
-      if (Array.isArray(parsed)) rules = parsed.filter((r): r is string => typeof r === "string");
-    } catch {
-      // A broken row reads as no rules; the next update replaces it.
-    }
+    const rules = parseStringList(row.rules) ?? [];
     return { about: row.about, rules };
   }
 
-  /** Change the fields given and keep the rest. */
   setProfile(about: string | undefined, rules: string[] | undefined): Profile {
     const current = this.profile();
     const next = {

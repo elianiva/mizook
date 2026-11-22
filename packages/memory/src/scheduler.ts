@@ -4,58 +4,46 @@ import { parent } from "./tree.ts";
 
 export type Task = { kind: "leaf"; i: number } | { kind: "merge"; l: number; i: number };
 
-/**
- * Which node to build next. Pure and synchronous: the compactor runs the tasks.
- *
- * Ready nodes wait in queues, and the tree is never scanned for work (that is O(N^2) over a long
- * chat). Up to 8 calls run at once.
- *
- * - A message's node starts once fewer than 8 lines before it are still unbuilt.
- * - A merge starts once both its halves are built.
- */
+const siblingIndex = (i: number) => i ^ 1;
+
 export class Scheduler {
   running = 0;
-  /** The next message whose node has not been started. */
-  private leafNext = 0;
-  /** Messages started and not built yet, including failed ones. */
-  private readonly unbuilt = new Set<number>();
-  private readonly retryLeaves: number[] = [];
-  private readonly merges: Array<{ l: number; i: number }> = [];
-  private readonly queued = new Set<string>();
+  private nextUnstartedLeaf = 0;
+  private readonly startedUnbuiltLeaves = new Set<number>();
+  private readonly leavesToRetry: number[] = [];
+  private readonly readyMerges: Array<{ l: number; i: number }> = [];
+  private readonly queuedMergeKeys = new Set<string>();
   private readonly failed: Task[] = [];
 
   constructor(
     private readonly built: BuiltIndex,
-    private readonly total: () => number,
-    private readonly concurrency = CONCURRENCY,
-    private readonly window = UNBUILT_WINDOW,
+    private readonly messageCount: () => number,
+    private readonly maxRunning = CONCURRENCY,
+    private readonly maxStartedUnbuiltLeaves = UNBUILT_WINDOW,
   ) {}
 
-  /** Recover the queues from what is built: after a restart. */
   init(): void {
-    for (const { l, i } of this.built.entries()) this.enqueueParent(l, i);
+    this.recoverReadyMergesFromBuiltNodes();
   }
 
-  /** The next task to start, or nothing if the limit is reached or no node is ready. Counts it as running. */
   next(): Task | undefined {
-    if (this.running >= this.concurrency) return undefined;
+    if (this.running >= this.maxRunning) return undefined;
     const task = this.peek();
     if (!task) return undefined;
-    if (task.kind === "merge") this.merges.shift();
-    else if (this.retryLeaves[0] === task.i) this.retryLeaves.shift();
+    if (task.kind === "merge") this.readyMerges.shift();
+    else if (this.leavesToRetry[0] === task.i) this.leavesToRetry.shift();
     else {
-      this.leafNext++;
-      this.unbuilt.add(task.i);
+      this.nextUnstartedLeaf++;
+      this.startedUnbuiltLeaves.add(task.i);
     }
     this.running++;
     return task;
   }
 
-  /** The node of `task` is built and committed. */
   done(task: Task, node: { l: number; i: number }): void {
     this.running--;
-    if (task.kind === "leaf") this.unbuilt.delete(task.i);
-    this.enqueueParent(node.l, node.i);
+    if (task.kind === "leaf") this.startedUnbuiltLeaves.delete(task.i);
+    this.enqueueParentIfSiblingBuilt(node.l, node.i);
   }
 
   fail(task: Task): void {
@@ -63,11 +51,10 @@ export class Scheduler {
     this.failed.push(task);
   }
 
-  /** A failed call is tried again at the next message. */
   retryFailed(): void {
     for (const task of this.failed.splice(0)) {
-      if (task.kind === "leaf") this.retryLeaves.push(task.i);
-      else this.merges.unshift({ l: task.l, i: task.i });
+      if (task.kind === "leaf") this.leavesToRetry.push(task.i);
+      else this.readyMerges.unshift({ l: task.l, i: task.i });
     }
   }
 
@@ -75,38 +62,44 @@ export class Scheduler {
     return this.failed.length;
   }
 
-  /** Every message before `count` has its node. */
   summarized(count: number): boolean {
-    this.skipBuilt();
-    if (this.retryLeaves.length > 0) return false;
-    return this.leafNext >= count && [...this.unbuilt].every((i) => i >= count);
+    this.skipBuiltLeaves();
+    if (this.leavesToRetry.length > 0) return false;
+    return (
+      this.nextUnstartedLeaf >= count && [...this.startedUnbuiltLeaves].every((i) => i >= count)
+    );
   }
 
-  /** Nothing is running or ready to run. Failed tasks wait for `retryFailed`. */
   idle(): boolean {
     return this.running === 0 && this.peek() === undefined;
   }
 
-  private skipBuilt(): void {
-    while (this.built.has(0, this.leafNext)) this.leafNext++;
+  private recoverReadyMergesFromBuiltNodes(): void {
+    for (const { l, i } of this.built.entries()) this.enqueueParentIfSiblingBuilt(l, i);
+  }
+
+  private skipBuiltLeaves(): void {
+    while (this.built.has(0, this.nextUnstartedLeaf)) this.nextUnstartedLeaf++;
   }
 
   private peek(): Task | undefined {
-    if (this.retryLeaves.length > 0) return { kind: "leaf", i: this.retryLeaves[0]! };
-    this.skipBuilt();
-    if (this.leafNext < this.total() && this.unbuilt.size < this.window) {
-      return { kind: "leaf", i: this.leafNext };
+    if (this.leavesToRetry.length > 0) return { kind: "leaf", i: this.leavesToRetry[0]! };
+    this.skipBuiltLeaves();
+    const leafIsLogged = this.nextUnstartedLeaf < this.messageCount();
+    const fewEnoughLeavesUnbuilt = this.startedUnbuiltLeaves.size < this.maxStartedUnbuiltLeaves;
+    if (leafIsLogged && fewEnoughLeavesUnbuilt) {
+      return { kind: "leaf", i: this.nextUnstartedLeaf };
     }
-    const merge = this.merges[0];
+    const merge = this.readyMerges[0];
     return merge && { kind: "merge", ...merge };
   }
 
-  private enqueueParent(l: number, i: number): void {
-    if (!this.built.has(l, i ^ 1)) return;
+  private enqueueParentIfSiblingBuilt(l: number, i: number): void {
+    if (!this.built.has(l, siblingIndex(i))) return;
     const p = parent(l, i);
     const key = `${p.l}:${p.i}`;
-    if (this.built.has(p.l, p.i) || this.queued.has(key)) return;
-    this.queued.add(key);
-    this.merges.push(p);
+    if (this.built.has(p.l, p.i) || this.queuedMergeKeys.has(key)) return;
+    this.queuedMergeKeys.add(key);
+    this.readyMerges.push(p);
   }
 }

@@ -13,9 +13,10 @@ import { packTar, unpackTar } from "./tar.ts";
 
 export type BackupError = ArchiveError | BlobError | StateError | StoreError | ToolError;
 
-const KEEP_BACKUPS = 14;
-const DAY = 24 * 3_600_000;
-const LINK_LIFETIME = 3_600_000;
+const BACKUPS_KEPT = 14;
+const HOUR_MS = 3_600_000;
+const BACKUP_INTERVAL_MS = 24 * HOUR_MS;
+const EXPORT_LINK_LIFETIME_MS = HOUR_MS;
 
 const SettingsFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const DataFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
@@ -64,21 +65,13 @@ const token = () => {
     .replaceAll("=", "");
 };
 
-/**
- * A channel as files: the memory in the design's layout (`main/`, `tree/`, `view.json`), and
- * beside it `settings.json`, `artifacts.json` and `artifacts/<name>`. It is both
- * the export you take away and the nightly backup, and `restoreTar` reads it back.
- */
 export class Backup extends Context.Service<
   Backup,
   {
     readonly tar: Effect.Effect<Uint8Array, BackupError>;
-    /** Write the archive to a link that works for an hour. */
     readonly exportLink: Effect.Effect<string, BackupError>;
-    /** Back up when a day has passed since the last one. True when it ran. */
     backupIfDue(now: number): Effect.Effect<boolean, BackupError>;
     readonly nextBackupAt: Effect.Effect<number | undefined, StateError>;
-    /** Load an archive into this channel, which must have no messages yet. */
     restoreTar(bytes: Uint8Array): Effect.Effect<void, BackupError | ToolError>;
   }
 >()("mizook/Backup") {
@@ -93,9 +86,8 @@ export class Backup extends Context.Service<
       const artifacts = yield* Artifacts;
       const blobs = yield* Blobs;
       const { publicUrl } = yield* Settings;
-      // Exports and backups are filed under the agent's Durable Object.
       const { self } = yield* Host;
-      const channel = self.doName;
+      const agentDurableObjectName = self.doName;
 
       const tar = Effect.gen(function* () {
         const files: Record<string, string | Uint8Array> = { ...toFiles(yield* store.snapshot) };
@@ -135,7 +127,6 @@ export class Backup extends Context.Service<
         ).pipe(Effect.orDie);
         for (const { artifact, body, data } of published) {
           files[`artifacts/${artifact.name}`] = body;
-          // What a page saved goes with it.
           if (Object.keys(data).length > 0) {
             files[`artifacts-data/${artifact.name}.json`] = yield* Schema.encodeEffect(DataFile)(
               data,
@@ -150,7 +141,7 @@ export class Backup extends Context.Service<
         yield* blobs.put(`x/${key}`, yield* tar, {
           contentType: "application/x-tar",
           meta: {
-            expires: String(Date.now() + LINK_LIFETIME),
+            expires: String(Date.now() + EXPORT_LINK_LIFETIME_MS),
             filename: `${self.slug}.tar`,
           },
         });
@@ -159,21 +150,28 @@ export class Backup extends Context.Service<
 
       const backupIfDue = (now: number) =>
         Effect.gen(function* () {
-          const due = Number((yield* state.meta("next_backup")) ?? "NaN");
-          if (!Number.isFinite(due)) {
-            // First look: start the clock. An empty chat needs no backup.
-            yield* state.setMeta("next_backup", String(now + DAY));
+          const scheduledAt = Number((yield* state.meta("next_backup")) ?? "NaN");
+          const scheduleNextBackup = () =>
+            state.setMeta("next_backup", String(now + BACKUP_INTERVAL_MS));
+          const neverScheduled = !Number.isFinite(scheduledAt);
+          if (neverScheduled) {
+            yield* scheduleNextBackup();
             return false;
           }
-          if (now < due) return false;
-          yield* blobs.put(`backup/${channel}/${new Date(now).toISOString()}.tar`, yield* tar, {
-            contentType: "application/x-tar",
-          });
-          const all = yield* blobs.list(`backup/${channel}/`);
-          for (const old of all.slice(0, Math.max(0, all.length - KEEP_BACKUPS))) {
-            yield* blobs.delete(old);
+          if (now < scheduledAt) return false;
+          yield* blobs.put(
+            `backup/${agentDurableObjectName}/${new Date(now).toISOString()}.tar`,
+            yield* tar,
+            {
+              contentType: "application/x-tar",
+            },
+          );
+          const backupsOldestFirst = yield* blobs.list(`backup/${agentDurableObjectName}/`);
+          const expiredCount = Math.max(0, backupsOldestFirst.length - BACKUPS_KEPT);
+          for (const expired of backupsOldestFirst.slice(0, expiredCount)) {
+            yield* blobs.delete(expired);
           }
-          yield* state.setMeta("next_backup", String(now + DAY));
+          yield* scheduleNextBackup();
           return true;
         });
 
@@ -235,7 +233,7 @@ export class Backup extends Context.Service<
                 const body = files[`artifacts/${name}`];
                 if (body) {
                   yield* artifacts.publish(
-                    channel,
+                    agentDurableObjectName,
                     name,
                     new TextDecoder().decode(body),
                     contentType,

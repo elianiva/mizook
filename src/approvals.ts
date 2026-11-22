@@ -3,18 +3,12 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
 
 export interface Approval {
-  /** Short and local: it goes in a button, and Telegram allows 64 bytes there. */
   readonly id: number;
-  /** Executor's id of the paused execution. */
   readonly executionId: string;
   readonly summary: string;
-  /** The action a policy would match, so Always allow can save it. Empty when unknown. */
   readonly match: string;
-  /** When it was asked. */
   readonly created: number;
-  /** Where the turn that asked was talking: the card goes there. */
   readonly place: string;
-  /** A change of ours to carry out once approved, as JSON. Empty: an Executor call to resume. */
   readonly action: string;
 }
 
@@ -39,13 +33,8 @@ const toApproval = (r: typeof Row.Type): Approval => ({
   action: r.action,
 });
 
-/** An approval nobody answered in this long is stale: the turn that asked is long over. */
 export const APPROVAL_TTL_MS = 30 * 60_000;
 
-/**
- * What Executor paused for: kept until the user presses Approve or Deny, so a restart does not
- * lose the question. The tool writes it; the bot posts it as buttons and answers it.
- */
 export class Approvals extends Context.Service<
   Approvals,
   {
@@ -56,10 +45,8 @@ export class Approvals extends Context.Service<
       place: string,
       action?: string,
     ): Effect.Effect<Approval, StateError>;
-    /** Approvals of a place not yet shown to the user. */
     unposted(place: string): Effect.Effect<ReadonlyArray<Approval>, StateError>;
     markPosted(id: number): Effect.Effect<void, StateError>;
-    /** Remove and return an approval: a button press answers it once. */
     take(id: number): Effect.Effect<Approval | undefined, StateError>;
   }
 >()("mizook/Approvals") {

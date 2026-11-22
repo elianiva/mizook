@@ -1,7 +1,6 @@
 import { marked } from "marked";
 import { Option, Schema } from "effect";
 
-/** What the Worker does with a published file. Markdown, charts and tables become pages; the rest is served as it is. */
 export type Kind = "html" | "markdown" | "chart" | "table" | "file";
 
 export const KIND_TYPES = {
@@ -19,7 +18,6 @@ export const kindOf = (contentType: string): Kind => {
   return "file";
 };
 
-/** Library hosts a page may load scripts and styles from. A short list, as in Claude's artifacts. */
 export const CDNS = [
   "https://cdn.jsdelivr.net",
   "https://unpkg.com",
@@ -28,12 +26,12 @@ export const CDNS = [
 ] as const;
 
 const FONT_STYLES = "https://fonts.googleapis.com";
+const ALLOW_EXTENSION_FRAMES = "frame-src chrome-extension: moz-extension:";
 const FONT_FILES = "https://fonts.gstatic.com";
 
-/** Headers for a served page. Every kind runs in a sandbox with its own opaque origin. */
 export const artifactHeaders = (contentType: string): Headers => {
   const kind = kindOf(contentType);
-  const scripts =
+  const scriptPolicy =
     kind === "markdown"
       ? "script-src 'none'"
       : `script-src 'unsafe-inline' 'unsafe-eval' ${CDNS.join(" ")}`;
@@ -42,14 +40,13 @@ export const artifactHeaders = (contentType: string): Headers => {
     "content-security-policy": [
       "sandbox allow-scripts allow-forms allow-popups allow-modals",
       "default-src 'none'",
-      scripts,
+      scriptPolicy,
       `style-src 'unsafe-inline' ${CDNS.join(" ")} ${FONT_STYLES}`,
       "img-src data: blob: https:",
       `font-src data: ${FONT_FILES} ${CDNS.join(" ")}`,
       "media-src data: blob: https:",
       "connect-src https:",
-      // Browser extensions such as Yomitan show their popup in an iframe injected into the page.
-      "frame-src chrome-extension: moz-extension:",
+      ALLOW_EXTENSION_FRAMES,
     ].join("; "),
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
@@ -57,27 +54,24 @@ export const artifactHeaders = (contentType: string): Headers => {
   });
 };
 
-const esc = (text: string): string => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const escapeHtml = (text: string): string =>
+  text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** JSON safe to place inside a <script> element. */
-const scriptJson = (value: unknown): string =>
+const jsonSafeInScriptTag = (value: unknown): string =>
   JSON.stringify(value)
     .replace(/</g, "\\u003c")
     .replace(/\u2028|\u2029/g, " ");
 
-const clip = (text: string, max: number): string => {
+const MAX_TITLE_CHARS = 120;
+const MAX_DESCRIPTION_CHARS = 160;
+
+const clipToOneLine = (text: string, max: number): string => {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
 };
 
-/** The design the templates share: type, colour and spacing tokens, light and dark. */
 export const FONT_LINK = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">`;
 
-/**
- * The design the templates share. Monochrome and flat: hairline rules instead of boxes, no radius, no
- * shadow, no gradient. Inter for reading, IBM Plex Mono for the small facts (as on elianiva.com).
- * One blue, used only for links and focus.
- */
 export const BASE_CSS = `
 :root{color-scheme:light dark;--bg:oklch(100% 0 0);--subtle:oklch(98.6% .008 343);--fg:oklch(28.4% .109 3.9);--muted:oklch(54.2% .034 322.5);--line:oklch(93% .03 343);--line-strong:oklch(84% .06 343);--accent:oklch(52.5% .223 4);--accent-soft:oklch(89.9% .061 343);--tint:oklch(95.5% .03 343);--code:oklch(97% .012 343);--measure:48rem;--text-sm:.875rem;--text-base:1.0625rem;--text-lg:1.25rem;--text-xl:1.6rem;--text-2xl:clamp(2.25rem,7vw,3.25rem);--space-1:.5rem;--space-2:1rem;--space-3:2rem;--space-4:4rem;--font:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
 @media (prefers-color-scheme:dark){:root{--bg:oklch(14% .008 340);--subtle:oklch(17% .012 340);--fg:oklch(94% .02 343);--muted:oklch(70% .03 330);--line:oklch(25% .02 340);--line-strong:oklch(35% .03 340);--accent:oklch(76% .15 350);--accent-soft:oklch(32% .08 350);--tint:oklch(25% .06 350);--code:oklch(19% .012 340)}}
@@ -151,11 +145,11 @@ summary::-webkit-details-marker{display:none}
 `;
 
 const meta = (title: string, description: string): string =>
-  `<title>${esc(title)}</title>
-<meta name="description" content="${esc(description)}">
+  `<title>${escapeHtml(title)}</title>
+<meta name="description" content="${escapeHtml(description)}">
 <meta property="og:type" content="website">
-<meta property="og:title" content="${esc(title)}">
-<meta property="og:description" content="${esc(description)}">
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:description" content="${escapeHtml(description)}">
 <meta name="twitter:card" content="summary">
 <meta name="theme-color" content="#c2255c">`;
 
@@ -184,16 +178,12 @@ ${o.body}
 </html>`;
 
 export interface Context {
-  /** The file's name, used as the title when the content has none. */
   readonly name: string;
-  /** The site's origin and the artifact's token, for the data calls of a page. */
   readonly origin: string;
   readonly token: string;
 }
 
-// ── markdown ───────────────────────────────────────────────────────────────
-
-const plain = (html: string): string =>
+const stripTags = (html: string): string =>
   html.replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ");
 
 const renderMarkdown = (source: string, ctx: Context): string => {
@@ -201,13 +191,11 @@ const renderMarkdown = (source: string, ctx: Context): string => {
   const title = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1];
   const firstParagraph = /<p>([\s\S]*?)<\/p>/i.exec(html)?.[1];
   return shell({
-    title: clip(plain(title ?? ctx.name), 120),
-    description: clip(plain(firstParagraph ?? source), 160),
+    title: clipToOneLine(stripTags(title ?? ctx.name), MAX_TITLE_CHARS),
+    description: clipToOneLine(stripTags(firstParagraph ?? source), MAX_DESCRIPTION_CHARS),
     body: `<article class="doc">${html}</article>`,
   });
 };
-
-// ── table ──────────────────────────────────────────────────────────────────
 
 const Cell = Schema.NullOr(Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]));
 export const TableSpec = Schema.Struct({
@@ -234,11 +222,11 @@ const renderTable = (source: string, ctx: Context): string => {
   const spec = decodeTable(source);
   if (Option.isNone(spec)) return renderError("This table's data is not valid.", ctx);
   const { title = ctx.name, description, columns, rows } = spec.value;
-  const numeric = columns.map(
+  const isNumericColumn = columns.map(
     (_, i) => rows.length > 0 && rows.every((r) => r[i] == null || typeof r[i] === "number"),
   );
   const head = columns
-    .map((c, i) => `<th${numeric[i] ? ' class="num"' : ""}>${esc(c)}</th>`)
+    .map((c, i) => `<th${isNumericColumn[i] ? ' class="num"' : ""}>${escapeHtml(c)}</th>`)
     .join("");
   const body = rows
     .map(
@@ -246,24 +234,25 @@ const renderTable = (source: string, ctx: Context): string => {
         `<tr>${columns
           .map((_, i) => {
             const v = r[i] ?? "";
-            return `<td${numeric[i] ? ' class="num"' : ""} data-v="${esc(String(v))}">${esc(typeof v === "number" ? v.toLocaleString("en") : String(v))}</td>`;
+            return `<td${isNumericColumn[i] ? ' class="num"' : ""} data-v="${escapeHtml(String(v))}">${escapeHtml(typeof v === "number" ? v.toLocaleString("en") : String(v))}</td>`;
           })
           .join("")}</tr>`,
     )
     .join("");
   return shell({
-    title: clip(title, 120),
-    description: clip(description ?? `${rows.length} rows, ${columns.length} columns`, 160),
+    title: clipToOneLine(title, MAX_TITLE_CHARS),
+    description: clipToOneLine(
+      description ?? `${rows.length} rows, ${columns.length} columns`,
+      MAX_DESCRIPTION_CHARS,
+    ),
     wide: columns.length > 4,
-    body: `<header><h1>${esc(title)}</h1>${description ? `<p>${esc(description)}</p>` : ""}</header>
+    body: `<header><h1>${escapeHtml(title)}</h1>${description ? `<p>${escapeHtml(description)}</p>` : ""}</header>
 <div class="tools"><input id="q" type="search" placeholder="Filter" aria-label="Filter rows"><span class="count" id="n"></span></div>
 <div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
 <style>th[data-sort]::after{content:" " attr(data-sort);color:var(--fg)}</style>
 <script>${TABLE_SCRIPT}</script>`,
   });
 };
-
-// ── chart ──────────────────────────────────────────────────────────────────
 
 export const ChartSpec = Schema.Struct({
   type: Schema.Literals(["bar", "line", "pie", "doughnut", "radar"]),
@@ -299,27 +288,27 @@ const renderChart = (source: string, ctx: Context): string => {
   const rows = labels
     .map(
       (l, i) =>
-        `<tr><td>${esc(l)}</td>${datasets.map((d) => `<td class="num">${(d.data[i] ?? "").toLocaleString("en")}</td>`).join("")}</tr>`,
+        `<tr><td>${escapeHtml(l)}</td>${datasets.map((d) => `<td class="num">${(d.data[i] ?? "").toLocaleString("en")}</td>`).join("")}</tr>`,
     )
     .join("");
   return shell({
-    title: clip(title, 120),
-    description: clip(description ?? datasets.map((d) => d.label).join(", "), 160),
-    body: `<header><h1>${esc(title)}</h1>${description ? `<p>${esc(description)}</p>` : ""}</header>
-<div><div class="chart-box"><canvas id="c" role="img" aria-label="${esc(title)}"></canvas></div></div>
+    title: clipToOneLine(title, MAX_TITLE_CHARS),
+    description: clipToOneLine(
+      description ?? datasets.map((d) => d.label).join(", "),
+      MAX_DESCRIPTION_CHARS,
+    ),
+    body: `<header><h1>${escapeHtml(title)}</h1>${description ? `<p>${escapeHtml(description)}</p>` : ""}</header>
+<div><div class="chart-box"><canvas id="c" role="img" aria-label="${escapeHtml(title)}"></canvas></div></div>
 <details><summary>data</summary>
-<div class="table-wrap" style="margin-top:.75rem;max-height:none"><table><thead><tr><th></th>${datasets.map((d) => `<th class="num">${esc(d.label)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></details>
-<script id="spec" type="application/json">${scriptJson(spec.value)}</script>
+<div class="table-wrap" style="margin-top:.75rem;max-height:none"><table><thead><tr><th></th>${datasets.map((d) => `<th class="num">${escapeHtml(d.label)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></details>
+<script id="spec" type="application/json">${jsonSafeInScriptTag(spec.value)}</script>
 <script src="${CHART_JS}"></script>
 <script>${CHART_SCRIPT}</script>`,
   });
 };
 
-// ── html ───────────────────────────────────────────────────────────────────
-
-/** What a page can call: the data saved for it, read-only. Keyed by the page's link. */
-const bridge = (ctx: Context): string => `<script>
-(()=>{const base=${scriptJson(ctx.origin)}+"/d/"+${scriptJson(ctx.token)};
+const readOnlyPageDataBridge = (ctx: Context): string => `<script>
+(()=>{const base=${jsonSafeInScriptTag(ctx.origin)}+"/d/"+${jsonSafeInScriptTag(ctx.token)};
 const call=async path=>{const r=await fetch(base+path);if(!r.ok)throw new Error(await r.text());return r.status===204?null:r.json()};
 window.mizook={data:{
 all:()=>call(""),
@@ -339,21 +328,24 @@ const injectedHead = (
     has.meta ? "" : meta(title, description),
     FONT_LINK,
     `<style id="mizook-base">${BASE_CSS}:where(body){max-width:var(--measure);margin:0 auto;padding:clamp(32px,8vw,88px) clamp(20px,5vw,24px) 96px}</style>`,
-    bridge(ctx),
+    readOnlyPageDataBridge(ctx),
   ].join("\n");
 
 const renderHtml = (source: string, ctx: Context): string => {
-  const title = clip(
-    plain(
+  const title = clipToOneLine(
+    stripTags(
       /<title[^>]*>([\s\S]*?)<\/title>/i.exec(source)?.[1] ??
         /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(source)?.[1] ??
         ctx.name,
     ),
-    120,
+    MAX_TITLE_CHARS,
   );
   const described =
     /<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i.exec(source)?.[1] ??
-    clip(plain(source.replace(/<(script|style)[\s\S]*?<\/\1>/gi, "")), 160);
+    clipToOneLine(
+      stripTags(source.replace(/<(script|style)[\s\S]*?<\/\1>/gi, "")),
+      MAX_DESCRIPTION_CHARS,
+    );
   const has = {
     meta: /<meta[^>]+property=["']og:title["']/i.test(source) || /<title[\s>]/i.test(source),
     viewport: /<meta[^>]+name=["']viewport["']/i.test(source),
@@ -372,13 +364,9 @@ const renderError = (message: string, ctx: Context): string =>
   shell({
     title: ctx.name,
     description: message,
-    body: `<p>${esc(message)}</p>`,
+    body: `<p>${escapeHtml(message)}</p>`,
   });
 
-/**
- * The page for a published file, drawn when it is opened, so a change to a template reaches every page
- * already published. A file that is not a page kind comes back as it is.
- */
 export const renderArtifact = (
   contentType: string,
   source: string,
@@ -402,8 +390,7 @@ const STYLE_BLOCKS = /<style[^>]*>([\s\S]*?)<\/style>|\sstyle=("[^"]*"|'[^']*')/
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i;
 const FONT_SIZE_LITERAL = /font-size\s*:\s*[\d.]+(?:px|rem)/i;
 
-/** Hard rules for html pages, so they use the design tokens instead of inventing colours and sizes. */
-const checkHtml = (source: string): string | undefined => {
+const htmlDesignTokenViolation = (source: string): string | undefined => {
   for (const m of source.matchAll(STYLE_BLOCKS)) {
     const css = (m[1] ?? m[2] ?? "").replace(/var\([^)]*\)/g, "");
     if (COLOR_LITERAL.test(css)) {
@@ -422,7 +409,6 @@ const checkHtml = (source: string): string | undefined => {
   return undefined;
 };
 
-/** Why a file cannot be published as this kind, or `undefined` when it is fine. */
 export const checkContent = (contentType: string, source: string): string | undefined => {
   switch (kindOf(contentType)) {
     case "table":
@@ -434,7 +420,7 @@ export const checkContent = (contentType: string, source: string): string | unde
         ? 'a chart is JSON: {"type": "bar"|"line"|"pie"|"doughnut"|"radar", "title"?, "labels": [...], "datasets": [{"label": "…", "data": [numbers]}]}'
         : undefined;
     case "html":
-      return checkHtml(source);
+      return htmlDesignTokenViolation(source);
     default:
       return undefined;
   }

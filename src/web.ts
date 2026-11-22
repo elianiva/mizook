@@ -11,11 +11,9 @@ const ENTITIES: Record<string, string> = {
   nbsp: " ",
 };
 
-/** The readable text of an HTML page: no scripts or styles, one block per line. */
 export const htmlToText = (html: string): string => {
-  // Prefer the page's own main content when it names one.
-  const main = /<(main|article)\b[^>]*>([\s\S]*?)<\/\1>/i.exec(html)?.[2] ?? html;
-  return main
+  const mainContentOrWholePage = /<(main|article)\b[^>]*>([\s\S]*?)<\/\1>/i.exec(html)?.[2] ?? html;
+  return mainContentOrWholePage
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<(script|style|noscript|svg|template|head)\b[\s\S]*?<\/\1>/gi, "")
     .replace(
@@ -38,13 +36,13 @@ export const htmlToText = (html: string): string => {
 export interface Page {
   readonly status: number;
   readonly contentType: string;
-  /** Readable text: HTML is converted, anything else is returned as is. */
   readonly text: string;
-  /** The body was longer than `maxBytes` and was cut. */
   readonly truncated: boolean;
 }
 
-/** Fetch a page as text with Effect's HTTP client. Bounded in time and size. */
+const DEFAULT_MAX_PAGE_BYTES = 1_000_000;
+const DEFAULT_FETCH_TIMEOUT: Duration.Input = "15 seconds";
+
 export const fetchPage = (
   url: string,
   options: { readonly maxBytes?: number; readonly timeout?: Duration.Input } = {},
@@ -52,7 +50,7 @@ export const fetchPage = (
   Effect.gen(function* () {
     if (!/^https?:\/\//i.test(url))
       return yield* new WebError({ url, reason: "only http(s) urls" });
-    const maxBytes = options.maxBytes ?? 1_000_000;
+    const maxBytes = options.maxBytes ?? DEFAULT_MAX_PAGE_BYTES;
     const response = yield* HttpClient.get(url, {
       headers: {
         "user-agent": "Mozilla/5.0 (compatible; Mizook/1.0)",
@@ -70,7 +68,7 @@ export const fetchPage = (
       truncated,
     };
   }).pipe(
-    Effect.timeout(options.timeout ?? "15 seconds"),
+    Effect.timeout(options.timeout ?? DEFAULT_FETCH_TIMEOUT),
     Effect.mapError((cause) =>
       cause instanceof WebError
         ? cause
@@ -78,7 +76,6 @@ export const fetchPage = (
     ),
   );
 
-/** A hex SHA-256 of a text, to tell whether a page changed. */
 export const sha256 = async (text: string): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

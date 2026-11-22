@@ -75,8 +75,6 @@ type H = HtmlBuilder<Message>;
 
 const PAGE_SIZE = 50;
 
-// PIECES
-
 const remote = <A>(
   data: AsyncData.AsyncData<A, string>,
   h: H,
@@ -147,8 +145,6 @@ const tableView = (headers: ReadonlyArray<Html>, rows: ReadonlyArray<Html>, h: H
     [h.Class(ui.tableWrap)],
     [h.table([h.Class(ui.table)], [h.thead([], [h.tr([], headers)]), h.tbody([], rows)])],
   );
-
-// OVERVIEW
 
 const meterColor = (used: number): string =>
   used >= 90 ? "var(--colors-danger)" : used >= 70 ? "var(--colors-warn)" : "var(--colors-ok)";
@@ -466,8 +462,6 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
     );
   });
 
-// LOG
-
 const KINDS = ["user", "agent", "tool", "echo", "note"];
 
 const filterView = (model: Model, h: H): Html =>
@@ -613,14 +607,13 @@ const entryView = (model: Model, channel: string, entryId: number, h: H): Html =
     ],
   );
 
-// MEMORY
-
 const KIND_PREFIX = /^(user|agent|tool|echo|note): ?([\s\S]*)$/;
 
-/** `12+4` is messages 12 to 15. */
-const spanOf = (label: string): { readonly start: number; readonly count: number } => {
-  const [start, count_] = label.split("+").map(Number);
-  return { start: start ?? 0, count: count_ ?? 1 };
+const spanOf = (
+  startPlusCountLabel: string,
+): { readonly start: number; readonly count: number } => {
+  const [firstMessage, messageCount] = startPlusCountLabel.split("+").map(Number);
+  return { start: firstMessage ?? 0, count: messageCount ?? 1 };
 };
 
 const levelShade = (level: number): string =>
@@ -835,8 +828,6 @@ const memoryView = (model: Model, channel: string, h: H): Html =>
     }),
   );
 
-// USAGE
-
 const dailySection = (report: typeof UsageReport.Type, h: H): Html =>
   sectionView(
     "By day",
@@ -1019,8 +1010,6 @@ const rangeView = (model: Model, days: number, h: H): Html =>
     ),
   );
 
-// SCHEDULES
-
 const scheduleCard = (model: Model, schedule: typeof ScheduleRow.Type, h: H): Html => {
   const info = describeSpec(schedule.spec);
   return h.keyed("div")(
@@ -1089,8 +1078,6 @@ const schedulesView = (model: Model, channel: string, h: H): Html =>
         ),
     }),
   );
-
-// AGENT
 
 type AgentEditor = {
   readonly kind: AgentKind;
@@ -1586,8 +1573,6 @@ const agentView = (model: Model, channel: string, h: H): Html =>
     ],
   );
 
-// RUNS
-
 const runStatusColor = (status: string): string =>
   status === "succeeded"
     ? "var(--colors-ok)"
@@ -1651,8 +1636,6 @@ const runsView = (model: Model, channel: string, h: H): Html =>
         ),
     }),
   );
-
-// SETTINGS
 
 const SETTINGS: ReadonlyArray<{
   readonly key: SettingKey;
@@ -1748,8 +1731,6 @@ const settingsView = (model: Model, channel: string, h: H): Html =>
       ],
     ),
   );
-
-// ARTIFACTS
 
 const deleteButton = (model: Model, row: typeof ArtifactRow.Type, h: H): Html => {
   const armed = Option.contains(model.armed, `artifact-delete:${row.name}`);
@@ -1974,8 +1955,6 @@ const artifactsView = (model: Model, channel: string, name: Option.Option<string
     }),
   );
 
-// AUDIT
-
 const auditView = (model: Model, channel: string, h: H): Html =>
   remote(auditQuery.read(model.audit, { channel }), h, skeletonView(h, 1), (rows) =>
     Array.match(rows, {
@@ -2011,8 +1990,6 @@ const auditView = (model: Model, channel: string, h: H): Html =>
         ),
     }),
   );
-
-// SHELL
 
 const channelSelect = (model: Model, h: H): Html =>
   AsyncData.matchData(channelsRead(model.channels), {

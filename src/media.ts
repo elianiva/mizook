@@ -18,17 +18,17 @@ export const MEDIA_LABEL = {
   document: "Document",
 } as const;
 
-const AUDIO_MAX = 25 * 1024 * 1024;
-const IMAGE_MAX = 10 * 1024 * 1024;
-const DOCUMENT_MAX = 20 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 
-const AUDIO = /\.(ogg|oga|mp3|m4a|wav|flac)$/i;
-const IMAGE = /\.(png|jpe?g|webp|gif|heic)$/i;
+const AUDIO_EXTENSION = /\.(ogg|oga|mp3|m4a|wav|flac)$/i;
+const IMAGE_EXTENSION = /\.(png|jpe?g|webp|gif|heic)$/i;
 
 const isAudio = (input: ExtractInput) =>
-  input.contentType.startsWith("audio/") || AUDIO.test(input.name);
+  input.contentType.startsWith("audio/") || AUDIO_EXTENSION.test(input.name);
 const isImage = (input: ExtractInput) =>
-  input.contentType.startsWith("image/") || IMAGE.test(input.name);
+  input.contentType.startsWith("image/") || IMAGE_EXTENSION.test(input.name);
 const isDocument = (input: ExtractInput) =>
   input.contentType === "application/pdf" ||
   input.contentType === "application/msword" ||
@@ -36,10 +36,6 @@ const isDocument = (input: ExtractInput) =>
   input.contentType.includes("presentationml") ||
   input.contentType.includes("spreadsheetml");
 
-/**
- * Read what the user sent with Workers AI: a voice note becomes text, an image becomes a
- * description, and a document becomes markdown. Unsupported files stay a name and a size.
- */
 export class Media extends Context.Service<
   Media,
   {
@@ -59,7 +55,7 @@ export class Media extends Context.Service<
             });
 
           if (isAudio(input)) {
-            if (input.bytes.length > AUDIO_MAX) {
+            if (input.bytes.length > MAX_AUDIO_BYTES) {
               return Effect.fail(
                 new MediaError({ operation: "transcribe", cause: "file is too large" }),
               );
@@ -74,7 +70,7 @@ export class Media extends Context.Service<
           }
 
           if (isImage(input)) {
-            if (input.bytes.length > IMAGE_MAX) {
+            if (input.bytes.length > MAX_IMAGE_BYTES) {
               return Effect.fail(
                 new MediaError({ operation: "describe", cause: "file is too large" }),
               );
@@ -92,7 +88,7 @@ export class Media extends Context.Service<
           }
 
           if (isDocument(input)) {
-            if (input.bytes.length > DOCUMENT_MAX) {
+            if (input.bytes.length > MAX_DOCUMENT_BYTES) {
               return Effect.fail(
                 new MediaError({ operation: "convert", cause: "file is too large" }),
               );

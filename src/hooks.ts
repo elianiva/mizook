@@ -1,6 +1,11 @@
 const encoder = new TextEncoder();
 
-/** The secret part of a channel's webhook link: an HMAC of its name, so nothing is stored. */
+const toBase64Url = (bytes: Uint8Array): string =>
+  btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+
 export const hookToken = async (secret: string, channel: string): Promise<string> => {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -9,28 +14,27 @@ export const hookToken = async (secret: string, channel: string): Promise<string
     false,
     ["sign"],
   );
-  const mac = new Uint8Array(
+  const hmacOfChannelName = new Uint8Array(
     await crypto.subtle.sign("HMAC", key, encoder.encode(`hook:${channel}`)),
   );
-  return btoa(String.fromCharCode(...mac))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+  return toBase64Url(hmacOfChannelName);
 };
 
-/** Whether `token` is the token of `channel`, compared in constant time. */
+const sameLengthBytesEqualInConstantTime = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.reduce((diff, byte, i) => diff | (byte ^ right[i]!), 0) === 0;
+
 export const hookTokenValid = async (
   secret: string,
   channel: string,
   token: string,
 ): Promise<boolean> => {
-  const [a, b] = await Promise.all(
+  const [expectedDigest, givenDigest] = await Promise.all(
     [await hookToken(secret, channel), token].map((s) =>
       crypto.subtle.digest("SHA-256", encoder.encode(s)),
     ),
   );
-  const x = new Uint8Array(a!);
-  const y = new Uint8Array(b!);
-  // Digests have one length, so comparing every byte takes the same time whatever differs.
-  return x.reduce((diff, byte, i) => diff | (byte ^ y[i]!), 0) === 0;
+  return sameLengthBytesEqualInConstantTime(
+    new Uint8Array(expectedDigest!),
+    new Uint8Array(givenDigest!),
+  );
 };

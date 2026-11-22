@@ -52,13 +52,10 @@ import {
 } from "./tools.ts";
 import { toolPaths } from "./codemode.ts";
 
-/** What a tool does, by name. The arguments were already checked against the tool's schema. */
 export class Handlers extends Context.Service<
   Handlers,
   {
-    /** `place` is where the turn that called it is talking; undefined outside a turn. */
     call(name: string, args: unknown, place: string | undefined): Effect.Effect<string>;
-    /** The same, failing with what went wrong instead of answering with it. */
     run(
       name: string,
       args: unknown,
@@ -103,8 +100,7 @@ export class Handlers extends Context.Service<
         }
       };
 
-      /** The agent an action names by slug, as its id; you by default. */
-      const agentId = (slug: string | undefined) =>
+      const agentIdBySlugDefaultingToSelf = (slug: string | undefined) =>
         Effect.gen(function* () {
           const wanted = slug?.trim().replace(/^\//, "").toLowerCase();
           if (!wanted || wanted === host.self.slug) return host.self.id;
@@ -113,8 +109,7 @@ export class Handlers extends Context.Service<
           return found.id;
         });
 
-      /** An automation in one line, with its webhook link when it has one. */
-      const describe = (a: Automation) =>
+      const oneLineWithWebhookLink = (a: Automation) =>
         Effect.gen(function* () {
           const agents = yield* host.agents;
           const line = describeAutomation(
@@ -139,14 +134,13 @@ export class Handlers extends Context.Service<
                 if (!SKILL_NAME.test(skill)) {
                   return yield* new ToolError({ reason: `"${skill}" is not a skill name` });
                 }
-                // An automation needs its skill: keep it, yours first, then the shared one.
                 if (yield* skills.get(skill)) yield* skills.pin(skill);
                 else if (yield* host.globalSkills.get(skill)) yield* host.globalSkills.pin(skill);
                 else return yield* new ToolError({ reason: `no skill "${skill}"` });
               }
               return {
                 kind: "turn" as const,
-                agent: yield* agentId(a.agent),
+                agent: yield* agentIdBySlugDefaultingToSelf(a.agent),
                 place: where,
                 prompt,
                 ...(skill ? { skill } : {}),
@@ -155,7 +149,12 @@ export class Handlers extends Context.Service<
             case "post": {
               const text = a.text?.trim();
               if (!text) return yield* new ToolError({ reason: "a post needs text" });
-              return { kind: "post" as const, agent: yield* agentId(a.agent), place: where, text };
+              return {
+                kind: "post" as const,
+                agent: yield* agentIdBySlugDefaultingToSelf(a.agent),
+                place: where,
+                text,
+              };
             }
             case "webhook": {
               if (!a.call_url)
@@ -173,8 +172,7 @@ export class Handlers extends Context.Service<
       const decode = <S extends Schema.Decoder<unknown>>(schema: S, args: unknown) =>
         Schema.decodeUnknownEffect(schema)(args);
 
-      /** What a policy matches: the executor tool plus the paths of the calls inside it. */
-      const targetOf = (tool: string, input: Record<string, unknown>): string => {
+      const policyTarget = (tool: string, input: Record<string, unknown>): string => {
         const calls = Array.isArray(input.calls) ? input.calls : [];
         const paths = calls.flatMap((call) => {
           if (typeof call !== "object" || call === null || !("path" in call)) return [];
@@ -308,7 +306,7 @@ export class Handlers extends Context.Service<
             return Effect.gen(function* () {
               const a = yield* decode(ExecutorArgs, args);
               const call = a.input;
-              const target = targetOf(a.tool, call);
+              const target = policyTarget(a.tool, call);
               const decision = yield* policies.decide(target);
               if (decision === "deny") {
                 return yield* new ToolError({ reason: `a policy denies ${target}` });
@@ -440,8 +438,7 @@ export class Handlers extends Context.Service<
             return Effect.gen(function* () {
               const a = yield* decode(SkillArgs, args);
               const global = host.globalSkills;
-              /** The skill by name: yours first, then the shared one, unless a scope is given. */
-              const find = (name: string) =>
+              const findOwnFirstThenSharedUnlessScoped = (name: string) =>
                 Effect.gen(function* () {
                   if (a.scope !== "global") {
                     const mine = yield* skills.get(name);
@@ -468,7 +465,7 @@ export class Handlers extends Context.Service<
                 }
                 case "read": {
                   if (!a.name) return yield* new ToolError({ reason: "read needs a name" });
-                  const found = yield* find(a.name);
+                  const found = yield* findOwnFirstThenSharedUnlessScoped(a.name);
                   if (!found) return yield* new ToolError({ reason: `no skill "${a.name}"` });
                   yield* found.store.touch(a.name);
                   return `# ${found.skill.name}\n${found.skill.description}\n\n${found.skill.body}`;
@@ -503,7 +500,7 @@ export class Handlers extends Context.Service<
                 }
                 case "delete": {
                   if (!a.name) return yield* new ToolError({ reason: "delete needs a name" });
-                  const found = yield* find(a.name);
+                  const found = yield* findOwnFirstThenSharedUnlessScoped(a.name);
                   if (!found) return `No skill "${a.name}".`;
                   if (found.skill.pinned) {
                     return yield* new ToolError({
@@ -634,13 +631,13 @@ export class Handlers extends Context.Service<
               const spec = yield* specOf(a);
               const action = yield* actionOf(a, place);
               const made = yield* host.automations.create(spec, action);
-              return `Automation made. ${yield* describe(made)}`;
+              return `Automation made. ${yield* oneLineWithWebhookLink(made)}`;
             });
           case "automation_list":
             return Effect.gen(function* () {
               const all = yield* host.automations.list(host.self.id);
               if (all.length === 0) return "No automations.";
-              return (yield* Effect.forEach(all, describe)).join("\n");
+              return (yield* Effect.forEach(all, oneLineWithWebhookLink)).join("\n");
             });
           case "automation_cancel":
             return Effect.flatMap(decode(AutomationIdArgs, args), ({ id }) =>
@@ -673,13 +670,12 @@ export class Handlers extends Context.Service<
         }
       };
 
-      // A failure becomes text the agent reads and can act on; it never fails the turn.
+      const failureAsTextTheAgentCanActOn = (error: { readonly message: string }) =>
+        Effect.succeed(`Error: ${error.message}`);
       return Handlers.of({
         run,
         call: (name, args, place) =>
-          run(name, args, place).pipe(
-            Effect.catch((error) => Effect.succeed(`Error: ${error.message}`)),
-          ),
+          run(name, args, place).pipe(Effect.catch(failureAsTextTheAgentCanActOn)),
       });
     }),
   );

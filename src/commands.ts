@@ -14,14 +14,9 @@ import { Usage } from "./usage.ts";
 
 const dollars = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 
-/** Slash commands: the user's controls over an agent and the place they type in. They never reach the model. */
 export class Commands extends Context.Service<
   Commands,
   {
-    /**
-     * The reply to a command typed in `place`, or `undefined` when the text is not a command at
-     * all. Every command gets a reply.
-     */
     run(place: string, text: string): Effect.Effect<string | undefined, AgentError | StateError>;
   }
 >()("mizook/Commands") {
@@ -37,16 +32,14 @@ export class Commands extends Context.Service<
       const host = yield* Host;
       const agent = yield* Agent;
 
-      /** Save a setting of this agent and rebuild it so the setting takes effect. */
-      const set = (key: string, value: string, said: string) =>
+      const saveSettingAndReload = (key: string, value: string, said: string) =>
         Effect.gen(function* () {
           yield* state.setMeta(`setting:${key}`, value);
           yield* host.reload;
           return said;
         });
 
-      /** Drop an agent's own setting so the environment's value applies again. */
-      const reset = (key: string, said: string) =>
+      const resetSetting = (key: string, said: string) =>
         Effect.gen(function* () {
           yield* state.deleteMeta(`setting:${key}`);
           yield* host.reload;
@@ -59,7 +52,7 @@ export class Commands extends Context.Service<
         const arg = (match[2] ?? "").trim();
         const name = match[1] ?? "";
         if (arg === "reset" && ["model", "instructions", "timezone", "budget"].includes(name)) {
-          return yield* reset(name, `${name} is back to the default.`);
+          return yield* resetSetting(name, `${name} is back to the default.`);
         }
         switch (name) {
           case "stop":
@@ -78,13 +71,13 @@ export class Commands extends Context.Service<
           case "model":
             return arg === ""
               ? `Model: ${settings.model}. Change it with /model <id>, or /model reset.`
-              : yield* set("model", arg, `Model set to ${arg}.`);
+              : yield* saveSettingAndReload("model", arg, `Model set to ${arg}.`);
           case "instructions":
             return arg === ""
               ? settings.instructions === ""
                 ? `No instructions for ${host.self.slug}. Set them with /instructions <text>.`
                 : `${settings.instructions}\n\n/instructions reset clears it.`
-              : yield* set("instructions", arg, "Instructions saved.");
+              : yield* saveSettingAndReload("instructions", arg, "Instructions saved.");
           case "timezone":
             return arg === ""
               ? `Time zone: ${settings.timezone}.`
@@ -92,14 +85,16 @@ export class Commands extends Context.Service<
                   try: () => new Intl.DateTimeFormat("en", { timeZone: arg }),
                   catch: () => "unknown",
                 }).pipe(
-                  Effect.flatMap(() => set("timezone", arg, `Time zone set to ${arg}.`)),
+                  Effect.flatMap(() =>
+                    saveSettingAndReload("timezone", arg, `Time zone set to ${arg}.`),
+                  ),
                   Effect.orElseSucceed(() => `"${arg}" is not an IANA time zone.`),
                 );
           case "budget":
             return arg === ""
               ? `Daily budget: ${settings.budgetDaily === 0 ? "none" : dollars(settings.budgetDaily)}. Set it with /budget <dollars>, 0 for none, or /budget reset.`
               : Number.isFinite(Number(arg)) && Number(arg) >= 0
-                ? yield* set("budget", arg, `Daily budget set to ${arg}.`)
+                ? yield* saveSettingAndReload("budget", arg, `Daily budget set to ${arg}.`)
                 : "Give a number of dollars, 0 for none.";
           case "name":
             if (arg === "")

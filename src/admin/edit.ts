@@ -10,12 +10,11 @@ import {
 import { Policies } from "../policies.ts";
 import { MAX_SKILL_BODY, MAX_SKILL_DESCRIPTION, SKILL_NAME, Skills } from "../skills.ts";
 
-/** A write the dashboard asked for: either the reply to show, or the reason it did not happen. */
 export type EditOutcome =
   | { readonly ok: true; readonly said: string }
   | { readonly ok: false; readonly error: string };
 
-const bad = (error: string): EditOutcome => ({ ok: false, error });
+const refused = (error: string): EditOutcome => ({ ok: false, error });
 
 const ProfileInput = Schema.Struct({
   about: Schema.optionalKey(Schema.String),
@@ -60,9 +59,10 @@ const profile = (input: ProfileInput) =>
     const host = yield* Host;
     const about = (input.about ?? "").trim();
     const rules = clean(input.rules);
-    if (about.length > 4_000) return bad("Keep the profile under 4,000 characters.");
-    if (rules.length > 20) return bad("Keep the rules to 20 or fewer.");
-    if (rules.some((rule) => rule.length > 500)) return bad("Keep each rule under 500 characters.");
+    if (about.length > 4_000) return refused("Keep the profile under 4,000 characters.");
+    if (rules.length > 20) return refused("Keep the rules to 20 or fewer.");
+    if (rules.some((rule) => rule.length > 500))
+      return refused("Keep each rule under 500 characters.");
     const saved = yield* host.updateProfile(about, rules);
     return {
       ok: true as const,
@@ -75,33 +75,33 @@ const skill = (input: SkillInput) =>
     const skills = yield* Skills;
     const action = input.action ?? "save";
     const name = (input.name ?? "").trim();
-    if (name === "") return bad("Give the skill a name.");
+    if (name === "") return refused("Give the skill a name.");
     if (action === "delete") {
       const found = yield* skills.get(name);
-      if (!found) return bad(`No skill "${name}".`);
+      if (!found) return refused(`No skill "${name}".`);
       if (found.pinned)
-        return bad(`"${name}" is pinned by an automation; cancel the automation first.`);
+        return refused(`"${name}" is pinned by an automation; cancel the automation first.`);
       return (yield* skills.remove(name))
         ? { ok: true as const, said: `Deleted skill "${name}".` }
-        : bad(`No skill "${name}".`);
+        : refused(`No skill "${name}".`);
     }
 
     const description = (input.description ?? "").trim();
     const body = (input.body ?? "").trim();
     if (!SKILL_NAME.test(name)) {
-      return bad("Use lowercase letters, digits and dashes for the name, up to 64 characters.");
+      return refused("Use lowercase letters, digits and dashes for the name, up to 64 characters.");
     }
     const existing = yield* skills.get(name);
     if (existing?.pinned === true && input.pinned === false) {
-      return bad(`"${name}" is pinned by an automation; cancel the automation first.`);
+      return refused(`"${name}" is pinned by an automation; cancel the automation first.`);
     }
-    if (description === "") return bad("Describe when to use the skill.");
+    if (description === "") return refused("Describe when to use the skill.");
     if (description.length > MAX_SKILL_DESCRIPTION) {
-      return bad(`Keep the description under ${MAX_SKILL_DESCRIPTION} characters.`);
+      return refused(`Keep the description under ${MAX_SKILL_DESCRIPTION} characters.`);
     }
-    if (body === "") return bad("Write the skill's steps.");
+    if (body === "") return refused("Write the skill's steps.");
     if (body.length > MAX_SKILL_BODY) {
-      return bad(`Keep the body under ${MAX_SKILL_BODY} characters.`);
+      return refused(`Keep the body under ${MAX_SKILL_BODY} characters.`);
     }
     yield* skills.save(name, description, body);
     if (input.pinned !== undefined) yield* skills.setPinned(name, input.pinned);
@@ -116,32 +116,32 @@ const intent = (input: IntentInput) =>
     if (action === "cancel") {
       const id = input.id;
       if (id === undefined || !Number.isInteger(id) || id < 1)
-        return bad("Choose an intent to cancel.");
+        return refused("Choose an intent to cancel.");
       return (yield* intents.cancel(id))
         ? { ok: true as const, said: `Cancelled intent #${id}.` }
-        : bad(`No armed intent #${id}.`);
+        : refused(`No armed intent #${id}.`);
     }
 
     const description = (input.description ?? "").trim();
     const triggers = clean(input.triggers);
-    if (description === "") return bad("Say what the intent should do.");
+    if (description === "") return refused("Say what the intent should do.");
     if (description.length > MAX_INTENT_DESCRIPTION) {
-      return bad(`Keep the description under ${MAX_INTENT_DESCRIPTION} characters.`);
+      return refused(`Keep the description under ${MAX_INTENT_DESCRIPTION} characters.`);
     }
-    if (triggers.length === 0) return bad("Add at least one trigger.");
+    if (triggers.length === 0) return refused("Add at least one trigger.");
     if (triggers.length > MAX_INTENT_TRIGGERS) {
-      return bad(`Keep triggers to ${MAX_INTENT_TRIGGERS} or fewer.`);
+      return refused(`Keep triggers to ${MAX_INTENT_TRIGGERS} or fewer.`);
     }
     if (triggers.some((trigger) => trigger.length > MAX_TRIGGER_LENGTH)) {
-      return bad(`Keep each trigger under ${MAX_TRIGGER_LENGTH} characters.`);
+      return refused(`Keep each trigger under ${MAX_TRIGGER_LENGTH} characters.`);
     }
     const expires = input.expires;
     if (expires === undefined || !Number.isInteger(expires) || expires <= Date.now()) {
-      return bad("Choose an expiry date in the future.");
+      return refused("Choose an expiry date in the future.");
     }
     const maxFires = input.maxFires;
     if (maxFires === undefined || !Number.isInteger(maxFires) || maxFires < 1 || maxFires > 1_000) {
-      return bad("Let the intent fire between 1 and 1,000 times.");
+      return refused("Let the intent fire between 1 and 1,000 times.");
     }
     const cooldownHours = input.cooldownHours;
     if (
@@ -150,7 +150,7 @@ const intent = (input: IntentInput) =>
       cooldownHours < 0 ||
       cooldownHours > 8_760
     ) {
-      return bad("Use a cooldown between 0 and 8,760 hours.");
+      return refused("Use a cooldown between 0 and 8,760 hours.");
     }
     const changes = {
       description,
@@ -169,9 +169,11 @@ const intent = (input: IntentInput) =>
       return { ok: true as const, said: `Standing intent #${made.id} armed.` };
     }
     const id = input.id;
-    if (!Number.isInteger(id) || id < 1) return bad("Choose an intent to save.");
+    if (!Number.isInteger(id) || id < 1) return refused("Choose an intent to save.");
     const saved = yield* intents.update(id, changes);
-    return saved ? { ok: true as const, said: `Saved intent #${id}.` } : bad(`No intent #${id}.`);
+    return saved
+      ? { ok: true as const, said: `Saved intent #${id}.` }
+      : refused(`No intent #${id}.`);
   });
 
 const policy = (input: PolicyInput) =>
@@ -182,32 +184,33 @@ const policy = (input: PolicyInput) =>
     if (action === "remove") {
       const id = input.id;
       if (id === undefined || !Number.isInteger(id) || id < 1)
-        return bad("Choose a policy to remove.");
+        return refused("Choose a policy to remove.");
       return (yield* policies.remove(id))
         ? { ok: true as const, said: `Removed policy #${id}.` }
-        : bad(`No policy #${id}.`);
+        : refused(`No policy #${id}.`);
     }
 
     const match = (input.match ?? "").trim().toLowerCase();
     const decision = input.decision ?? "ask";
-    if (match === "") return bad("Give the policy something to match.");
-    if (match.length > 200) return bad("Keep the match under 200 characters.");
+    if (match === "") return refused("Give the policy something to match.");
+    if (match.length > 200) return refused("Keep the match under 200 characters.");
     if (input.id === undefined) {
       const made = yield* policies.add(match, decision);
       return { ok: true as const, said: `Policy #${made.id}: ${made.decision} ${made.match}.` };
     }
     const id = input.id;
-    if (!Number.isInteger(id) || id < 1) return bad("Choose a policy to save.");
+    if (!Number.isInteger(id) || id < 1) return refused("Choose a policy to save.");
     const all = yield* policies.list;
-    if (!all.some((item) => item.id === id)) return bad(`No policy #${id}.`);
+    if (!all.some((item) => item.id === id)) return refused(`No policy #${id}.`);
     if (all.some((item) => item.id !== id && item.match === match && item.decision === decision)) {
-      return bad("That rule already exists.");
+      return refused("That rule already exists.");
     }
     const saved = yield* policies.update(id, match, decision);
-    return saved ? { ok: true as const, said: `Saved policy #${id}.` } : bad(`No policy #${id}.`);
+    return saved
+      ? { ok: true as const, said: `Saved policy #${id}.` }
+      : refused(`No policy #${id}.`);
   });
 
-/** Apply a dashboard edit through the same services the chat uses. */
 export const edit = (
   kind: string,
   input: unknown,
@@ -215,21 +218,23 @@ export const edit = (
   switch (kind) {
     case "profile": {
       const parsed = Schema.decodeUnknownOption(ProfileInput)(input);
-      return Option.isNone(parsed) ? Effect.succeed(bad("Bad request.")) : profile(parsed.value);
+      return Option.isNone(parsed)
+        ? Effect.succeed(refused("Bad request."))
+        : profile(parsed.value);
     }
     case "skills": {
       const parsed = Schema.decodeUnknownOption(SkillInput)(input);
-      return Option.isNone(parsed) ? Effect.succeed(bad("Bad request.")) : skill(parsed.value);
+      return Option.isNone(parsed) ? Effect.succeed(refused("Bad request.")) : skill(parsed.value);
     }
     case "intents": {
       const parsed = Schema.decodeUnknownOption(IntentInput)(input);
-      return Option.isNone(parsed) ? Effect.succeed(bad("Bad request.")) : intent(parsed.value);
+      return Option.isNone(parsed) ? Effect.succeed(refused("Bad request.")) : intent(parsed.value);
     }
     case "policies": {
       const parsed = Schema.decodeUnknownOption(PolicyInput)(input);
-      return Option.isNone(parsed) ? Effect.succeed(bad("Bad request.")) : policy(parsed.value);
+      return Option.isNone(parsed) ? Effect.succeed(refused("Bad request.")) : policy(parsed.value);
     }
     default:
-      return Effect.succeed(bad("Unknown thing to edit."));
+      return Effect.succeed(refused("Unknown thing to edit."));
   }
 };

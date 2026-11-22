@@ -2,8 +2,10 @@ export const usd = (amount: number): string => `$${amount.toFixed(amount < 1 ? 4
 
 export const count = (value: number): string => value.toLocaleString("en-US");
 
-/** `2026-11-01 00:12`, in UTC, from an ISO timestamp. */
-export const dateTime = (iso: string): string => iso.slice(0, 16).replace("T", " ");
+const ISO_DATE_AND_MINUTES_LENGTH = "2026-11-01T00:12".length;
+
+export const dateTime = (isoUtc: string): string =>
+  isoUtc.slice(0, ISO_DATE_AND_MINUTES_LENGTH).replace("T", " ");
 
 export const epochDateTime = (epochMs: number): string =>
   `${dateTime(new Date(epochMs).toISOString())} UTC`;
@@ -11,31 +13,40 @@ export const epochDateTime = (epochMs: number): string =>
 export const percent = (part: number, whole: number): number =>
   whole <= 0 ? 0 : Math.round((part / whole) * 100);
 
-/** How long ago, in the largest unit that fits: `just now`, `5 min ago`, `3 h ago`, `2 d ago`. */
+const MS_PER_SECOND = 1000;
+const MS_PER_MINUTE = 60_000;
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const HOURS_BEFORE_SHOWING_DAYS = 48;
+
 export const ago = (epochMs: number, now: number = Date.now()): string => {
-  const seconds = Math.max(0, Math.round((now - epochMs) / 1000));
-  if (seconds < 60) {
+  const seconds = Math.max(0, Math.round((now - epochMs) / MS_PER_SECOND));
+  if (seconds < SECONDS_PER_MINUTE) {
     return "just now";
   }
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  if (minutes < MINUTES_PER_HOUR) {
     return `${minutes} min ago`;
   }
-  const hours = Math.floor(minutes / 60);
-  return hours < 48 ? `${hours} h ago` : `${Math.floor(hours / 24)} d ago`;
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  return hours < HOURS_BEFORE_SHOWING_DAYS
+    ? `${hours} h ago`
+    : `${Math.floor(hours / HOURS_PER_DAY)} d ago`;
 };
 
-/** `in 5 min`, `in 3 h`, `in 2 d`; `due` when the time has come. */
 export const until = (epochMs: number, now: number = Date.now()): string => {
-  const minutes = Math.floor((epochMs - now) / 60_000);
+  const minutes = Math.floor((epochMs - now) / MS_PER_MINUTE);
   if (minutes < 1) {
     return "due";
   }
-  if (minutes < 60) {
+  if (minutes < MINUTES_PER_HOUR) {
     return `in ${minutes} min`;
   }
-  const hours = Math.floor(minutes / 60);
-  return hours < 48 ? `in ${hours} h` : `in ${Math.floor(hours / 24)} d`;
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  return hours < HOURS_BEFORE_SHOWING_DAYS
+    ? `in ${hours} h`
+    : `in ${Math.floor(hours / HOURS_PER_DAY)} d`;
 };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -59,21 +70,27 @@ const dayNames = (field: string): string | undefined => {
 
 export interface SpecInfo {
   readonly kind: "cron" | "once" | "watch" | "other";
-  /** One line a person reads: `Weekdays at 19:00`. */
   readonly cadence: string;
-  /** The time zone times are shown in; UTC when the spec names none. */
   readonly timezone: string;
-  /** The raw cron expression, a watched URL, or nothing. */
   readonly detail: string;
 }
 
-/** Read a schedule's stored JSON for display. Anything it does not understand shows as it is. */
+const DEFAULT_SPEC_TIMEZONE = "UTC";
+
+const unrecognizedSpecShownAsIs = (json: string): SpecInfo => ({
+  kind: "other",
+  cadence: json,
+  timezone: DEFAULT_SPEC_TIMEZONE,
+  detail: "",
+});
+
 export const describeSpec = (json: string): SpecInfo => {
   try {
     const spec = JSON.parse(json) as Record<string, unknown>;
     if (spec["kind"] === "cron" && typeof spec["expr"] === "string") {
       const expr = spec["expr"];
-      const timezone = typeof spec["timezone"] === "string" ? spec["timezone"] : "UTC";
+      const timezone =
+        typeof spec["timezone"] === "string" ? spec["timezone"] : DEFAULT_SPEC_TIMEZONE;
       const [minute, hour, dom, month, dow] = expr.split(/\s+/);
       const simple =
         minute !== undefined &&
@@ -104,16 +121,15 @@ export const describeSpec = (json: string): SpecInfo => {
       };
     }
   } catch {
-    // fall through to the raw text
+    return unrecognizedSpecShownAsIs(json);
   }
-  return { kind: "other", cadence: json, timezone: "UTC", detail: "" };
+  return unrecognizedSpecShownAsIs(json);
 };
 
-/** `Tue 17 Nov, 19:00`, in the given IANA zone. */
-export const inZone = (epochMs: number, timezone: string): string => {
+export const inZone = (epochMs: number, ianaTimezone: string): string => {
   try {
     return new Intl.DateTimeFormat("en-GB", {
-      timeZone: timezone,
+      timeZone: ianaTimezone,
       weekday: "short",
       day: "numeric",
       month: "short",

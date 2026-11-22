@@ -3,27 +3,22 @@ import { Config, Context, Effect, Layer, Redacted } from "effect";
 const withDefault = <A>(config: Config.Config<A>, value: A) =>
   config.pipe(Config.withDefault(value));
 
-/** Everything the bot reads from its environment: secrets, who may use it, and which models run. */
+const NOBODY_ALLOWED = "";
+const NO_DAILY_BUDGET_LIMIT = 0;
+
 export const AppConfig = Config.all({
   botToken: Config.Redacted("BOT_TOKEN"),
   webhookSecret: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),
   apiKey: Config.Redacted("DEEPSEEK_API_KEY"),
-  /** Comma-separated Telegram user ids. Nobody may use the bot until this is set. */
-  allowedUserIds: withDefault(Config.String("TELEGRAM_ALLOWED_USER_IDS"), ""),
+  allowedUserIds: withDefault(Config.String("TELEGRAM_ALLOWED_USER_IDS"), NOBODY_ALLOWED),
   botUsername: withDefault(Config.String("BOT_USERNAME"), "mizook"),
-  /** The agent's name, as it knows itself. */
   agentName: withDefault(Config.String("AGENT_NAME"), "Mizook"),
-  /** The user's own instructions: who they are and how they want work done. */
   instructions: withDefault(Config.String("INSTRUCTIONS"), ""),
   model: withDefault(Config.String("MODEL"), "deepseek-flash"),
-  /** The cheap model that writes the memory. */
   summaryModel: withDefault(Config.String("SUMMARY_MODEL"), "deepseek-flash"),
   timezone: withDefault(Config.String("TIMEZONE"), "Asia/Jakarta"),
-  /** Search backends, in the order they are tried. */
-  /** Where the Worker is reachable, for artifact links. */
   publicUrl: withDefault(Config.String("PUBLIC_URL"), ""),
-  /** Most dollars the agent may spend in 24 hours in one channel; 0 is no limit. */
-  budgetDaily: withDefault(Config.Number("BUDGET_DAILY"), 0),
+  budgetDaily: withDefault(Config.Number("BUDGET_DAILY"), NO_DAILY_BUDGET_LIMIT),
   executorUrl: withDefault(Config.String("EXECUTOR_URL"), ""),
   executorToken: withDefault(Config.Redacted("EXECUTOR_TOKEN"), Redacted.make("")),
   searchProviders: withDefault(Config.String("SEARCH_PROVIDERS"), "parallel,exa"),
@@ -49,7 +44,6 @@ export class Settings extends Context.Service<
     readonly executorUrl: string;
     readonly executorToken: Redacted.Redacted<string>;
     readonly searchProviders: ReadonlyArray<string>;
-    /** The API key of each search provider, by name. */
     readonly searchKeys: Readonly<Record<string, Redacted.Redacted<string>>>;
   }
 >()("mizook/Settings") {

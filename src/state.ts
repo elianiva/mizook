@@ -3,18 +3,13 @@ import type { SqlDriver } from "@mizook/memory/sqlite";
 import type { ConversationId, SubmissionId } from "@earendil-works/pi-durable";
 import { StateError } from "./errors.ts";
 
-/** A turn the agent is working on for one chat, kept until its reply is delivered. */
 export interface PendingTurn {
   readonly chatId: string;
-  /** Where to post the reply: a Chat SDK thread id. */
   readonly threadId: string;
   readonly conversationId: ConversationId;
-  /** The Telegram message that started the turn. Resubmitting with it finds the same submission. */
   readonly requestId: string;
   readonly text: string;
-  /** The first, then every message the user sent while it ran. */
   readonly submissions: ReadonlyArray<SubmissionId>;
-  /** The transcript is in the memory. */
   readonly logged: boolean;
 }
 
@@ -30,7 +25,6 @@ const Row = Schema.Struct({
 
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
-// pi-durable's ids are branded numbers: the brand is the only cast, at the storage boundary.
 const toTurn = (row: typeof Row.Type): PendingTurn => ({
   chatId: row.chat_id,
   threadId: row.thread_id,
@@ -46,7 +40,6 @@ const asStateError = (operation: string) => (cause: unknown) =>
 
 const WEEK = 7 * 24 * 3600 * 1000;
 
-/** The bot's bookkeeping, in the same SQLite as the log. Tables are prefixed `app_`. */
 export class State extends Context.Service<
   State,
   {
@@ -54,20 +47,16 @@ export class State extends Context.Service<
     readonly turns: Effect.Effect<ReadonlyArray<PendingTurn>, StateError>;
     putTurn(turn: PendingTurn): Effect.Effect<void, StateError>;
     deleteTurn(chatId: string): Effect.Effect<void, StateError>;
-    /** A small named value of the chat, such as the place the agent talked last. */
     meta(key: string): Effect.Effect<string | undefined, StateError>;
     setMeta(key: string, value: string): Effect.Effect<void, StateError>;
     deleteMeta(key: string): Effect.Effect<void, StateError>;
-    /** The channel's own settings: `setting:<name>` rows of the meta table, by name. */
     readonly settings: Effect.Effect<Record<string, string>, StateError>;
-    /** Remember something a person did from the dashboard: who, what, to which item, and whether it worked. */
     audit(
       who: string,
       action: string,
       target: number,
       ok: boolean,
     ): Effect.Effect<void, StateError>;
-    /** True the first time it sees `id`: Telegram redelivers an update that was not answered in time. */
     firstSeen(id: string): Effect.Effect<boolean, StateError>;
   }
 >()("mizook/State") {
@@ -186,7 +175,6 @@ export class State extends Context.Service<
     );
 }
 
-/** The channel's own settings (`/model`, `/instructions`, …): rows `setting:<name>` of `app_meta`. */
 export const readSettings = (sql: SqlDriver) =>
   Effect.tryPromise({
     try: async () => {

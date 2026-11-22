@@ -22,6 +22,24 @@ import {
 } from "./api.ts";
 import { AppRoute } from "./route.ts";
 
+const OpenAgentForm = Schema.Option(
+  Schema.Struct({
+    kind: AgentKind,
+    id: Schema.String,
+    fields: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+
+const UnsavedSettingInputs = Schema.Record(Schema.String, Schema.String);
+
+const ArtifactBeingWritten = Schema.Struct({
+  name: Schema.String,
+  kind: Schema.Literals(["markdown", "html"]),
+  content: Schema.String,
+});
+
+const ActionAwaitingSecondClick = Schema.Option(Schema.String);
+
 export const Model = Schema.Struct({
   route: AppRoute,
   channels: channelsQuery.Model,
@@ -38,29 +56,15 @@ export const Model = Schema.Struct({
   runs: runsQuery.Model,
   draftKind: Schema.String,
   draftSearch: Schema.String,
-  /** The action waiting for a second click, as `kind:id`. */
   summary: summaryQuery.Model,
   audit: auditQuery.Model,
   artifacts: artifactsQuery.Model,
   artifact: artifactQuery.Model,
   recent: recentQuery.Model,
-  /** The Agent form that is open, if any. `id` is a skill name, intent id or policy id. */
-  editor: Schema.Option(
-    Schema.Struct({
-      kind: AgentKind,
-      id: Schema.String,
-      fields: Schema.Record(Schema.String, Schema.String),
-    }),
-  ),
-  /** Setting inputs the person has changed and not saved yet. */
-  drafts: Schema.Record(Schema.String, Schema.String),
-  /** The artifact being written on the Artifacts page. */
-  composer: Schema.Struct({
-    name: Schema.String,
-    kind: Schema.Literals(["markdown", "html"]),
-    content: Schema.String,
-  }),
-  armed: Schema.Option(Schema.String),
+  editor: OpenAgentForm,
+  drafts: UnsavedSettingInputs,
+  composer: ArtifactBeingWritten,
+  armed: ActionAwaitingSecondClick,
   notice: Schema.Option(Schema.String),
 });
 

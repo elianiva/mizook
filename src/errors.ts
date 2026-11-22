@@ -1,6 +1,5 @@
 import { Data } from "effect";
 
-/** pi-ai has no such provider or model. */
 export class ModelNotFound extends Data.TaggedError("ModelNotFound")<{
   readonly provider: string;
   readonly model: string;
@@ -10,7 +9,6 @@ export class ModelNotFound extends Data.TaggedError("ModelNotFound")<{
   }
 }
 
-/** pi-durable, or a call into it, failed. */
 export class DurableError extends Data.TaggedError("DurableError")<{
   readonly operation: string;
   readonly cause: unknown;
@@ -20,7 +18,6 @@ export class DurableError extends Data.TaggedError("DurableError")<{
   }
 }
 
-/** The bot's own bookkeeping could not be read or written. */
 export class StateError extends Data.TaggedError("StateError")<{
   readonly operation: string;
   readonly cause: unknown;
@@ -30,7 +27,6 @@ export class StateError extends Data.TaggedError("StateError")<{
   }
 }
 
-/** Telegram, through the Chat SDK, failed. */
 export class TelegramError extends Data.TaggedError("TelegramError")<{
   readonly operation: string;
   readonly cause: unknown;
@@ -40,7 +36,6 @@ export class TelegramError extends Data.TaggedError("TelegramError")<{
   }
 }
 
-/** An automation the agent asked for cannot be made. The reason goes back to the agent. */
 export class ScheduleError extends Data.TaggedError("ScheduleError")<{
   readonly reason: string;
 }> {
@@ -49,7 +44,6 @@ export class ScheduleError extends Data.TaggedError("ScheduleError")<{
   }
 }
 
-/** A web request failed, or the page was refused. */
 export class WebError extends Data.TaggedError("WebError")<{
   readonly url: string;
   readonly reason: string;
@@ -59,7 +53,6 @@ export class WebError extends Data.TaggedError("WebError")<{
   }
 }
 
-/** The blob store (R2) failed. */
 export class BlobError extends Data.TaggedError("BlobError")<{
   readonly operation: string;
   readonly cause: unknown;
@@ -69,7 +62,6 @@ export class BlobError extends Data.TaggedError("BlobError")<{
   }
 }
 
-/** The agent asked for something a tool cannot do: a bad name, a file too large, nothing by that name. The reason goes back to the agent. */
 export class ToolError extends Data.TaggedError("ToolError")<{
   readonly reason: string;
 }> {
@@ -78,7 +70,6 @@ export class ToolError extends Data.TaggedError("ToolError")<{
   }
 }
 
-/** Executor (an MCP endpoint) refused or failed. The reason goes back to the agent. */
 export class ExecutorError extends Data.TaggedError("ExecutorError")<{
   readonly reason: string;
 }> {
@@ -87,7 +78,6 @@ export class ExecutorError extends Data.TaggedError("ExecutorError")<{
   }
 }
 
-/** Workers AI could not read an attachment. */
 export class MediaError extends Data.TaggedError("MediaError")<{
   readonly operation: string;
   readonly cause: unknown;
@@ -97,7 +87,6 @@ export class MediaError extends Data.TaggedError("MediaError")<{
   }
 }
 
-/** Browser Rendering could not read a page, or the URL was refused. */
 export class BrowserError extends Data.TaggedError("BrowserError")<{
   readonly url: string;
   readonly reason: string;
@@ -107,7 +96,6 @@ export class BrowserError extends Data.TaggedError("BrowserError")<{
   }
 }
 
-/** A dashboard request did not carry a valid Cloudflare Access token. */
 export class AccessDenied extends Data.TaggedError("AccessDenied")<{
   readonly reason: string;
 }> {
@@ -116,7 +104,6 @@ export class AccessDenied extends Data.TaggedError("AccessDenied")<{
   }
 }
 
-/** An automation's action could not be carried out: its agent is gone, busy, or its URL failed. */
 export class ActionError extends Data.TaggedError("ActionError")<{
   readonly reason: string;
 }> {

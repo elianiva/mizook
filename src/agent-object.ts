@@ -25,9 +25,10 @@ import { State } from "./state.ts";
 import * as read from "./admin/read.ts";
 import { edit as applyEdit, type EditOutcome } from "./admin/edit.ts";
 
+const RELOAD_DELAY_MS = 1_500;
+
 type Hosted = Context.Service.Shape<typeof Host>;
 
-/** The Hub's methods, spelled out: its stub type loops back through `Env`. */
 export interface HubApi {
   agents(): Promise<AgentInfo[]>;
   createAgent(spec: AgentSpec): Promise<AgentChange>;
@@ -59,7 +60,6 @@ interface AgentApi {
   reload(): Promise<void>;
 }
 
-/** The automations Durable Object, as an agent sees it. */
 const automationsApi = (stub: () => DurableObjectStub<AutomationsObject>): AutomationsApi => {
   const rpc = () => stub() as unknown as AutomationsObject;
   return {
@@ -88,8 +88,7 @@ const automationsApi = (stub: () => DurableObjectStub<AutomationsObject>): Autom
   };
 };
 
-/** The Hub's skills behind the same interface as an agent's own. */
-const globalSkills = (hub: () => HubApi): Skills["Service"] => {
+const hubSkillsAsAgentSkills = (hub: () => HubApi): Skills["Service"] => {
   const call = <A>(operation: string, f: () => Promise<A>) =>
     Effect.tryPromise({ try: f, catch: (cause) => new StateError({ operation, cause }) });
   return {
@@ -109,20 +108,13 @@ const globalSkills = (hub: () => HubApi): Skills["Service"] => {
   };
 };
 
-/**
- * One agent: its memory, pi-durable, skills and settings, in one Durable Object with one
- * SQLite, named `agent:<id>`. It answers in every Telegram place bound to it, and in any place
- * where someone invokes it with `/<slug>`.
- */
 export class AgentObject extends DurableObject<Env> {
   private runtime!: AppRuntime;
   private self!: AgentInfo;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // Read who this agent is, then build the layers (open the storage, resume what a restart
-    // interrupted) before any request. Delivering a turn can take minutes, so work starts after
-    // this, not inside it: the gate has 30 seconds.
+    const resumeInterruptedWork = () => this.alarm();
     void ctx
       .blockConcurrencyWhile(async () => {
         const id = this.doName.replace(/^agent:/, "");
@@ -142,7 +134,7 @@ export class AgentObject extends DurableObject<Env> {
         this.runtime = makeRuntime(ctx.storage, env, this.host());
         await this.runtime.runPromise(Effect.void);
       })
-      .then(() => this.alarm());
+      .then(resumeInterruptedWork);
   }
 
   private get doName(): string {
@@ -153,12 +145,11 @@ export class AgentObject extends DurableObject<Env> {
     return this.env.Hub.getByName("hub") as unknown as HubApi;
   }
 
-  /** Swap in a fresh runtime so new settings take effect, once the reply that asked for it is out. */
-  private reloadRuntime(): void {
+  private reloadRuntimeAfterReply(): void {
     const old = this.runtime;
     this.ctx.waitUntil(
       (async () => {
-        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await new Promise((resolve) => setTimeout(resolve, RELOAD_DELAY_MS));
         await old.dispose();
         this.self = (await this.hub().agent(this.self.id)) ?? this.self;
         this.runtime = makeRuntime(this.ctx.storage, this.env, this.host());
@@ -167,11 +158,10 @@ export class AgentObject extends DurableObject<Env> {
     );
   }
 
-  /** What this agent can ask of the world outside it. */
   private host(): Hosted {
     const hub = () => this.hub();
     const self = this.self;
-    const reload = () => this.reloadRuntime();
+    const reload = () => this.reloadRuntimeAfterReply();
     const exportLink = this.runtimeEffect(Backup.use((backup) => backup.exportLink));
     const peer = (doName: string) => this.env.AgentObject.getByName(doName) as unknown as AgentApi;
     return {
@@ -196,7 +186,7 @@ export class AgentObject extends DurableObject<Env> {
         ).pipe(Effect.asVoid),
       reloadAgent: (doName) =>
         doName === self.doName ? Effect.sync(reload) : Effect.promise(() => peer(doName).reload()),
-      globalSkills: globalSkills(hub),
+      globalSkills: hubSkillsAsAgentSkills(hub),
       profile: Effect.tryPromise({ try: () => hub().profile(), catch: () => undefined }).pipe(
         Effect.orElseSucceed(() => EMPTY_PROFILE),
       ),
@@ -241,42 +231,34 @@ export class AgentObject extends DurableObject<Env> {
     return Effect.promise(() => this.runtime.runPromise(effect as never) as Promise<A>);
   }
 
-  /** Its config changed in the Hub: read it again. */
   async reload(): Promise<void> {
-    this.reloadRuntime();
+    this.reloadRuntimeAfterReply();
   }
 
-  /** The Hub deleted this agent: drop everything it stored. */
   async destroy(): Promise<void> {
     await this.runtime.dispose();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
   }
 
-  /** Called by another agent through `ask_agent`: read-only, nothing is logged here. */
   async ask(question: string): Promise<string> {
     return this.runtime.runPromise(Agent.use((agent) => agent.ask(question)));
   }
 
-  /** A turn an automation starts. Gives the reply once it is delivered. */
   async runTurn(place: string, text: string, requestId: string): Promise<string> {
     const reply = this.runtime.runPromise(Bot.use((bot) => bot.turn(place, text, requestId)));
-    // While the turn runs this process may be evicted: the alarm brings it back to finish it.
-    await this.rearm();
+    await this.rearmAlarm();
     return reply;
   }
 
-  /** A fixed message an automation posts, with no model call. */
   async postTo(place: string, text: string): Promise<void> {
     await this.runtime.runPromise(Bot.use((bot) => bot.postTo(place, text)));
   }
 
-  /** What this channel has spent, for `/cost`. */
   async spend(): Promise<Spend> {
     return this.runtime.runPromise(Usage.use((usage) => usage.spend));
   }
 
-  /** Read-only data for the dashboard, already authorised by the Worker. */
   async dashboard(page: string, params: Record<string, string>): Promise<unknown> {
     const sql = {
       all: <T>(query: string, ...args: unknown[]) =>
@@ -319,7 +301,6 @@ export class AgentObject extends DurableObject<Env> {
     }
   }
 
-  /** Apply a dashboard edit to the profile, a skill, an intent or a policy. Audited. */
   async edit(who: string, kind: string, input: unknown): Promise<EditOutcome> {
     const result = await this.runtime.runPromise(
       applyEdit(kind, input).pipe(
@@ -345,11 +326,6 @@ export class AgentObject extends DurableObject<Env> {
     return result;
   }
 
-  /**
-   * A write from the dashboard, already authorised by the Worker. It goes through the runtime, so
-   * it shares the one SQLite writer with the bot. Every call is audited. False when the item was
-   * already gone.
-   */
   async act(who: string, action: string, id: number): Promise<boolean> {
     const done = await this.runtime.runPromise(
       Effect.gen(function* () {
@@ -363,15 +339,15 @@ export class AgentObject extends DurableObject<Env> {
       }),
     );
     await this.runtime.runPromise(State.use((state) => state.audit(who, action, id, done.ok)));
-    // Answering an approval resumes Executor and starts a turn: that takes a while, so it goes on after the reply.
     if (done.after) {
-      const after = done.after;
-      this.ctx.waitUntil(this.runtime.runPromise(after).then(() => this.rearm()));
+      const resumeExecutorThenTurn = done.after;
+      this.ctx.waitUntil(
+        this.runtime.runPromise(resumeExecutorThenTurn).then(() => this.rearmAlarm()),
+      );
     }
     return done.ok;
   }
 
-  /** Change or remove a published artifact from the dashboard. Audited. False when it is gone. */
   async artifact(who: string, name: string, action: string): Promise<boolean> {
     const ok = await this.runtime
       .runPromise(
@@ -391,7 +367,6 @@ export class AgentObject extends DurableObject<Env> {
     return ok;
   }
 
-  /** Publish a page the person pasted into the dashboard. Audited. */
   async publishArtifact(
     who: string,
     name: string,
@@ -419,7 +394,6 @@ export class AgentObject extends DurableObject<Env> {
     return result;
   }
 
-  /** Stop every turn that is running, as `/stop` does in each place. */
   async stop(who: string): Promise<boolean> {
     const stopped = await this.runtime.runPromise(
       Effect.gen(function* () {
@@ -433,10 +407,6 @@ export class AgentObject extends DurableObject<Env> {
     return stopped;
   }
 
-  /**
-   * Change one of this agent's settings the way its slash command does, so the checks and the
-   * reload are the command's own. `undefined` resets it. Returns the command's reply.
-   */
   async setting(who: string, key: string, value: string | undefined): Promise<string> {
     const reply = await this.runtime.runPromise(
       Effect.gen(function* () {
@@ -452,12 +422,10 @@ export class AgentObject extends DurableObject<Env> {
     const response = await this.runtime.runPromise(
       Bot.use((bot) => bot.webhook(request, (task) => this.ctx.waitUntil(task))),
     );
-    // While a turn runs this process may be evicted: the alarm brings it back to finish the turn.
-    await this.rearm();
+    await this.rearmAlarm();
     return response;
   }
 
-  /** The one alarm serves recovery of interrupted turns and the nightly backup. */
   override async alarm(): Promise<void> {
     const attempt = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
       this.runtime.runPromise(effect as never).catch((error) => {
@@ -471,10 +439,10 @@ export class AgentObject extends DurableObject<Env> {
       "backup",
       Backup.use((backup) => backup.backupIfDue(Date.now())),
     );
-    await this.rearm();
+    await this.rearmAlarm();
   }
 
-  private async rearm(): Promise<void> {
+  private async rearmAlarm(): Promise<void> {
     const times = await Promise.all([
       this.runtime
         .runPromise(Bot.use((bot) => bot.nextWake))

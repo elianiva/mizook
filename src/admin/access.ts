@@ -41,26 +41,17 @@ const decodeJson = <S extends Schema.Decoder<unknown>>(schema: S, part: string) 
   ) as Effect.Effect<S["Type"], AccessDenied>;
 
 export interface AccessConfig {
-  /** `<team>.cloudflareaccess.com`, with or without `https://`. */
   readonly teamDomain: string;
-  /** The Access application's audience tag. */
   readonly aud: string;
 }
 
 export interface Verifier {
-  /** The signed-in user's email, or a denial. */
   readonly verify: (token: string | null) => Effect.Effect<string, AccessDenied>;
 }
 
-const CACHE_MS = 10 * 60_000;
+const TEAM_KEYS_CACHE_MS = 10 * 60_000;
+const PINNED_ALGORITHM_NEVER_FROM_TOKEN = "RS256";
 
-/**
- * Checks the `Cf-Access-Jwt-Assertion` token against the team's published keys. Only RS256 is
- * accepted, the signature is checked before any claim is read, and the issuer and audience must
- * match this Access application.
- *
- * `fetchKeys` and `now` are parameters so a test can supply its own.
- */
 export const makeVerifier = (
   config: AccessConfig,
   fetchKeys: (url: string) => Promise<unknown> = async (url) => (await fetch(url)).json(),
@@ -69,9 +60,9 @@ export const makeVerifier = (
   const issuer = `https://${config.teamDomain.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;
   let cache: { keys: ReadonlyArray<Jwk>; at: number } | undefined;
 
-  const keys = (force: boolean) =>
+  const teamKeys = (bypassCache: boolean) =>
     Effect.gen(function* () {
-      if (!force && cache && now() - cache.at < CACHE_MS) return cache.keys;
+      if (!bypassCache && cache && now() - cache.at < TEAM_KEYS_CACHE_MS) return cache.keys;
       const body = yield* Effect.tryPromise(() => fetchKeys(`${issuer}/cdn-cgi/access/certs`));
       const parsed = yield* Schema.decodeUnknownEffect(Jwks)(body);
       cache = { keys: parsed.keys, at: now() };
@@ -81,7 +72,7 @@ export const makeVerifier = (
   const keyFor = (kid: string | undefined) =>
     Effect.gen(function* () {
       const find = (list: ReadonlyArray<Jwk>) => list.find((k) => k.kid === kid);
-      const found = find(yield* keys(false)) ?? find(yield* keys(true));
+      const found = find(yield* teamKeys(false)) ?? find(yield* teamKeys(true));
       return found ?? (yield* new AccessDenied({ reason: "unknown signing key" }));
     });
 
@@ -94,15 +85,21 @@ export const makeVerifier = (
         const [rawHeader, rawPayload, rawSignature] = parts as [string, string, string];
 
         const header = yield* decodeJson(Header, rawHeader);
-        // Never let the token pick the algorithm: `none` and HS256 would skip or fake the check.
-        if (header.alg !== "RS256") return yield* new AccessDenied({ reason: "unsupported alg" });
+        if (header.alg !== PINNED_ALGORITHM_NEVER_FROM_TOKEN)
+          return yield* new AccessDenied({ reason: "unsupported alg" });
 
         const jwk = yield* keyFor(header.kid);
-        const valid = yield* Effect.tryPromise({
+        const signatureIsValid = yield* Effect.tryPromise({
           try: async () => {
             const key = await crypto.subtle.importKey(
               "jwk",
-              { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true },
+              {
+                kty: jwk.kty,
+                n: jwk.n,
+                e: jwk.e,
+                alg: PINNED_ALGORITHM_NEVER_FROM_TOKEN,
+                ext: true,
+              },
               { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
               false,
               ["verify"],
@@ -116,16 +113,16 @@ export const makeVerifier = (
           },
           catch: () => new AccessDenied({ reason: "bad signature" }),
         });
-        if (!valid) return yield* new AccessDenied({ reason: "bad signature" });
+        if (!signatureIsValid) return yield* new AccessDenied({ reason: "bad signature" });
 
         const claims = yield* decodeJson(Claims, rawPayload);
-        const seconds = now() / 1000;
+        const nowSeconds = now() / 1000;
         if (claims.iss !== issuer) return yield* new AccessDenied({ reason: "wrong issuer" });
         const audiences = typeof claims.aud === "string" ? [claims.aud] : claims.aud;
         if (!audiences.includes(config.aud))
           return yield* new AccessDenied({ reason: "wrong audience" });
-        if (claims.exp <= seconds) return yield* new AccessDenied({ reason: "expired" });
-        if (claims.nbf !== undefined && claims.nbf > seconds)
+        if (claims.exp <= nowSeconds) return yield* new AccessDenied({ reason: "expired" });
+        if (claims.nbf !== undefined && claims.nbf > nowSeconds)
           return yield* new AccessDenied({ reason: "not yet valid" });
         return claims.email ?? "unknown";
       }),

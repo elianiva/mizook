@@ -23,22 +23,21 @@ import { State } from "./state.ts";
 import { runProgram } from "./codemode.ts";
 import { agentTools } from "./tools.ts";
 
+const STREAM_TIMEOUT_MS = 180_000;
+const MAX_MODEL_RETRIES = 3;
+const PROGRESS_COMMIT_INTERVAL_MS = 500;
+const COMPACT_FRESH_CONVERSATIONS = false;
+const NEVER_REPLAY = "unsafe";
+
 export class Durable extends Context.Service<
   Durable,
   {
     readonly harness: Harness;
-    /** pi-ai's models, for calls that are not turns. */
     readonly models: PiModels;
     readonly context: ChordContext;
-    /**
-     * The view and the new message of each running turn, by conversation. The turn's own entry
-     * holds only the user's words: the view is injected into the request, so it is never stored
-     * a hundred kilobytes at a time. After a restart the entry is rendered afresh.
-     */
     readonly turnInputs: Map<ConversationId, string>;
   }
 >()("mizook/Durable") {
-  /** pi-durable over the Durable Object's SQLite, with the memory's tools and system prompt. */
   static readonly layer = (database: DurableObjectSqliteDatabase) =>
     Layer.effect(
       Durable,
@@ -54,14 +53,12 @@ export class Durable extends Context.Service<
 
         const text = (output: string) => ({ output: [{ type: "text" as const, text: output }] });
 
-        /** Where the turn that called a tool is talking. */
         const placeOf = (conversationId: ConversationId) =>
           Effect.map(
             Effect.orElseSucceed(state.turns, () => []),
             (turns) => turns.find((t) => t.conversationId === conversationId)?.threadId,
           );
 
-        // pi-ai already checked the arguments against the schema.
         const codeOf = (args: unknown) =>
           typeof args === "object" &&
           args !== null &&
@@ -70,8 +67,7 @@ export class Durable extends Context.Service<
             ? args.code
             : "";
 
-        // The model calls two tools; a program reaches the rest, as many as the role allows.
-        const tools = [
+        const modelTools = [
           defineTool({
             name: "send_to_user",
             description: agentTools[0]!.description,
@@ -90,8 +86,7 @@ export class Durable extends Context.Service<
             name: "execute",
             description: agentTools[1]!.description,
             parameters: agentTools[1]!.parameters,
-            // A program can send, publish or delete: a restart must not run it twice.
-            replay: "unsafe",
+            replay: NEVER_REPLAY,
             execute: async (args, api) =>
               text(
                 await run(
@@ -112,18 +107,19 @@ export class Durable extends Context.Service<
             ? content
             : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 
+        const systemPrompt = memory.systemPrompt;
+
         const extension = defineExtension({
           name: "memory",
-          // The one system prompt, for turns and compactions alike: never dates or state in it.
-          sections: [section("prompt", () => memory.systemPrompt, { tag: false })],
-          tools,
+          sections: [section("prompt", () => systemPrompt, { tag: false })],
+          tools: modelTools,
           hooks: [
             hook(GenerationTask, {
               beforeRequest: async (request, api) => {
                 const first = request.messages.findIndex((m) => m.role === "user");
                 const message = request.messages[first];
                 if (message?.role !== "user") return undefined;
-                const input =
+                const viewAndUserMessage =
                   turnInputs.get(api.conversationId) ??
                   (await run(
                     Effect.map(
@@ -133,7 +129,7 @@ export class Durable extends Context.Service<
                   ));
                 const messages = request.messages.map((m, i) =>
                   i === first
-                    ? { ...message, content: [{ type: "text" as const, text: input }] }
+                    ? { ...message, content: [{ type: "text" as const, text: viewAndUserMessage }] }
                     : m,
                 );
                 return { messages };
@@ -158,12 +154,15 @@ export class Durable extends Context.Service<
                   models,
                   registry,
                   settings: {
-                    // The memory is the continuity: every turn starts a fresh conversation, so there is nothing to compact.
-                    compaction: { enabled: false },
-                    stream: { timeoutMs: 180_000 },
-                    retry: { maxRetries: 3 },
-                    // A remote storage: commit partial answers less often.
-                    progress: { partialIntervalMs: 500, outputIntervalMs: 500 },
+                    compaction: {
+                      enabled: COMPACT_FRESH_CONVERSATIONS,
+                    },
+                    stream: { timeoutMs: STREAM_TIMEOUT_MS },
+                    retry: { maxRetries: MAX_MODEL_RETRIES },
+                    progress: {
+                      partialIntervalMs: PROGRESS_COMMIT_INTERVAL_MS,
+                      outputIntervalMs: PROGRESS_COMMIT_INTERVAL_MS,
+                    },
                   },
                   onReport: (error) => console.error("pi-durable", error),
                 },
@@ -173,7 +172,6 @@ export class Durable extends Context.Service<
           }),
           (harness) => Effect.promise(() => harness.close(BACKGROUND_CONTEXT)).pipe(Effect.ignore),
         );
-        // Continue any run the last process left unfinished.
         harness.resume();
         void main;
         return Durable.of({ harness, models, context: BACKGROUND_CONTEXT, turnInputs });

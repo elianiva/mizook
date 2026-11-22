@@ -28,7 +28,6 @@ const Row = Schema.Struct({
 });
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
-/** Who may open the public link: anyone who has it, or nobody (the dashboard still can). */
 export type Visibility = "public" | "private";
 
 export interface Artifact {
@@ -41,23 +40,25 @@ export interface Artifact {
   readonly url: string;
 }
 
-const token = () => {
-  const bytes = crypto.getRandomValues(new Uint8Array(18));
+const TOKEN_RANDOM_BYTES = 18;
+const HOUR_MS = 3_600_000;
+
+const latestPublicCopyKey = (token: string) => `a/${token}`;
+const versionHistoryPrefix = (channel: string, name: string) => `artifacts/${channel}/${name}/`;
+const versionCopyKey = (channel: string, name: string, version: number) =>
+  `${versionHistoryPrefix(channel, name)}${version}`;
+
+const unguessableToken = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(TOKEN_RANDOM_BYTES));
   return btoa(String.fromCharCode(...bytes))
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replaceAll("=", "");
 };
 
-/**
- * Pages and files the agent publishes. The Worker serves the latest version at an unguessable
- * `/a/<token>/<name>` under a sandboxing Content-Security-Policy; every version is kept in the
- * blob store under `artifacts/<channel>/<name>/<version>`.
- */
 export class Artifacts extends Context.Service<
   Artifacts,
   {
-    /** Publish a page or file under a name. The same name again adds a version and keeps the link. */
     publish(
       channel: string,
       name: string,
@@ -65,7 +66,6 @@ export class Artifacts extends Context.Service<
       contentType: string,
       options?: { readonly expiresInHours?: number },
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
-    /** Publish bytes, such as a browser screenshot. Only images are accepted. */
     publishBytes(
       channel: string,
       name: string,
@@ -74,31 +74,26 @@ export class Artifacts extends Context.Service<
       options?: { readonly expiresInHours?: number },
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
     readonly list: Effect.Effect<ReadonlyArray<Artifact>, StateError>;
-    /** The latest version's text, for the dashboard to show. */
     source(
       name: string,
     ): Effect.Effect<
       { readonly artifact: Artifact; readonly text: string; readonly size: number },
       ToolError | StateError | BlobError
     >;
-    /** Open or close the public link. The page keeps its token and its data. */
     setVisibility(
       name: string,
       visibility: Visibility,
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
     remove(channel: string, name: string): Effect.Effect<boolean, StateError | BlobError>;
-    /** The numbers of the versions kept of an artifact, oldest first. */
     history(
       channel: string,
       name: string,
     ): Effect.Effect<ReadonlyArray<number>, StateError | BlobError>;
-    /** Publish an old version again, as a new one. */
     restore(
       channel: string,
       name: string,
       version: number,
     ): Effect.Effect<Artifact, ToolError | StateError | BlobError>;
-    /** What the page saved with `mizook.data`, which the agent can read and write too. Values are JSON text. */
     readonly data: {
       list(name: string): Effect.Effect<Record<string, string>, ToolError | StateError | BlobError>;
       get(
@@ -112,7 +107,6 @@ export class Artifacts extends Context.Service<
       ): Effect.Effect<void, ToolError | StateError | BlobError>;
       delete(name: string, key: string): Effect.Effect<void, ToolError | StateError | BlobError>;
     };
-    /** The current content of every artifact and its saved data, for an export. */
     readonly contents: Effect.Effect<
       ReadonlyArray<{
         readonly artifact: Artifact;
@@ -141,10 +135,10 @@ export class Artifacts extends Context.Service<
                content_type TEXT NOT NULL, updated INTEGER NOT NULL)`,
           ),
         );
-        // Older databases have no visibility column; the error on a second run is the answer "it is there".
-        yield* run("migrate artifact visibility", () =>
+        const addVisibilityColumn = run("migrate artifact visibility", () =>
           sql.all(`ALTER TABLE app_artifacts ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`),
-        ).pipe(Effect.ignore);
+        );
+        yield* addVisibilityColumn.pipe(Effect.ignore);
         const toArtifact = (row: typeof Row.Type): Artifact => ({
           name: row.name,
           token: row.token,
@@ -183,8 +177,7 @@ export class Artifacts extends Context.Service<
             ),
           );
 
-        /** Save one version and point the public token at it. Text and binary share this. */
-        const store = (
+        const storeVersion = (
           channel: string,
           name: string,
           body: Uint8Array,
@@ -201,17 +194,16 @@ export class Artifacts extends Context.Service<
               name,
             );
             const version = (current?.version ?? 0) + 1;
-            const tok = current?.token ?? token();
-            yield* blobs.put(`artifacts/${channel}/${name}/${version}`, body, { contentType });
-            // The public copy is the latest version, found by token alone.
-            yield* blobs.put(`a/${tok}`, body, {
+            const tok = current?.token ?? unguessableToken();
+            yield* blobs.put(versionCopyKey(channel, name, version), body, { contentType });
+            yield* blobs.put(latestPublicCopyKey(tok), body, {
               contentType,
               meta: {
                 name,
                 do: doNameOf(channel),
                 visibility: current?.visibility ?? "public",
                 ...(options?.expiresInHours
-                  ? { expires: String(Date.now() + options.expiresInHours * 3_600_000) }
+                  ? { expires: String(Date.now() + options.expiresInHours * HOUR_MS) }
                   : {}),
               },
             });
@@ -237,7 +229,7 @@ export class Artifacts extends Context.Service<
               yield* validName(name);
               const invalid = checkContent(contentType, content);
               if (invalid) return yield* new ToolError({ reason: invalid });
-              return yield* store(
+              return yield* storeVersion(
                 channel,
                 name,
                 new TextEncoder().encode(content),
@@ -251,13 +243,13 @@ export class Artifacts extends Context.Service<
               if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
                 return yield* new ToolError({ reason: `unsupported binary type ${contentType}` });
               }
-              return yield* store(channel, name, body, contentType, options);
+              return yield* storeVersion(channel, name, body, contentType, options);
             }),
           list: all,
           source: (name) =>
             Effect.gen(function* () {
               const artifact = yield* find(name);
-              const blob = yield* blobs.get(`a/${artifact.token}`);
+              const blob = yield* blobs.get(latestPublicCopyKey(artifact.token));
               if (!blob) return yield* new ToolError({ reason: `no artifact ${name}` });
               return {
                 artifact,
@@ -268,9 +260,9 @@ export class Artifacts extends Context.Service<
           setVisibility: (name, visibility) =>
             Effect.gen(function* () {
               const found = yield* find(name);
-              const blob = yield* blobs.get(`a/${found.token}`);
+              const blob = yield* blobs.get(latestPublicCopyKey(found.token));
               if (!blob) return yield* new ToolError({ reason: `no artifact ${name}` });
-              yield* blobs.put(`a/${found.token}`, blob.body, {
+              yield* blobs.put(latestPublicCopyKey(found.token), blob.body, {
                 contentType: blob.contentType,
                 meta: { ...blob.meta, visibility },
               });
@@ -290,14 +282,13 @@ export class Artifacts extends Context.Service<
                 name,
               );
               if (!found) return false;
-              // Versions stay in the log of the channel; only the public link stops working.
-              yield* blobs.delete(`a/${found.token}`);
+              yield* blobs.delete(latestPublicCopyKey(found.token));
               for (const key of yield* blobs.list(dataPrefix(found.token)))
                 yield* blobs.delete(key);
               return true;
             }),
           history: (channel, name) =>
-            Effect.map(blobs.list(`artifacts/${channel}/${name}/`), (keys) =>
+            Effect.map(blobs.list(versionHistoryPrefix(channel, name)), (keys) =>
               keys
                 .map((k) => Number(k.slice(k.lastIndexOf("/") + 1)))
                 .filter(Number.isFinite)
@@ -305,7 +296,7 @@ export class Artifacts extends Context.Service<
             ),
           restore: (channel, name, version) =>
             Effect.gen(function* () {
-              const blob = yield* blobs.get(`artifacts/${channel}/${name}/${version}`);
+              const blob = yield* blobs.get(versionCopyKey(channel, name, version));
               if (!blob)
                 return yield* new ToolError({ reason: `${name} has no version ${version}` });
               return yield* self.publish(
@@ -371,7 +362,7 @@ export class Artifacts extends Context.Service<
               data: Record<string, string>;
             }> = [];
             for (const artifact of yield* all) {
-              const blob = yield* blobs.get(`a/${artifact.token}`);
+              const blob = yield* blobs.get(latestPublicCopyKey(artifact.token));
               if (blob) {
                 const data = yield* self.data.list(artifact.name);
                 out.push({ artifact, body: blob.body, data });

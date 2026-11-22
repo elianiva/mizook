@@ -7,36 +7,31 @@ import type { Action, Spec } from "./schedule.ts";
 import { Web } from "./search.ts";
 import { sha256 } from "./web.ts";
 
-/** Most times one agent may be woken by automations in an hour: a bad watch must not flood it. */
 export const FIRES_PER_HOUR = 20;
 
-/** What an action reaches outside the automations: the agents, and the web. */
+const MAX_RUN_ERROR_CHARS = 1_000;
+const MAX_RUN_OUTPUT_CHARS = 4_000;
+
 export class Targets extends Context.Service<
   Targets,
   {
-    /** Whether the agent with this id exists. */
     agentExists(agent: string): Effect.Effect<boolean>;
-    /** A turn of `agent` in `place` (empty: where it talked last). Gives its reply. */
     turn(
       agent: string,
       place: string,
       text: string,
       requestId: string,
     ): Effect.Effect<string, ActionError>;
-    /** Post `text` to `place` through `agent`'s bot, with no model call. */
     post(agent: string, place: string, text: string): Effect.Effect<void, ActionError>;
-    /** Call an outside URL. Gives the status and the start of the answer. */
     call(url: string, method: string, body: string | undefined): Effect.Effect<string, ActionError>;
   }
 >()("mizook/Targets") {}
 
-/** How a fire went, as its run records it. */
 export type Fired =
   | { readonly status: "succeeded"; readonly output: string }
   | { readonly status: "skipped"; readonly output: string }
   | { readonly status: "failed"; readonly error: string };
 
-/** One line saying what an automation does, for lists and for the model. */
 export const describeAutomation = (
   a: Pick<Automation, "id" | "spec" | "action" | "active" | "nextAt">,
   when: (at: number) => string,
@@ -66,23 +61,15 @@ export const describeAutomation = (
   return `#${a.id} ${trigger}; ${next}; ${what}`;
 };
 
-/**
- * Fires automations: takes what is due, checks a watch's page, holds each agent to its hourly
- * limit, carries out the action, and records the run.
- */
 export class Runner extends Context.Service<
   Runner,
   {
-    /** Make one, after checking that its agent exists and its spec and URL work. */
     create(
       spec: Spec,
       action: Action,
     ): Effect.Effect<Automation, ScheduleError | StateError | ActionError>;
-    /** Fire every automation due now. */
     readonly wake: Effect.Effect<void, StateError>;
-    /** A call to an automation's webhook link. Undefined when there is no such active webhook trigger. */
     hook(id: number, body: string): Effect.Effect<Fired | undefined, StateError>;
-    /** Fire one now, as a test, whatever its trigger. Its next time stays as it was. */
     test(id: number): Effect.Effect<Fired | undefined, StateError>;
   }
 >()("mizook/Runner") {
@@ -95,8 +82,7 @@ export class Runner extends Context.Service<
       const targets = yield* Targets;
       const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
 
-      /** What the action gets from its trigger: a watch's new page, a webhook's body. */
-      const act = (a: Automation, payload: string | undefined, requestId: string) =>
+      const act = (a: Automation, triggerPayload: string | undefined, requestId: string) =>
         Effect.gen(function* () {
           const { action } = a;
           switch (action.kind) {
@@ -108,7 +94,7 @@ export class Runner extends Context.Service<
                 } as const;
               const skill =
                 action.skill === undefined ? "" : `Read skill "${action.skill}" first.\n\n`;
-              const brought = payload === undefined ? "" : `\n\n${payload}`;
+              const brought = triggerPayload === undefined ? "" : `\n\n${triggerPayload}`;
               const reply = yield* targets.turn(
                 action.agent,
                 action.place,
@@ -121,7 +107,7 @@ export class Runner extends Context.Service<
               yield* targets.post(action.agent, action.place, action.text);
               return { status: "succeeded", output: action.text } as const;
             case "webhook": {
-              const escaped = JSON.stringify(payload ?? "").slice(1, -1);
+              const escaped = JSON.stringify(triggerPayload ?? "").slice(1, -1);
               const body = action.body?.replaceAll("{{payload}}", escaped);
               const answer = yield* targets.call(action.url, action.method, body);
               return { status: "succeeded", output: answer } as const;
@@ -129,22 +115,24 @@ export class Runner extends Context.Service<
           }
         });
 
-      /** Carry out an action and keep the run. A failure is recorded, never thrown. */
-      const fire = (a: Automation, payload: string | undefined, requestId: string) =>
+      const fireAndRecordRun = (
+        a: Automation,
+        triggerPayload: string | undefined,
+        requestId: string,
+      ) =>
         Effect.gen(function* () {
           const runId = yield* runs.start(a.id);
-          const fired: Fired = yield* act(a, payload, requestId).pipe(
+          const fired: Fired = yield* act(a, triggerPayload, requestId).pipe(
             Effect.catch((error: ActionError | StateError) =>
               Effect.succeed({ status: "failed", error: error.message } as const),
             ),
           );
           yield* fired.status === "failed"
-            ? runs.finish(runId, "failed", "", fired.error.slice(0, 1_000))
-            : runs.finish(runId, fired.status, clipToolOutput(fired.output, 4_000));
+            ? runs.finish(runId, "failed", "", fired.error.slice(0, MAX_RUN_ERROR_CHARS))
+            : runs.finish(runId, fired.status, clipToolOutput(fired.output, MAX_RUN_OUTPUT_CHARS));
           return fired;
         });
 
-      /** A watch's page, when it changed since the last look; undefined otherwise. */
       const changedPage = (a: Automation) =>
         Effect.gen(function* () {
           if (a.spec.kind !== "watch") return undefined;
@@ -169,7 +157,7 @@ export class Runner extends Context.Service<
         for (const a of yield* automations.claim(yield* nowDate)) {
           const page = yield* changedPage(a);
           if (a.spec.kind === "watch" && page === undefined) continue;
-          yield* fire(a, page, `auto:${a.id}:${a.nextAt}`);
+          yield* fireAndRecordRun(a, page, `auto:${a.id}:${a.nextAt}`);
         }
       });
 
@@ -190,7 +178,7 @@ export class Runner extends Context.Service<
           Effect.gen(function* () {
             const a = yield* automations.get(id);
             if (!a || !a.active || a.spec.kind !== "webhook") return undefined;
-            return yield* fire(
+            return yield* fireAndRecordRun(
               a,
               `The webhook was called with:\n${clipToolOutput(body, 8_000)}`,
               `hook:${id}:${crypto.randomUUID()}`,
@@ -200,7 +188,7 @@ export class Runner extends Context.Service<
           Effect.gen(function* () {
             const a = yield* automations.get(id);
             if (!a) return undefined;
-            return yield* fire(
+            return yield* fireAndRecordRun(
               a,
               a.spec.kind === "webhook" ? "(a test: no body)" : undefined,
               `test:${id}:${Date.now()}`,

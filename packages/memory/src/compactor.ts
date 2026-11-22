@@ -13,33 +13,41 @@ export interface CompactorDeps {
   scheduler: Scheduler;
   system: string;
   summarizer: Summarizer["Service"];
-  /** Each model call gets this long. */
   timeout: Duration.Input;
   message(i: number): Effect.Effect<Message, StoreError>;
   nodeText(l: number, i: number): Effect.Effect<string, StoreError>;
-  /** The compaction view: the lines before `boundary`, built ones only. */
   compactionView(boundary: number): Effect.Effect<Rendered, StoreError>;
-  /** Store the node, mark it built, and let the views merge. */
   commit(node: Node): Effect.Effect<void, StoreError>;
 }
 
 export interface Compactor {
-  /** Look for work: a message was logged, or something was built. */
   readonly kick: Effect.Effect<void>;
-  /** A failed call is tried again at the next message. */
   readonly retryFailed: Effect.Effect<void>;
-  /** True once every message before `count` is summarized; false after `wait`. */
   whenSummarized(count: number, wait: Duration.Input): Effect.Effect<boolean>;
-  /** Resolves once nothing is running or ready to run. Failed tasks wait for `retryFailed`. */
   readonly idle: Effect.Effect<void>;
 }
+
+const LABEL_HEAD = /^\d+\+\d+\|/;
+const TOLERATED_NODE_OVERSHOOT = 1.25;
+const MAX_KEPT_LINE_BYTES = NODE_MAX * TOLERATED_NODE_OVERSHOOT;
+
+const retryTransientCompletionFailure = {
+  times: 2,
+  schedule: Schedule.exponential("500 millis"),
+};
+
+const fitsInNode = (text: string) => byteLength(text) <= NODE_MAX;
+
+const stripLabelHead = (line: string) => line.replace(LABEL_HEAD, "");
+
+const cutIfFarOverNodeLimit = (line: string) =>
+  byteLength(line) > MAX_KEPT_LINE_BYTES ? takeBytes(line, NODE_MAX) : line;
 
 interface Waiter {
   check: () => boolean;
   done: Deferred.Deferred<void>;
 }
 
-/** Builds the tree: runs the scheduler's tasks as fibers of the enclosing scope. */
 export const makeCompactor = Effect.fnUntraced(function* (
   deps: CompactorDeps,
 ): Effect.fn.Return<Compactor, never, Scope.Scope> {
@@ -61,46 +69,42 @@ export const makeCompactor = Effect.fnUntraced(function* (
     yield* Deferred.await(done).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(waiter))));
   });
 
-  /**
-   * One line from the model. It can't count bytes: the task shows a ruler, and a reply over the
-   * limit is sent back, in the same conversation, with the cut. Up to 5 tries; the shortest wins.
-   */
-  const summarize = Effect.fnUntraced(function* (boundary: number, task: string) {
-    const view = yield* deps.compactionView(boundary);
-    const messages: Turn[] = [
+  const summarizeIntoOneLine = Effect.fnUntraced(function* (
+    compactionViewBoundary: number,
+    task: string,
+  ) {
+    const view = yield* deps.compactionView(compactionViewBoundary);
+    const conversation: Turn[] = [
       { role: "user", parts: [...view.blocks, `${view.closing}\n\n${task}`] },
     ];
-    let best: string | undefined;
+    let shortestLine: string | undefined;
     for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
       const reply = yield* deps.summarizer
-        .complete({ system: deps.system, messages: [...messages] })
+        .complete({ system: deps.system, messages: [...conversation] })
         .pipe(
           Effect.timeout(deps.timeout),
           Effect.catchTag("TimeoutError", (cause) => Effect.fail(new CompletionError({ cause }))),
-          // A transient failure is not worth a whole node; a persistent one fails the task, which is retried at the next message.
-          Effect.retry({ times: 2, schedule: Schedule.exponential("500 millis") }),
+          Effect.retry(retryTransientCompletionFailure),
         );
-      const line = reply.trim().replace(/^\d+\+\d+\|/, "");
+      const line = stripLabelHead(reply.trim());
       if (line === "") continue;
       const size = byteLength(line);
-      if (best === undefined || size < byteLength(best)) best = line;
-      if (size <= NODE_MAX) return line;
-      messages.push(
+      if (shortestLine === undefined || size < byteLength(shortestLine)) shortestLine = line;
+      if (fitsInNode(line)) return line;
+      conversation.push(
         { role: "assistant", parts: [reply] },
         { role: "user", parts: [tooLong(size, takeBytes(line, NODE_MAX))] },
       );
     }
-    if (best === undefined)
+    if (shortestLine === undefined)
       return yield* new CompletionError({ cause: "the model returned no line" });
-    // A few bytes over is fine, the view measures real sizes. Far over would let one line eat the budget.
-    return byteLength(best) > NODE_MAX * 1.25 ? takeBytes(best, NODE_MAX) : best;
+    return cutIfFarOverNodeLimit(shortestLine);
   });
 
   const buildLeaf = Effect.fnUntraced(function* (i: number) {
     const message = yield* deps.message(i);
     const source = `${message.kind}: ${message.text}`;
-    // A source that fits is its own node, with no model call.
-    const text = byteLength(source) <= NODE_MAX ? source : yield* summarize(i, leafTask(i, source));
+    const text = fitsInNode(source) ? source : yield* summarizeIntoOneLine(i, leafTask(i, source));
     return { l: 0, i, text, size: byteLength(text) } satisfies Node;
   });
 
@@ -108,10 +112,13 @@ export const makeCompactor = Effect.fnUntraced(function* (
     const [a, b] = children(l, i);
     const [textA, textB] = yield* Effect.all([deps.nodeText(a.l, a.i), deps.nodeText(b.l, b.i)]);
     const joined = `${textA}\n${textB}`;
-    const text =
-      byteLength(joined) <= NODE_MAX
-        ? joined
-        : yield* summarize(last(l, i) + 1, mergeTask(a, b, first(l, i), last(l, i), textA, textB));
+    const oneAfterLastCoveredMessage = last(l, i) + 1;
+    const text = fitsInNode(joined)
+      ? joined
+      : yield* summarizeIntoOneLine(
+          oneAfterLastCoveredMessage,
+          mergeTask(a, b, first(l, i), last(l, i), textA, textB),
+        );
     return { l, i, text, size: byteLength(text) } satisfies Node;
   });
 

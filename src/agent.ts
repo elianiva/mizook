@@ -19,23 +19,17 @@ import { State, type PendingTurn } from "./state.ts";
 export type AgentError = DurableError | StoreError | StateError;
 
 export interface Incoming {
-  /** The place the turn talks in: a Chat SDK thread id. One turn runs per place at a time. */
   readonly chatId: string;
-  /** Where the reply goes: the same place. */
   readonly threadId: string;
   readonly text: string;
-  /** What the user calls the place. The memory logs the message as `[in <where>] <text>`. */
   readonly where?: string;
-  /** The id of the message, so a retry finds the same submission. */
   readonly requestId: string;
-  /** What started the turn. Only a user message matches standing intents. */
   readonly source?: "user" | "scheduled" | "webhook" | "approval" | "test";
 }
 
 const textOf = (message: AssistantMessage | ToolResultMessage): string =>
   message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
 
-/** The shared profile, as one block of turn context. Empty when the user has not filled it. */
 const profileText = (profile: Profile): string =>
   [
     profile.about.trim() === "" ? "" : `About the user: ${profile.about.trim()}`,
@@ -46,25 +40,29 @@ const profileText = (profile: Profile): string =>
     .filter((part) => part !== "")
     .join("\n");
 
+const taggedWithPlace = (incoming: Incoming): string =>
+  incoming.where === undefined ? incoming.text : `[in ${incoming.where}] ${incoming.text}`;
+
+const JOIN_RUNNING_TURN = "steer";
+const MAX_ASK_STEPS = 8;
+
 type IndexEntry = { readonly name: string; readonly description: string };
 
-/**
- * The skill catalogue, one line each: the agent's own, then the global ones it does not shadow.
- * The bodies load only when the agent reads one.
- */
-const skillIndexText = (
+const MAX_SKILLS_LISTED = 40;
+
+const skillCatalogue = (
   own: ReadonlyArray<IndexEntry>,
   global: ReadonlyArray<IndexEntry>,
 ): string => {
-  const mine = new Set(own.map((skill) => skill.name));
+  const ownNames = new Set(own.map((skill) => skill.name));
   const skills = [
     ...own.map((skill) => ({ ...skill, label: skill.name })),
     ...global
-      .filter((skill) => !mine.has(skill.name))
+      .filter((skill) => !ownNames.has(skill.name))
       .map((skill) => ({ ...skill, label: `${skill.name} (global)` })),
   ];
   if (skills.length === 0) return "";
-  const shown = skills.slice(0, 40);
+  const shown = skills.slice(0, MAX_SKILLS_LISTED);
   return [
     "Skills you can read with skill_manage:",
     ...shown.map((skill) => `- ${skill.label}: ${skill.description}`),
@@ -72,7 +70,6 @@ const skillIndexText = (
   ].join("\n");
 };
 
-/** The intents this message woke, as context the user never typed. */
 const intentText = (intents: ReadonlyArray<Intent>): string =>
   intents.length === 0
     ? ""
@@ -82,25 +79,13 @@ const intentText = (intents: ReadonlyArray<Intent>): string =>
         "If one applies now, act on it in your reply.",
       ].join("\n");
 
-/** The agent: one turn per user message, on pi-durable, with the memory as its only continuity. */
 export class Agent extends Context.Service<
   Agent,
   {
-    /**
-     * Start a turn for a message, or fold it into the turn already running for that chat, between
-     * its tool calls. Nothing is answered here: `finish` waits for the answer.
-     */
     begin(incoming: Incoming): Effect.Effect<"started" | "folded", AgentError>;
-    /** Wait for the chat's turn to be answered, log it in the memory, and give the reply to post. */
     finish(chatId: string): Effect.Effect<string, AgentError>;
-    /** Stop the chat's running turn. False when nothing is running. */
     stop(chatId: string): Effect.Effect<boolean, AgentError>;
-    /**
-     * Answer a question from another channel out of this chat's memory, read-only: nothing is
-     * logged, and the only tools are zoom and date.
-     */
     ask(question: string): Effect.Effect<string, AgentError>;
-    /** Turns that were started and not delivered: after a restart, these are finished again. */
     readonly pending: Effect.Effect<ReadonlyArray<PendingTurn>, AgentError>;
   }
 >()("mizook/Agent") {
@@ -135,22 +120,30 @@ export class Agent extends Context.Service<
         return conversation;
       });
 
+      const globalSkillsOrNone = host.globalSkills.index.pipe(Effect.orElseSucceed(() => []));
+
       const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
       const now = Effect.map(nowDate, (date) => formatDate(date, settings.timezone));
 
-      const entriesOf = (conversation: Conversation) =>
+      const ENTRIES_PAGE_SIZE = 200;
+
+      const allEntriesOf = (conversation: Conversation) =>
         call("entries", async () => {
           const entries: EntryRecord[] = [];
           let cursor;
           do {
-            const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
+            const page = await conversation.entries(
+              { order: "ascending" },
+              ENTRIES_PAGE_SIZE,
+              cursor,
+              context,
+            );
             entries.push(...page.items);
             cursor = page.next;
           } while (cursor);
           return entries;
         });
 
-      /** The transcript of a turn, as the memory logs it: replies, tool calls and their results. Thoughts are never logged. */
       const logTranscript = Effect.fnUntraced(function* (entries: readonly EntryRecord[]) {
         for (const entry of entries) {
           const message = entry.model?.[0];
@@ -166,11 +159,12 @@ export class Agent extends Context.Service<
               if (block.type === "text") reply += block.text;
               else if (block.type === "toolCall" && block.name === "send_to_user") {
                 yield* flush;
-                // What the agent says to the user is its reply, whichever way it was sent.
-                const said = Array.isArray(block.arguments.messages)
+                const sentToUserCountsAsReply = Array.isArray(block.arguments.messages)
                   ? block.arguments.messages.filter((m): m is string => typeof m === "string")
                   : [];
-                for (const text of said) yield* memory.append("agent", text.trim());
+                for (const text of sentToUserCountsAsReply) {
+                  yield* memory.append("agent", text.trim());
+                }
               } else if (block.type === "toolCall") {
                 yield* flush;
                 yield* memory.append("tool", `${block.name} ${JSON.stringify(block.arguments)}`);
@@ -188,12 +182,9 @@ export class Agent extends Context.Service<
       });
 
       const begin = Effect.fn("Agent.begin")(function* (incoming: Incoming) {
-        // One memory covers every place this agent talks in, so each message says where it was said.
-        const said =
-          incoming.where === undefined ? incoming.text : `[in ${incoming.where}] ${incoming.text}`;
+        const said = taggedWithPlace(incoming);
         const running = yield* state.turn(incoming.chatId);
         if (running) {
-          // The user wrote while the agent works: the message reaches it between tool calls.
           const conversation = yield* conversationOf(running);
           yield* memory.append("user", said);
           const submission = yield* call("submit", () =>
@@ -201,7 +192,7 @@ export class Agent extends Context.Service<
               {
                 type: "input",
                 content: said,
-                whenBusy: "steer",
+                whenBusy: JOIN_RUNNING_TURN,
                 requestId: incoming.requestId,
               },
               context,
@@ -214,18 +205,12 @@ export class Agent extends Context.Service<
           return "folded" as const;
         }
 
-        const woke =
-          (incoming.source ?? "user") === "user"
-            ? yield* intents.match(incoming.text, yield* nowDate)
-            : [];
+        const matchesIntents = (incoming.source ?? "user") === "user";
+        const woke = matchesIntents ? yield* intents.match(incoming.text, yield* nowDate) : [];
         const turnContext = [
           `Now: ${yield* now}`,
           profileText(yield* host.profile),
-          skillIndexText(
-            yield* skills.index,
-            // The Hub being away costs the shared skills for one turn, not the turn.
-            yield* host.globalSkills.index.pipe(Effect.orElseSucceed(() => [])),
-          ),
+          skillCatalogue(yield* skills.index, yield* globalSkillsOrNone),
           intentText(woke),
         ]
           .filter((part) => part !== "")
@@ -244,8 +229,7 @@ export class Agent extends Context.Service<
           ),
         );
         turnInputs.set(conversation.id, turn.text);
-        // Record the turn before it runs: a restart then finds it and delivers its reply.
-        const record: PendingTurn = {
+        const pendingTurn: PendingTurn = {
           chatId: incoming.chatId,
           threadId: incoming.threadId,
           conversationId: conversation.id,
@@ -254,14 +238,17 @@ export class Agent extends Context.Service<
           submissions: [],
           logged: false,
         };
-        yield* state.putTurn(record);
+        yield* state.putTurn(pendingTurn);
         const submission = yield* call("submit", () =>
           conversation.submit(
             { type: "input", content: said, requestId: incoming.requestId },
             context,
           ),
         );
-        yield* state.putTurn({ ...record, submissions: [submission.id] });
+        yield* state.putTurn({
+          ...pendingTurn,
+          submissions: [submission.id],
+        });
         return "started" as const;
       });
 
@@ -271,7 +258,6 @@ export class Agent extends Context.Service<
           return yield* new DurableError({ operation: "finish", cause: `no turn for ${chatId}` });
         const conversation = yield* conversationOf(first);
 
-        // A turn that was recorded but not submitted before a restart: the request id finds, or makes, the submission.
         const primary = yield* call("submit", () =>
           conversation.submit(
             { type: "input", content: first.text, requestId: first.requestId },
@@ -279,10 +265,12 @@ export class Agent extends Context.Service<
           ),
         );
         if (!first.submissions.includes(primary.id)) {
-          yield* state.putTurn({ ...first, submissions: [primary.id, ...first.submissions] });
+          yield* state.putTurn({
+            ...first,
+            submissions: [primary.id, ...first.submissions],
+          });
         }
 
-        // Wait for every submission, including those the user added while it ran.
         let waited = 0;
         let last:
           | Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof harness.submission>>>["wait"]>>
@@ -298,7 +286,7 @@ export class Agent extends Context.Service<
           waited = ids.length;
         }
 
-        const entries = yield* entriesOf(conversation);
+        const entries = yield* allEntriesOf(conversation);
         const turn = (yield* state.turn(chatId)) ?? first;
         if (!turn.logged) {
           yield* logTranscript(entries);
@@ -306,16 +294,16 @@ export class Agent extends Context.Service<
         }
         turnInputs.delete(conversation.id);
 
-        let reply: string;
+        let fallbackReply: string;
         if (last?.status === "done") {
           const answer = entries.find((entry) => entry.id === last.answer)?.model?.[0];
-          reply = answer?.role === "assistant" ? textOf(answer).trim() : "";
+          fallbackReply = answer?.role === "assistant" ? textOf(answer).trim() : "";
         } else {
-          reply = `I couldn't answer that (${last?.reason ?? "no answer"}).`;
+          fallbackReply = `I couldn't answer that (${last?.reason ?? "no answer"}).`;
         }
         yield* state.deleteTurn(chatId);
-        // The agent talks through send_to_user: its final text is only a fallback for a turn that said nothing.
-        return (yield* outbox.take(chatId)) > 0 ? "" : reply;
+        const sentToUser = (yield* outbox.take(chatId)) > 0;
+        return sentToUser ? "" : fallbackReply;
       });
 
       const stop = Effect.fn("Agent.stop")(function* (chatId: string) {
@@ -343,7 +331,7 @@ export class Agent extends Context.Service<
             timestamp: Date.now(),
           },
         ];
-        for (let step = 0; step < 8; step++) {
+        for (let step = 0; step < MAX_ASK_STEPS; step++) {
           const reply = yield* call("ask", () =>
             durable.models.completeSimple(
               main,

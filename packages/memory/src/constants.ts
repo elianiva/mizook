@@ -1,21 +1,18 @@
 import type { ViewBudget } from "./types.ts";
 
-/** Maximum size of a node, in UTF-8 bytes. 128 was too small for useful lines. */
-export const NODE_MAX = 512;
-/** What the turns see. */
+const MAX_NODE_UTF8_BYTES = 512;
+const MAX_PARALLEL_COMPACTION_CALLS = 8;
+const MAX_UNBUILT_LEAVES_BEFORE_NEXT_LEAF = 8;
+const ATTEMPTS_TO_FIT_LINE_IN_NODE = 5;
+const VIEW_LINES_PER_CACHE_BLOCK = 4;
+
+export const NODE_MAX = MAX_NODE_UTF8_BYTES;
 export const CHAT_BUDGET: ViewBudget = { hi: 128_000, lo: 64_000 };
-/** What compactions see: small enough to share one cache entry, big enough to resolve references. */
 export const COMPACTION_BUDGET: ViewBudget = { hi: 32_000, lo: 16_000 };
-/** A longer text is logged as several messages in a row. */
 export const MAX_MESSAGE_BYTES = 30_000;
-/** A tool's output is clipped to its head and tail, this many characters in all. */
 export const TOOL_OUTPUT_MAX_CHARS = 30_000;
-/** Compaction calls running at once. */
-export const CONCURRENCY = 8;
-/** A message's node starts once fewer than this many lines before it are unbuilt. */
-export const UNBUILT_WINDOW = 8;
-/** Attempts to get a line under `NODE_MAX`. */
-export const MAX_TRIES = 5;
-/** View lines are grouped into blocks of this many lines, for prompt cache marks. */
-export const BLOCK_LINES = 4;
+export const CONCURRENCY = MAX_PARALLEL_COMPACTION_CALLS;
+export const UNBUILT_WINDOW = MAX_UNBUILT_LEAVES_BEFORE_NEXT_LEAF;
+export const MAX_TRIES = ATTEMPTS_TO_FIT_LINE_IN_NODE;
+export const BLOCK_LINES = VIEW_LINES_PER_CACHE_BLOCK;
 export const PLACEHOLDER = "(not summarized yet: zoom it)";

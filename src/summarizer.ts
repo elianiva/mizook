@@ -5,6 +5,8 @@ import { Models } from "./models.ts";
 import { agentTools } from "./tools.ts";
 import { Usage } from "./usage.ts";
 
+const TURN_TOOLS_SHARED_FOR_PROMPT_CACHE = agentTools;
+
 const ZERO_USAGE = {
   input: 0,
   output: 0,
@@ -14,8 +16,7 @@ const ZERO_USAGE = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } as const;
 
-/** The conversation of one compaction, as pi-ai messages. Earlier replies are replayed as the model's own. */
-const toMessages = (request: CompletionRequest, model: Model<Api>): Message[] =>
+const compactionAsPiMessages = (request: CompletionRequest, model: Model<Api>): Message[] =>
   request.messages.map((turn): Message => {
     const content = turn.parts.map((text) => ({ type: "text" as const, text }));
     if (turn.role === "user") return { role: "user", content, timestamp: Date.now() };
@@ -31,7 +32,6 @@ const toMessages = (request: CompletionRequest, model: Model<Api>): Message[] =>
     } satisfies AssistantMessage;
   });
 
-/** The cheap model that writes the memory, over pi-ai. */
 export const SummarizerLive = Layer.effect(
   Summarizer,
   Effect.gen(function* () {
@@ -45,9 +45,8 @@ export const SummarizerLive = Layer.effect(
               summary,
               {
                 systemPrompt: request.system,
-                messages: toMessages(request, summary),
-                // Same tools as the turns, never called: the call then reads their cache entry.
-                tools: agentTools,
+                messages: compactionAsPiMessages(request, summary),
+                tools: TURN_TOOLS_SHARED_FOR_PROMPT_CACHE,
               },
               { reasoning: summary.reasoning ? "xhigh" : undefined, signal, sessionId: "memory" },
             ),

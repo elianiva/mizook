@@ -11,17 +11,14 @@ import {
   type Spec,
 } from "./schedule.ts";
 
+type EpochMsOrNever = number;
+
 export interface Automation {
   readonly id: number;
-  /** When it fires. */
   readonly spec: Spec;
-  /** What it does then. */
   readonly action: Action;
-  /** Epoch milliseconds of the next fire; `NEVER` for a webhook trigger. */
-  readonly nextAt: number;
-  /** A paused automation stays in the table but does not fire. */
+  readonly nextAt: EpochMsOrNever;
   readonly active: boolean;
-  /** For a watch: a hash of what it saw last. */
   readonly lastHash: string | undefined;
 }
 
@@ -47,11 +44,8 @@ const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const HOUR = 3_600_000;
 
-/**
- * Every automation: a trigger (a time, a cron, a watched URL, a webhook call) and the action it
- * takes, for any agent. One store for all agents, so an automation can act for another one.
- * Tables are prefixed `app_`.
- */
+const firesByClock = (a: Automation) => a.nextAt < NEVER;
+
 export class Automations extends Context.Service<
   Automations,
   {
@@ -60,34 +54,22 @@ export class Automations extends Context.Service<
       action: Action,
       now: Date,
     ): Effect.Effect<Automation, ScheduleError | StateError>;
-    /** Active automations only, soonest first. */
     readonly list: Effect.Effect<ReadonlyArray<Automation>, StateError>;
-    /** Every automation, active and paused, for management. */
     readonly all: Effect.Effect<ReadonlyArray<Automation>, StateError>;
     get(id: number): Effect.Effect<Automation | undefined, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
     pause(id: number): Effect.Effect<boolean, StateError>;
-    /** Start a paused automation again, from its next time after `now`. */
     resume(id: number, now: Date): Effect.Effect<boolean, ScheduleError | StateError>;
-    /**
-     * Take the automations due at `now` and move each to its next time, in one step. A cron missed
-     * during downtime is returned once. A `once` is finished. At most once: a crash after this and
-     * before the turn starts loses that fire.
-     */
     claim(now: Date): Effect.Effect<ReadonlyArray<Automation>, StateError>;
-    /** Remember what a watch saw. True when it differs from last time (never on the first look). */
     watchChanged(id: number, hash: string): Effect.Effect<boolean, StateError>;
-    /** Count a fire for `key` against the hourly limit. False when it has fired `limit` times in the last hour. */
     allow(now: Date, limit: number, key: string): Effect.Effect<boolean, StateError>;
-    /** The earliest time anything is due, in epoch milliseconds. */
     readonly nextAt: Effect.Effect<number | undefined, StateError>;
   }
 >()("mizook/Automations") {
-  /**
-   * `arm(at)` is told when a new automation is due, so the Durable Object can move its alarm
-   * earlier. It never moves it later: the alarm handler sets the exact time after each wake.
-   */
-  static readonly layer = (sql: SqlDriver, arm: (at: number) => Promise<void> = async () => {}) =>
+  static readonly layer = (
+    sql: SqlDriver,
+    moveAlarmEarlierTo: (at: number) => Promise<void> = async () => {},
+  ) =>
     Layer.effect(
       Automations,
       Effect.gen(function* () {
@@ -109,10 +91,8 @@ export class Automations extends Context.Service<
           );
         });
 
-        // Two wakes must not take the same due automation: the reads and writes below interleave.
-        const lock = (yield* Semaphore.make(1)).withPermits(1);
+        const oneWakeAtATime = (yield* Semaphore.make(1)).withPermits(1);
 
-        /** Rows come back as plain objects; the schema makes them automations or a StateError. */
         const query = (operation: string, text: string, ...params: unknown[]) =>
           run(operation, () => sql.all(text, ...params)).pipe(
             Effect.flatMap(decodeRows),
@@ -147,7 +127,7 @@ export class Automations extends Context.Service<
                 at,
                 now.getTime(),
               );
-              yield* run("arm", () => arm(at));
+              yield* run("arm", () => moveAlarmEarlierTo(at));
               return made!;
             }),
           list: active,
@@ -190,23 +170,22 @@ export class Automations extends Context.Service<
                   id,
                 ),
               );
-              yield* run("arm", () => arm(next.getTime()));
+              yield* run("arm", () => moveAlarmEarlierTo(next.getTime()));
               return true;
             }),
           claim: (now) =>
-            lock(
+            oneWakeAtATime(
               Effect.gen(function* () {
                 const due = (yield* active).filter((s) => s.nextAt <= now.getTime());
                 for (const s of due) {
-                  // Always the next time after now: a cron that missed several slots fires once.
-                  const next = yield* nextFire(s.spec, now).pipe(
+                  const nextSlot = yield* nextFire(s.spec, now).pipe(
                     Effect.orElseSucceed(() => undefined),
                   );
                   yield* run("advance automation", () =>
-                    next
+                    nextSlot
                       ? sql.all(
                           `UPDATE app_automations SET next_at = ? WHERE id = ?`,
-                          next.getTime(),
+                          nextSlot.getTime(),
                           s.id,
                         )
                       : sql.all(`UPDATE app_automations SET active = 0 WHERE id = ?`, s.id),
@@ -240,8 +219,7 @@ export class Automations extends Context.Service<
               await sql.all(`INSERT INTO app_fires (at, key) VALUES (?, ?)`, now.getTime(), key);
               return true;
             }),
-          // A webhook trigger has no clock time: it never sets the alarm.
-          nextAt: Effect.map(active, (all) => all.find((a) => a.nextAt < NEVER)?.nextAt),
+          nextAt: Effect.map(active, (all) => all.find(firesByClock)?.nextAt),
         });
       }),
     );

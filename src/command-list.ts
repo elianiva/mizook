@@ -1,4 +1,3 @@
-/** The slash commands, once: the bot menu in Telegram, `/help`, and the handler all read this. */
 export const COMMANDS = [
   { command: "stop", description: "Stop the running turn" },
   { command: "cost", description: "What the model calls cost" },
@@ -22,16 +21,13 @@ export const COMMANDS = [
   { command: "help", description: "List the commands" },
 ] as const;
 
-/** Names an agent's slug may not take: they already mean something. */
 export const RESERVED_COMMANDS: ReadonlySet<string> = new Set([
   ...COMMANDS.map((c) => c.command),
   "start",
 ]);
 
-/** What a slug may look like: a Telegram command name, so `/<slug>` talks to the agent. */
 export const AGENT_SLUG = /^[a-z][a-z0-9_]{1,31}$/;
 
-/** The bot menu: the commands, then one `/<slug>` per agent, described by its name and role. */
 export const menuWith = (
   agents: ReadonlyArray<{ readonly slug: string; readonly name: string; readonly role: string }>,
 ): Array<{ command: string; description: string }> => [

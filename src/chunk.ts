@@ -1,18 +1,19 @@
-/** Telegram refuses a message over 4096 characters. */
-const LIMIT = 4000;
+const TELEGRAM_MAX_MESSAGE_CHARS = 4096;
+const HEADROOM_CHARS = 96;
+const MAX_CHUNK_CHARS = TELEGRAM_MAX_MESSAGE_CHARS - HEADROOM_CHARS;
 
-/** Split a reply at paragraph, line, or word breaks so no part is over `LIMIT`. */
-export const chunk = (text: string, limit = LIMIT): string[] => {
+export const chunk = (text: string, limit = MAX_CHUNK_CHARS): string[] => {
   const parts: string[] = [];
   let rest = text.trim();
   while (rest.length > limit) {
     const window = rest.slice(0, limit);
-    const cut = Math.max(
+    const lastParagraphLineOrWordBreak = Math.max(
       window.lastIndexOf("\n\n"),
       window.lastIndexOf("\n"),
       window.lastIndexOf(" "),
     );
-    const at = cut > limit / 2 ? cut : limit;
+    const breakKeepsAtLeastHalf = lastParagraphLineOrWordBreak > limit / 2;
+    const at = breakKeepsAtLeastHalf ? lastParagraphLineOrWordBreak : limit;
     parts.push(rest.slice(0, at).trimEnd());
     rest = rest.slice(at).trimStart();
   }

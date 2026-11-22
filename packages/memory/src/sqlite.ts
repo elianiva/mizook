@@ -11,17 +11,10 @@ const SearchRow = Schema.Struct({
 });
 const decodeSearch = Schema.decodeUnknownEffect(Schema.Array(SearchRow));
 
-/**
- * The little SQL a store needs, sync or async. Rows come back as plain objects.
- *
- * On a Durable Object that also hosts something with its own transactions, go through that
- * thing's serialized database wrapper, so a write never lands inside someone else's transaction.
- */
 export interface SqlDriver {
   all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T[] | Promise<T[]>;
 }
 
-/** A `Store` over SQLite. Tables are prefixed `mem_` so it can share a database with other state. */
 export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
   Layer.effect(
     Store,
@@ -46,8 +39,6 @@ export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
         await sql.all(
           `CREATE TABLE IF NOT EXISTS mem_views (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)`,
         );
-        // A derived index: the log stays the only source of truth. Trigram handles CJK and
-        // substrings that a word tokenizer would miss.
         await sql.all(
           `CREATE VIRTUAL TABLE IF NOT EXISTS mem_messages_fts USING fts5(
              text, content='mem_messages', content_rowid='i', tokenize='trigram')`,
@@ -64,11 +55,20 @@ export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
         );
       });
 
+      const scanForTermsTooShortForTrigrams = (text: string, limit: number) =>
+        sql.all(
+          `SELECT i, kind, date, substr(text, 1, 400) AS snippet
+           FROM mem_messages WHERE lower(text) LIKE lower(?)
+           ORDER BY i LIMIT ?`,
+          `%${text}%`,
+          limit,
+        );
+
       const search = (query: string, limit: number) =>
         run("search", async () => {
           const text = query.trim();
           if (text === "") return [];
-          const terms = text
+          const quotedFtsTerms = text
             .split(/\s+/)
             .filter((term) => term !== "")
             .map((term) => `"${term.replaceAll('"', '""')}"`);
@@ -80,18 +80,11 @@ export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
              WHERE mem_messages_fts MATCH ?
              ORDER BY rank
              LIMIT ?`,
-            terms.join(" AND "),
+            quotedFtsTerms.join(" AND "),
             limit,
           );
           if (hits.length > 0) return hits;
-          // The trigram tokenizer ignores one- and two-character terms; a plain scan still finds them.
-          return sql.all(
-            `SELECT i, kind, date, substr(text, 1, 400) AS snippet
-             FROM mem_messages WHERE lower(text) LIKE lower(?)
-             ORDER BY i LIMIT ?`,
-            `%${text}%`,
-            limit,
-          );
+          return scanForTermsTooShortForTrigrams(text, limit);
         }).pipe(
           Effect.flatMap(decodeSearch),
           Effect.mapError((cause) =>

@@ -348,14 +348,18 @@ export const auditQuery = Query.define({
   execute: ({ channel }) => fetchJson(Schema.Array(AuditRow), "audit", { c: channel }),
 });
 
-/** The newest few messages, for the overview. The Log page pages through the rest. */
+const OVERVIEW_RECENT_MESSAGE_COUNT = 8;
+
 export const recentQuery = Query.define({
   name: "Recent",
   args: channelArgs,
   data: Schema.Array(LogMessage),
   error: Schema.String,
   execute: ({ channel }) =>
-    fetchJson(Schema.Array(LogMessage), "messages", { c: channel, limit: 8 }),
+    fetchJson(Schema.Array(LogMessage), "messages", {
+      c: channel,
+      limit: OVERVIEW_RECENT_MESSAGE_COUNT,
+    }),
 });
 
 export const ActionKind = Schema.Literals(["approve", "deny", "cancel", "stop"]);
@@ -367,19 +371,28 @@ export type ArtifactAction = typeof ArtifactAction.Type;
 export const SettingKey = Schema.Literals(["model", "budget", "timezone", "instructions"]);
 export type SettingKey = typeof SettingKey.Type;
 
-/** A write. The header and same-origin post are what the Worker checks besides the Access token. */
-const write = (path: string, channel: string, body?: unknown): Effect.Effect<unknown, string> =>
+const CSRF_HEADER = { "x-mizook-csrf": "1" };
+const HTTP_CONFLICT = 409;
+
+const postSameOrigin = (
+  path: string,
+  channel: string,
+  body?: unknown,
+): Effect.Effect<unknown, string> =>
   Effect.tryPromise({
     try: async () => {
       const response = await fetch(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
         method: "POST",
-        headers: { "x-mizook-csrf": "1", "content-type": "application/json" },
+        headers: {
+          ...CSRF_HEADER,
+          "content-type": "application/json",
+        },
         ...(body !== undefined && { body: JSON.stringify(body) }),
       });
       const reply = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) {
         throw new Error(
-          response.status === 409
+          response.status === HTTP_CONFLICT
             ? "It was already handled"
             : (reply.error ?? `Request failed (${response.status})`),
         );
@@ -394,43 +407,39 @@ export const postAction = (
   action: ActionKind,
   id: number,
 ): Effect.Effect<void, string> =>
-  write(
+  postSameOrigin(
     action === "stop"
       ? "stop"
       : `${action === "cancel" ? "schedules" : "approvals"}/${id}/${action}`,
     channel,
   ).pipe(Effect.asVoid);
 
-/** Publish pasted html or markdown. Gives the public link. */
+const channelReplyOf = (reply: unknown): string =>
+  String((reply as { said?: string }).said ?? "Saved.");
+
+const publicLinkOf = (reply: unknown): string => String((reply as { url?: string }).url ?? "");
+
 export const postNewArtifact = (
   channel: string,
   draft: { name: string; kind: string; content: string },
 ): Effect.Effect<string, string> =>
-  write("artifacts", channel, draft).pipe(
-    Effect.map((reply) => String((reply as { url?: string }).url ?? "")),
-  );
+  postSameOrigin("artifacts", channel, draft).pipe(Effect.map(publicLinkOf));
 
 export const postArtifact = (
   channel: string,
   name: string,
   action: ArtifactAction,
 ): Effect.Effect<void, string> =>
-  write(`artifacts/${encodeURIComponent(name)}/${action}`, channel).pipe(Effect.asVoid);
+  postSameOrigin(`artifacts/${encodeURIComponent(name)}/${action}`, channel).pipe(Effect.asVoid);
 
-/** An empty value puts the setting back to its default. Gives the channel's reply. */
 export const postSetting = (
   channel: string,
   key: SettingKey,
   value: string,
 ): Effect.Effect<string, string> =>
-  write(`settings/${key}`, channel, { value }).pipe(
-    Effect.map((reply) => String((reply as { said?: string }).said ?? "Saved.")),
-  );
+  postSameOrigin(`settings/${key}`, channel, { value: value }).pipe(Effect.map(channelReplyOf));
 
-/** Save or remove one of the agent's own records. Gives the reply to show. */
 export const postAgent = (channel: string, edit: AgentEdit): Effect.Effect<string, string> => {
   const { kind, ...body } = edit;
-  return write(kind, channel, body).pipe(
-    Effect.map((reply) => String((reply as { said?: string }).said ?? "Saved.")),
-  );
+  return postSameOrigin(kind, channel, body).pipe(Effect.map(channelReplyOf));
 };

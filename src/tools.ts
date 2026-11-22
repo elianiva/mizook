@@ -1,11 +1,6 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import { Schema } from "effect";
 
-/**
- * Every tool the agent has. The model calls two, send_to_user and execute; the rest are called by
- * the programs it runs (`codemode.ts`). Add a tool to `toolSpecs`, give it a handler in
- * `handlers.ts`, and programs see it.
- */
 const described = <S extends Schema.Top>(schema: S, description: string): S["Rebuild"] =>
   schema.annotate({ description });
 
@@ -105,8 +100,7 @@ export const AutomationIdArgs = Schema.Struct({
   ),
 });
 
-/** pi-ai takes a JSON Schema: the Effect schema is the one source of truth for it and the types. */
-const parametersOf = (schema: Schema.Constraint): object =>
+const jsonSchemaForPiAi = (schema: Schema.Constraint): object =>
   Schema.toJsonSchemaDocument(schema).schema;
 
 export const WebSearchArgs = Schema.Struct({
@@ -345,9 +339,7 @@ export const ExecuteArgs = Schema.Struct({
 });
 
 export interface ToolSpec {
-  /** The handler's name in `handlers.ts`. */
   readonly name: string;
-  /** Where a program calls it, under `tools.`, and what a role's tools list names. */
   readonly path: string;
   readonly description: string;
   readonly args: Schema.Decoder<unknown>;
@@ -357,7 +349,6 @@ export const ZOOM_DESCRIPTION =
   "Open line id+n of the view into the two lines it was made from. n = 1 gives message id whole.";
 export const DATE_DESCRIPTION = "The date and time of message id.";
 
-/** The tools a program calls. Every one answers with text. */
 export const toolSpecs: ReadonlyArray<ToolSpec> = [
   { name: "zoom", path: "memory.zoom", description: ZOOM_DESCRIPTION, args: ZoomArgs },
   { name: "date", path: "memory.date", description: DATE_DESCRIPTION, args: DateArgs },
@@ -515,13 +506,8 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
 ];
 
-const str = (description: string) => ({ type: "string", description });
+const signatureOnlyStringProperty = (description: string) => ({ type: "string", description });
 
-/**
- * Executor's own tools, reached through the `executor` handler. Their inputs go to Executor as
- * given: the JSON Schema only draws the signature. A call that needs approval pauses and the user
- * is shown Approve and Deny buttons.
- */
 export const executorSpecs: ReadonlyArray<{
   readonly tool: (typeof ExecutorArgs.Type)["tool"];
   readonly description: string;
@@ -537,7 +523,7 @@ export const executorSpecs: ReadonlyArray<{
     description: "Find app tools by what they do.",
     input: {
       type: "object",
-      properties: { query: str("Such as gmail send.") },
+      properties: { query: signatureOnlyStringProperty("Such as gmail send.") },
       required: ["query"],
     },
   },
@@ -546,7 +532,7 @@ export const executorSpecs: ReadonlyArray<{
     description: "An app tool's full signature.",
     input: {
       type: "object",
-      properties: { path: str("Such as tools.gmail.send.") },
+      properties: { path: signatureOnlyStringProperty("Such as tools.gmail.send.") },
       required: ["path"],
     },
   },
@@ -561,7 +547,7 @@ export const executorSpecs: ReadonlyArray<{
           items: {
             type: "object",
             properties: {
-              path: str("From search."),
+              path: signatureOnlyStringProperty("From search."),
               input: { type: "object", additionalProperties: true },
             },
             required: ["path", "input"],
@@ -574,35 +560,36 @@ export const executorSpecs: ReadonlyArray<{
   {
     tool: "execute",
     description: "Run a JavaScript program over the app tools, inside Executor.",
-    input: { type: "object", properties: { code: str("The program.") }, required: ["code"] },
+    input: {
+      type: "object",
+      properties: { code: signatureOnlyStringProperty("The program.") },
+      required: ["code"],
+    },
   },
 ];
 
-/** The two tools the model calls. Turns and compactions send the same bytes, so compactions read the turns' prompt cache. */
-const directSpecs = [
+const toolsTheModelCallsDirectly = [
   {
     name: "send_to_user",
     description:
       "Send messages to the user. This is the only way they hear from you: your final text is never shown. You can call it as often as you like during a turn, for example to say what you are about to do before a long task.",
-    parameters: parametersOf(SendToUserArgs),
+    parameters: jsonSchemaForPiAi(SendToUserArgs),
   },
   {
     name: "execute",
     description:
       "Run a JavaScript program that calls your tools. The # Tools section lists them; search(query) gives a tool's full signature. Returns the program's return value and logs, or its error.",
-    parameters: parametersOf(ExecuteArgs),
+    parameters: jsonSchemaForPiAi(ExecuteArgs),
   },
 ] as const;
 
-export const agentTools: Tool[] = directSpecs.map((spec) => ({ ...spec }));
+export const agentTools: Tool[] = toolsTheModelCallsDirectly.map((spec) => ({ ...spec }));
 
-/** The memory tools as plain model tools, for a question from another agent, which runs no program. */
 export const askTools: Tool[] = [
-  { name: "zoom", description: ZOOM_DESCRIPTION, parameters: parametersOf(ZoomArgs) },
-  { name: "date", description: DATE_DESCRIPTION, parameters: parametersOf(DateArgs) },
+  { name: "zoom", description: ZOOM_DESCRIPTION, parameters: jsonSchemaForPiAi(ZoomArgs) },
+  { name: "date", description: DATE_DESCRIPTION, parameters: jsonSchemaForPiAi(DateArgs) },
 ];
 
-/** Appended to the system prompt, before the user's instructions and the # Tools list. Static: no dates or state. */
 export const TOOL_GUIDE = `# Talking to the user
 
 You talk to the user only through send_to_user. Whatever you write outside it is not shown. Send

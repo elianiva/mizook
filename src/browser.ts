@@ -14,11 +14,10 @@ interface SnapshotBody {
   errors?: Array<{ message: string }>;
 }
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+const YAML_FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
-/** Browser Rendering prefixes its markdown with a small YAML frontmatter; lift the title out. */
 export const splitFrontmatter = (markdown: string): { title?: string; text: string } => {
-  const match = FRONTMATTER.exec(markdown);
+  const match = YAML_FRONTMATTER.exec(markdown);
   if (!match) return { text: markdown.trim() };
   const title = /^title:\s*(.+)$/m
     .exec(match[1] ?? "")?.[1]
@@ -30,7 +29,6 @@ export const splitFrontmatter = (markdown: string): { title?: string; text: stri
   };
 };
 
-/** Refuse anything that is not a public web page; the browser runs outside this Worker. */
 export const publicUrl = (input: string): URL => {
   let url: URL;
   try {
@@ -42,7 +40,7 @@ export const publicUrl = (input: string): URL => {
     throw new BrowserError({ url: input, reason: "only http and https" });
   }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const privateHost =
+  const isPrivateOrLocalHost =
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host === "0.0.0.0" ||
@@ -56,7 +54,7 @@ export const publicUrl = (input: string): URL => {
     host.endsWith(".internal") ||
     host.endsWith(".local") ||
     host === "metadata.google.internal";
-  if (privateHost) throw new BrowserError({ url: input, reason: "not a public host" });
+  if (isPrivateOrLocalHost) throw new BrowserError({ url: input, reason: "not a public host" });
   return url;
 };
 
@@ -67,7 +65,9 @@ const decodeBase64 = (text: string): Uint8Array => {
   return bytes;
 };
 
-/** Read a JS-heavy page with Browser Rendering: markdown for the model, a screenshot for the user. */
+const PAGE_LOAD_TIMEOUT_MS = 30_000;
+const MAX_ERROR_DETAIL_CHARS = 300;
+
 export class Browser extends Context.Service<
   Browser,
   {
@@ -103,7 +103,7 @@ export class Browser extends Context.Service<
               binding.quickAction("snapshot", {
                 url: url.toString(),
                 formats: ["markdown", "screenshot"],
-                gotoOptions: { waitUntil: "networkidle0", timeout: 30_000 },
+                gotoOptions: { waitUntil: "networkidle0", timeout: PAGE_LOAD_TIMEOUT_MS },
                 screenshotOptions: { fullPage: false },
               }),
             );
@@ -111,7 +111,7 @@ export class Browser extends Context.Service<
               const detail = yield* attempt("read error", () => response.text());
               return yield* new BrowserError({
                 url: input,
-                reason: `${response.status} ${detail.slice(0, 300)}`,
+                reason: `${response.status} ${detail.slice(0, MAX_ERROR_DETAIL_CHARS)}`,
               });
             }
             const body = yield* attempt("parse", () => response.json() as Promise<SnapshotBody>);

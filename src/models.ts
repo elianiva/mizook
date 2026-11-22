@@ -8,7 +8,6 @@ import { ModelNotFound } from "./errors.ts";
 export class Models extends Context.Service<
   Models,
   {
-    /** pi-ai's model collection, with auth from our settings instead of `process.env`. */
     readonly models: PiModels;
     readonly main: Model<Api>;
     readonly summary: Model<Api>;
@@ -18,9 +17,14 @@ export class Models extends Context.Service<
     Models,
     Effect.gen(function* () {
       const settings = yield* Settings;
-      const env: Record<string, string> = { DEEPSEEK_API_KEY: Redacted.value(settings.apiKey) };
+      const authEnvFromSettings: Record<string, string> = {
+        DEEPSEEK_API_KEY: Redacted.value(settings.apiKey),
+      };
       const models = createModels({
-        authContext: { env: async (name) => env[name], fileExists: async () => false },
+        authContext: {
+          env: async (name) => authEnvFromSettings[name],
+          fileExists: async () => false,
+        },
       });
       models.setProvider(deepseekProvider());
 

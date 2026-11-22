@@ -6,7 +6,6 @@ export type Decision = "allow" | "ask" | "deny";
 
 export interface Policy {
   readonly id: number;
-  /** A substring of the action, lowercased: a tool path such as `gmail.send`. */
   readonly match: string;
   readonly decision: Decision;
 }
@@ -24,10 +23,6 @@ const toPolicy = (row: typeof Row.Type): Policy => ({
   decision: row.decision,
 });
 
-/**
- * How much rope an action gets: run it, ask first, or refuse. The agent's executor calls are
- * matched by their tool path; the user can add a rule from an approval card with Always allow.
- */
 export class Policies extends Context.Service<
   Policies,
   {
@@ -39,7 +34,6 @@ export class Policies extends Context.Service<
       decision: Decision,
     ): Effect.Effect<Policy | undefined, StateError>;
     remove(id: number): Effect.Effect<boolean, StateError>;
-    /** The strongest decision for an action. Deny beats ask, ask beats allow. */
     decide(target: string): Effect.Effect<Decision | undefined, StateError>;
   }
 >()("mizook/Policies") {

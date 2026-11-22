@@ -1,6 +1,5 @@
 import { Data } from "effect";
 
-/** The log could not be read or written. */
 export class StoreError extends Data.TaggedError("StoreError")<{
   readonly operation: string;
   readonly cause: unknown;
@@ -10,7 +9,6 @@ export class StoreError extends Data.TaggedError("StoreError")<{
   }
 }
 
-/** The model call that writes a line failed, or answered nothing. */
 export class CompletionError extends Data.TaggedError("CompletionError")<{
   readonly cause: unknown;
 }> {
@@ -19,7 +17,6 @@ export class CompletionError extends Data.TaggedError("CompletionError")<{
   }
 }
 
-/** An archive could not be read: a file is malformed or messages are missing. */
 export class ArchiveError extends Data.TaggedError("ArchiveError")<{
   readonly reason: string;
 }> {
@@ -28,7 +25,6 @@ export class ArchiveError extends Data.TaggedError("ArchiveError")<{
   }
 }
 
-/** A tool asked for something the chat does not have: an id out of range, or `n` not a power of 2. */
 export class ZoomError extends Data.TaggedError("ZoomError")<{
   readonly reason: string;
 }> {

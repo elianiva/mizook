@@ -8,14 +8,15 @@ export const MAX_TRIGGER_LENGTH = 64;
 
 export type IntentState = "armed" | "done" | "cancelled" | "expired";
 
+type MillisecondsBetweenFires = number;
+
 export interface Intent {
   readonly id: number;
   readonly description: string;
   readonly triggers: ReadonlyArray<string>;
   readonly created: number;
   readonly expires: number;
-  /** Milliseconds between two fires. */
-  readonly cooldown: number;
+  readonly cooldown: MillisecondsBetweenFires;
   readonly maxFires: number;
   readonly fireCount: number;
   readonly lastFired: number | undefined;
@@ -42,27 +43,27 @@ const Row = Schema.Struct({
 });
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
-const toIntent = (row: typeof Row.Type): Intent => {
-  let triggers: string[] = [];
+const parseTriggersOrNone = (json: string): string[] => {
   try {
-    const parsed = JSON.parse(row.triggers) as unknown;
-    if (Array.isArray(parsed)) triggers = parsed.filter((t): t is string => typeof t === "string");
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
   } catch {
-    // A broken row has no triggers, so it never fires.
+    return [];
   }
-  return {
-    id: row.id,
-    description: row.description,
-    triggers,
-    created: row.created,
-    expires: row.expires,
-    cooldown: row.cooldown,
-    maxFires: row.max_fires,
-    fireCount: row.fire_count,
-    lastFired: row.last_fired ?? undefined,
-    state: row.state,
-  };
 };
+
+const toIntent = (row: typeof Row.Type): Intent => ({
+  id: row.id,
+  description: row.description,
+  triggers: parseTriggersOrNone(row.triggers),
+  created: row.created,
+  expires: row.expires,
+  cooldown: row.cooldown,
+  maxFires: row.max_fires,
+  fireCount: row.fire_count,
+  lastFired: row.last_fired ?? undefined,
+  state: row.state,
+});
 
 const SELECT = `SELECT id, description, triggers, created, expires, cooldown, max_fires, fire_count, last_fired, state FROM app_intents`;
 
@@ -70,7 +71,6 @@ const normalize = (text: string) => text.normalize("NFC").toLowerCase();
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** A whole-token match; CJK has no word breaks, so it uses a literal substring. */
 export const matchesTrigger = (text: string, trigger: string): boolean => {
   const needle = normalize(trigger).trim();
   if (needle === "") return false;
@@ -80,10 +80,6 @@ export const matchesTrigger = (text: string, trigger: string): boolean => {
   );
 };
 
-/**
- * Prospective memory: an instruction that waits for a future message. Matching is a token scan,
- * not a model call. Defaults are conservative: three fires, a day between them, ninety days.
- */
 export class Intents extends Context.Service<
   Intents,
   {
@@ -93,7 +89,6 @@ export class Intents extends Context.Service<
       options: IntentOptions,
     ): Effect.Effect<Intent, StateError>;
     readonly list: Effect.Effect<ReadonlyArray<Intent>, StateError>;
-    /** Change an armed intent's wording, triggers or limits. */
     update(
       id: number,
       input: {
@@ -104,10 +99,8 @@ export class Intents extends Context.Service<
         readonly maxFires: number;
       },
     ): Effect.Effect<Intent | undefined, StateError>;
-    /** Put an exported intent back with its counters and state. */
     restore(input: Omit<Intent, "id">): Effect.Effect<Intent, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
-    /** The intents this text wakes. Increments their counters and advances their state. */
     match(text: string, now: Date): Effect.Effect<ReadonlyArray<Intent>, StateError>;
   }
 >()("mizook/Intents") {
@@ -224,7 +217,6 @@ export class Intents extends Context.Service<
           match: (text, now) =>
             Effect.gen(function* () {
               const at = now.getTime();
-              // Expire overdue intents once, so the scan stays small and the list tells the truth.
               yield* run("expire intents", () =>
                 sql.all(
                   `UPDATE app_intents SET state = 'expired'

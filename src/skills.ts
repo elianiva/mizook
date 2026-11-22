@@ -42,10 +42,6 @@ const toSkill = (row: typeof Row.Type): Skill => ({
 
 const SELECT = `SELECT name, description, body, created, updated, used_at, use_count, pinned FROM app_skills`;
 
-/**
- * What the agent knows how to do, kept as procedures rather than conversation. A skill is read on
- * demand, so its body never sits in the prompt unless a task needs it.
- */
 export class Skills extends Context.Service<
   Skills,
   {
@@ -53,13 +49,9 @@ export class Skills extends Context.Service<
     get(name: string): Effect.Effect<Skill | undefined, StateError>;
     save(name: string, description: string, body: string): Effect.Effect<Skill, StateError>;
     remove(name: string): Effect.Effect<boolean, StateError>;
-    /** Count a read, so a later curator can see what is used. */
     touch(name: string): Effect.Effect<void, StateError>;
-    /** Keep a skill an automation depends on. */
     pin(name: string): Effect.Effect<void, StateError>;
-    /** Set whether a skill stays at hand, from the dashboard or a schedule. */
     setPinned(name: string, pinned: boolean): Effect.Effect<void, StateError>;
-    /** The names and descriptions a turn can see, cheapest form of progressive disclosure. */
     readonly index: Effect.Effect<ReadonlyArray<{ name: string; description: string }>, StateError>;
   }
 >()("mizook/Skills") {

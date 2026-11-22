@@ -2,19 +2,10 @@ import { NODE_MAX } from "./constants.ts";
 import { label } from "./tree.ts";
 
 export interface PromptOptions {
-  /** The agent's name, as the model should know itself. */
   name: string;
-  /** The user's own instructions: who they are and how they want work done. Goes last. */
   instructions?: string;
 }
 
-/**
- * The one system prompt, for turns and compactions alike (a compaction with its own prompt loses
- * the turns' cache). Never put dates or state in it.
- *
- * It is UniiChat's prompt, with the agent renamed and the paragraphs on subagents and the user's
- * computers dropped: this agent has neither.
- */
 export function systemPrompt({ name, instructions }: PromptOptions): string {
   const prompt = `You are ${name}, an AI agent that works for one user in a single chat that never
 ends. Each call to you is a turn or a compaction: the view below is followed by
@@ -97,7 +88,6 @@ told the line is too long, shorten it. Non-ASCII characters cost 2-4 bytes.`;
   return extra ? `${prompt}\n\n# The user's instructions\n\n${extra}` : prompt;
 }
 
-/** The ruler: as long as the limit, because models can't count bytes. */
 export const RULER = "-".repeat(NODE_MAX);
 
 export function leafTask(id: number, source: string): string {
@@ -112,15 +102,15 @@ ${source}
 export function mergeTask(
   a: { l: number; i: number },
   b: { l: number; i: number },
-  from: number,
-  to: number,
+  firstMessage: number,
+  lastMessage: number,
   textA: string,
   textB: string,
 ): string {
   return `Compaction: merge lines ${label(a.l, a.i)} and ${label(b.l, b.i)}, adjacent, into one line of at most
 ${NODE_MAX} bytes (about 70 words), the length of this ruler:
 ${RULER}
-<chat> may hold their messages, ${from} to ${to}, in more detail: take details
+<chat> may hold their messages, ${firstMessage} to ${lastMessage}, in more detail: take details
 of them from there too.
 <input>
 ${textA}

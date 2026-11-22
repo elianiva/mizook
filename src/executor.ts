@@ -4,7 +4,6 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { Settings } from "./config.ts";
 import { ExecutorError } from "./errors.ts";
 
-/** The tools Executor's MCP endpoint serves, however many apps are connected behind it. */
 export const EXECUTOR_TOOLS = [
   "skills",
   "search",
@@ -27,24 +26,25 @@ const Content = Schema.Struct({
 });
 const decodeContent = Schema.decodeUnknownEffect(Content);
 
-/** A response is plain JSON or a server-sent event stream: take the last JSON-RPC message. */
+const SSE_DATA_PREFIX = "data:";
+
 export const parseRpcBody = (body: string): unknown => {
   const trimmed = body.trim();
-  if (!trimmed.startsWith("event:") && !trimmed.startsWith("data:")) return JSON.parse(trimmed);
-  const data = trimmed
+  const isServerSentEventStream =
+    trimmed.startsWith("event:") || trimmed.startsWith(SSE_DATA_PREFIX);
+  if (!isServerSentEventStream) return JSON.parse(trimmed);
+  const eventPayloads = trimmed
     .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim());
-  return JSON.parse(data.at(-1) ?? "null");
+    .filter((line) => line.startsWith(SSE_DATA_PREFIX))
+    .map((line) => line.slice(SSE_DATA_PREFIX.length).trim());
+  const lastRpcMessage = eventPayloads.at(-1) ?? "null";
+  return JSON.parse(lastRpcMessage);
 };
 
+const MAX_PAUSE_SUMMARY_CHARS = 1_500;
 const Paused = Schema.Struct({ executionId: Schema.String });
 const decodePaused = Schema.decodeUnknownOption(Paused);
 
-/**
- * A result that paused for approval or input carries the `executionId` to resume. Returns it with
- * the result text, which says what is being asked. A finished result has no such id.
- */
 export const pausedExecution = (
   text: string,
 ): { readonly executionId: string; readonly summary: string } | undefined => {
@@ -53,16 +53,12 @@ export const pausedExecution = (
       Effect.orElseSucceed(() => undefined),
     ),
   );
-  const found = decodePaused(json);
-  return found._tag === "Some"
-    ? { executionId: found.value.executionId, summary: text.slice(0, 1_500) }
+  const resumable = decodePaused(json);
+  return resumable._tag === "Some"
+    ? { executionId: resumable.value.executionId, summary: text.slice(0, MAX_PAUSE_SUMMARY_CHARS) }
     : undefined;
 };
 
-/**
- * Executor over MCP (streamable HTTP): the connectors, credentials and approvals live there, and
- * the agent reaches them through its six fixed tools.
- */
 export class Executor extends Context.Service<
   Executor,
   {
