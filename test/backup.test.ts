@@ -1,7 +1,7 @@
 import { Store, sqliteStore, type SqlDriver } from "@mizook/memory";
-import { ConfigProvider, Effect, Layer } from "effect";
+import { Arbitrary, ConfigProvider, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
-import { expect, test } from "vite-plus/test";
+import { expect } from "vite-plus/test";
 import { Artifacts } from "../src/artifacts.ts";
 import { Backup } from "../src/backup.ts";
 import { Blobs } from "../src/blobs.ts";
@@ -12,6 +12,7 @@ import { Intents } from "../src/intents.ts";
 import { Policies } from "../src/policies.ts";
 import { Skills } from "../src/skills.ts";
 import { State } from "../src/state.ts";
+import { property } from "./property.ts";
 
 const settings = Settings.layer.pipe(
   Layer.provide(
@@ -26,7 +27,6 @@ const settings = Settings.layer.pipe(
   ),
 );
 
-/** One channel: its own SQLite, over a shared blob store. */
 const channel = (blobs: Layer.Layer<Blobs>) => {
   const db = new DatabaseSync(":memory:");
   const sql: SqlDriver = {
@@ -42,15 +42,103 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
     Layer.provideMerge(sqliteStore(sql)),
     Layer.provideMerge(blobs),
     Layer.provide(settings),
-    // Backup reads only who the agent is: its exports are filed under its Durable Object.
     Layer.provide(Layer.succeed(Host, fakeHost())),
   );
 };
 
-test("an archive restores a channel into an empty one: log, nodes, view, settings, artifacts", async () => {
-  const shared = Layer.build(Blobs.memory).pipe(Effect.map((c) => Layer.succeedContext(c)));
-  await Effect.runPromise(
-    Effect.scoped(
+const int = (minimum: number, maximum: number) =>
+  Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum, maximum })));
+const oneOf = <const A extends ReadonlyArray<string | number>>(values: A) =>
+  Arbitrary.schema(Schema.Literals(values));
+const chars = (alphabet: string, minLength: number, maxLength: number) =>
+  Arbitrary.array(oneOf(alphabet.split("")), { minLength, maxLength }).pipe(
+    Arbitrary.map((cs) => cs.join("")),
+  );
+const survivesUtf8 = (s: string) => new TextDecoder().decode(new TextEncoder().encode(s)) === s;
+const text = Arbitrary.schema(Schema.String).pipe(Arbitrary.filter(survivesUtf8));
+const distinctBy = <A>(items: ReadonlyArray<A>, key: (a: A) => string) =>
+  new Set(items.map(key)).size === items.length;
+
+const DAY = 86_400_000;
+const START = Date.UTC(2026, 0, 1);
+
+const messages = Arbitrary.array(
+  Arbitrary.all({
+    kind: oneOf(["user", "agent", "tool", "echo", "note"]),
+    text,
+    gap: int(0, 3 * DAY),
+  }),
+  { minLength: 1, maxLength: 6 },
+).pipe(
+  Arbitrary.map((drafts) => {
+    let at = START;
+    return drafts.map(({ kind, text, gap }, i) => {
+      at += gap;
+      return {
+        i,
+        kind,
+        text,
+        size: new TextEncoder().encode(text).length,
+        date: new Date(at).toISOString(),
+      };
+    });
+  }),
+);
+
+const channelContents = Arbitrary.all({
+  messages,
+  nodes: Arbitrary.array(Arbitrary.all({ l: int(1, 3), i: int(0, 3), text }), {
+    maxLength: 4,
+  }).pipe(Arbitrary.filter((nodes) => distinctBy(nodes, (n) => `${n.l}:${n.i}`))),
+  view: Arbitrary.array(Arbitrary.all([int(0, 3), int(0, 5)]), { maxLength: 4 }),
+  pending: Arbitrary.schema(Schema.Boolean),
+  settings: Arbitrary.array(Arbitrary.all({ key: chars("abcdef", 1, 6), value: text }), {
+    maxLength: 4,
+  }).pipe(Arbitrary.filter((s) => distinctBy(s, (x) => x.key))),
+  skills: Arbitrary.array(
+    Arbitrary.all({
+      name: chars("abcdef-", 1, 8),
+      description: text,
+      body: text,
+      pinned: Arbitrary.schema(Schema.Boolean),
+    }),
+    { maxLength: 3 },
+  ).pipe(Arbitrary.filter((s) => distinctBy(s, (x) => x.name))),
+  intents: Arbitrary.array(
+    Arbitrary.all({
+      description: text,
+      triggers: Arbitrary.array(chars("abcxyz ", 1, 8), { minLength: 1, maxLength: 3 }),
+      expiresIn: int(1, 30 * DAY),
+      cooldown: int(0, DAY),
+      maxFires: int(1, 9),
+    }),
+    { maxLength: 3 },
+  ),
+  policies: Arbitrary.array(
+    Arbitrary.all({
+      match: oneOf(["gmail.send", "web.*", "agents.manage", "*"]),
+      decision: oneOf(["allow", "ask", "deny"]),
+    }),
+    { maxLength: 5 },
+  ),
+  artifacts: Arbitrary.array(
+    Arbitrary.all({
+      name: chars("abcxyz019.-", 1, 12).pipe(Arbitrary.filter((n) => /^[a-z0-9]/.test(n))),
+      content: text,
+      data: Arbitrary.array(Arbitrary.all({ key: chars("abK._-1", 1, 6), value: text }), {
+        maxLength: 3,
+      }).pipe(Arbitrary.filter((d) => distinctBy(d, (x) => x.key))),
+    }),
+    { maxLength: 3 },
+  ).pipe(Arbitrary.filter((a) => distinctBy(a, (x) => x.name))),
+});
+
+property(
+  "an archive restores any channel into an empty one: log, nodes, view, settings, skills, intents, policies, artifacts and their data; a second restore is refused",
+  channelContents,
+  (contents) => {
+    const shared = Layer.build(Blobs.memory).pipe(Effect.map((c) => Layer.succeedContext(c)));
+    return Effect.scoped(
       Effect.gen(function* () {
         const blobs = yield* shared;
         const source = yield* Layer.build(channel(blobs));
@@ -61,86 +149,132 @@ test("an archive restores a channel into an empty one: log, nodes, view, setting
           const intents = yield* Intents;
           const policies = yield* Policies;
           const artifacts = yield* Artifacts;
-          for (let i = 0; i < 5; i++) {
-            yield* store.appendMessage({
-              i,
-              kind: "user",
-              text: `m${i}`,
-              size: 2,
-              date: `2026-01-0${i + 1}T10:00:00Z`,
-            });
-          }
-          yield* store.putNode({ l: 1, i: 0, text: "summary 0-1", size: 11 });
+          for (const m of contents.messages) yield* store.appendMessage(m);
+          for (const n of contents.nodes)
+            yield* store.putNode({ ...n, size: new TextEncoder().encode(n.text).length });
           yield* store.saveViews({
-            chat: {
-              lines: [
-                [1, 0],
-                [0, 2],
-              ],
-              pending: false,
-            },
+            chat: { lines: contents.view, pending: contents.pending },
             compaction: { lines: [], pending: false },
           });
-          yield* state.setMeta("thread", "telegram:-1:5");
-          yield* state.setMeta("setting:model", "deepseek-flash");
-          yield* skills.save("weekly-review", "Review the week", "1. Read seven days.");
-          yield* skills.pin("weekly-review");
-          yield* intents.create("Check the rollback owner", ["launch"], {
-            expiresAt: Date.now() + 86_400_000,
-            cooldownMs: 0,
-            maxFires: 2,
-          });
-          yield* policies.add("gmail.send", "ask");
-          yield* artifacts.publish("telegram:-1:5", "page.html", "<p>hi</p>", "text/html");
-          const snapshot = yield* store.snapshot;
-          return { tar: yield* (yield* Backup).tar, snapshot };
+          for (const { key, value } of contents.settings)
+            yield* state.setMeta(`setting:${key}`, value);
+          for (const s of contents.skills) {
+            yield* skills.save(s.name, s.description, s.body);
+            if (s.pinned) yield* skills.pin(s.name);
+          }
+          for (const i of contents.intents) {
+            yield* intents.create(i.description, i.triggers, {
+              expiresAt: Date.now() + i.expiresIn,
+              cooldownMs: i.cooldown,
+              maxFires: i.maxFires,
+            });
+          }
+          for (const p of contents.policies) yield* policies.add(p.match, p.decision);
+          for (const a of contents.artifacts) {
+            yield* artifacts.publish("telegram:-1:5", a.name, a.content, "text/plain");
+            for (const { key, value } of a.data)
+              yield* artifacts.data.set(a.name, key, JSON.stringify(value));
+          }
+          return {
+            tar: yield* (yield* Backup).tar,
+            snapshot: yield* store.snapshot,
+            intents: (yield* intents.list).map((intent) => ({ ...intent, id: 0 })),
+          };
         }).pipe(Effect.provide(source));
+
+        expect(exported.snapshot.messages).toEqual(contents.messages);
 
         const target = yield* Layer.build(channel(blobs));
         yield* Effect.gen(function* () {
           const store = yield* Store;
-          const state = yield* State;
-          yield* state.setMeta("thread", "telegram:-1:5");
-          yield* (yield* Backup).restoreTar(exported.tar);
+          const backup = yield* Backup;
+          yield* backup.restoreTar(exported.tar);
           expect(yield* store.snapshot).toEqual(exported.snapshot);
-          expect((yield* state.settings).model).toBe("deepseek-flash");
-          const restoredSkills = yield* (yield* Skills).list;
-          expect(restoredSkills.map((s) => s.name)).toEqual(["weekly-review"]);
-          expect(restoredSkills[0]?.pinned).toBe(true);
-          expect((yield* (yield* Intents).list)[0]?.description).toBe("Check the rollback owner");
-          expect((yield* (yield* Policies).list)[0]).toMatchObject({
-            match: "gmail.send",
-            decision: "ask",
-          });
-          const [page] = yield* (yield* Artifacts).list;
-          expect(page?.name).toBe("page.html");
-          // A second restore into a channel that now has messages is refused.
-          expect((yield* Effect.exit((yield* Backup).restoreTar(exported.tar)))._tag).toBe(
-            "Failure",
+          expect(yield* (yield* State).settings).toEqual(
+            Object.fromEntries(contents.settings.map(({ key, value }) => [key, value])),
           );
+          const byName = <A extends { name: string }>(items: ReadonlyArray<A>) =>
+            [...items].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+          expect(
+            (yield* (yield* Skills).list).map(({ name, description, body, pinned }) => ({
+              name,
+              description,
+              body,
+              pinned,
+            })),
+          ).toEqual(byName(contents.skills));
+          expect((yield* (yield* Intents).list).map((intent) => ({ ...intent, id: 0 }))).toEqual(
+            exported.intents,
+          );
+          expect(
+            exported.intents.map((i) => [i.description, i.triggers, i.maxFires, i.state]),
+          ).toEqual(contents.intents.map((i) => [i.description, i.triggers, i.maxFires, "armed"]));
+          const distinctPolicies = contents.policies.filter(
+            (p, index) =>
+              contents.policies.findIndex(
+                (q) => q.match === p.match && q.decision === p.decision,
+              ) === index,
+          );
+          expect(
+            (yield* (yield* Policies).list).map(({ match, decision }) => ({ match, decision })),
+          ).toEqual(distinctPolicies);
+          const artifacts = yield* Artifacts;
+          expect((yield* artifacts.list).map((a) => a.name)).toEqual(
+            byName(contents.artifacts).map((a) => a.name),
+          );
+          for (const a of contents.artifacts) {
+            expect((yield* artifacts.source(a.name)).text).toBe(a.content);
+            expect(yield* artifacts.data.list(a.name)).toEqual(
+              Object.fromEntries(a.data.map(({ key, value }) => [key, JSON.stringify(value)])),
+            );
+          }
+          expect((yield* Effect.exit(backup.restoreTar(exported.tar)))._tag).toBe("Failure");
         }).pipe(Effect.provide(target));
       }),
-    ),
-  );
-});
+    );
+  },
+  { runs: 20 },
+);
 
-test("a backup runs when a day has passed, and only the newest 14 are kept", async () => {
-  await Effect.runPromise(
+property(
+  "a backup is taken the first time a day has passed since the last one, and only the newest fourteen are kept",
+  Arbitrary.all({
+    start: int(START, START + 365 * DAY),
+    gaps: Arbitrary.array(
+      int(0, 4).pipe(
+        Arbitrary.flatMap((pick) =>
+          pick === 4 ? int(0, 3 * DAY) : Arbitrary.Constant([0, 1, DAY - 1, DAY][pick]!),
+        ),
+      ),
+      { maxLength: 24 },
+    ),
+  }),
+  ({ start, gaps }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const ctx = yield* Layer.build(Layer.mergeAll(channel(Blobs.memory)));
+        const ctx = yield* Layer.build(channel(Blobs.memory));
         yield* Effect.gen(function* () {
           const backup = yield* Backup;
           const blobs = yield* Blobs;
-          const day = 24 * 3_600_000;
-          const t0 = Date.UTC(2026, 0, 1);
-          expect(yield* backup.backupIfDue(t0)).toBe(false);
-          expect(yield* backup.backupIfDue(t0 + day - 1)).toBe(false);
-          for (let d = 1; d <= 20; d++) expect(yield* backup.backupIfDue(t0 + d * day)).toBe(true);
-          expect(yield* blobs.list("backup/")).toHaveLength(14);
-          expect(yield* backup.nextBackupAt).toBe(t0 + 21 * day);
+          let now = start;
+          expect(yield* backup.backupIfDue(now)).toBe(false);
+          let due = now + DAY;
+          const taken: Array<number> = [];
+          for (const gap of gaps) {
+            now += gap;
+            const expected = now >= due;
+            expect(yield* backup.backupIfDue(now)).toBe(expected);
+            if (expected) {
+              taken.push(now);
+              due = now + DAY;
+            }
+          }
+          expect(yield* blobs.list("backup/")).toEqual(
+            taken.slice(-14).map((at) => `backup/agent:a1/${new Date(at).toISOString()}.tar`),
+          );
+          expect(yield* backup.nextBackupAt).toBe(due);
         }).pipe(Effect.provide(ctx));
       }),
     ),
-  );
-});
+  { runs: 30 },
+);
