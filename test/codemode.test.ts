@@ -73,8 +73,8 @@ property(
 );
 
 property(
-  "a failed tool throws exactly what the handler said",
-  lineOf(Schema.String.check(Schema.isMinLength(1))),
+  "a failed tool throws what the handler said, or that it failed without saying why",
+  lineOf(Schema.String),
   (reason) =>
     Effect.gen(function* () {
       const { calls, call } = recorder(reason);
@@ -83,7 +83,7 @@ property(
         call,
         `try { await tools.web.fetch({ url: "https://x.test" }) } catch (e) { return "caught: " + e.message }`,
       );
-      expect(out).toBe(`caught: ${reason}`);
+      expect(out).toBe(`caught: ${reason === "" ? "web.fetch failed without saying why" : reason}`);
       expect(calls.map((c) => c.name)).toEqual(["web_fetch"]);
     }),
   { runs: 30 },

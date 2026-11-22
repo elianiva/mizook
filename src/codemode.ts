@@ -29,7 +29,12 @@ const toolsByNamespace = (list: ReadonlyArray<string> | undefined, call: Call) =
       description,
       input,
       output: Schema.String,
-      execute: (args) => run(path, args).pipe(Effect.mapError((error) => toolError(error.message))),
+      execute: (args) =>
+        run(path, args).pipe(
+          Effect.mapError((error) =>
+            toolError(error.message === "" ? `${path} failed without saying why` : error.message),
+          ),
+        ),
     });
   };
   for (const spec of toolSpecs) {
