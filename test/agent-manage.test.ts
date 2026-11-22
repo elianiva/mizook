@@ -1,13 +1,14 @@
-import { Effect } from "effect";
-import { expect, test } from "vite-plus/test";
-import { applyAgentAction, encodeAgentAction, type AgentAction } from "../src/agent-manage.ts";
+import { Arbitrary, Effect, Schema } from "effect";
+import { expect } from "vite-plus/test";
+import { AgentAction, applyAgentAction, encodeAgentAction } from "../src/agent-manage.ts";
 import type { AgentInfo, AgentSpec } from "../src/host.ts";
 import { fakeHost } from "./fake-host.ts";
+import { property } from "./property.ts";
 
-const made = (slug: string): AgentInfo => ({
+const made = (slug: string, name: string): AgentInfo => ({
   id: `id_${slug}`,
   slug,
-  name: slug,
+  name,
   role: "",
   persona: "",
   tools: undefined,
@@ -18,72 +19,118 @@ const made = (slug: string): AgentInfo => ({
   lastActive: 0,
 });
 
-/** Apply an action against a host that records what it was asked to do. */
-const apply = (action: AgentAction, fail?: string) => {
+const apply = (json: string, fail: string | undefined) => {
   const calls: unknown[][] = [];
+  const answer = (agent: AgentInfo) =>
+    fail === undefined ? { ok: true as const, agent } : { ok: false as const, error: fail };
   const host = fakeHost({
     createAgent: (spec: AgentSpec) =>
       Effect.sync(() => {
         calls.push(["create", spec]);
-        return fail ? { ok: false, error: fail } : { ok: true, agent: made(spec.slug) };
+        return answer(made(spec.slug, spec.name));
       }),
     updateAgent: (key, patch) =>
       Effect.sync(() => {
         calls.push(["update", key, patch]);
-        return { ok: true, agent: made(patch.slug ?? key) };
+        return answer(made(patch.slug ?? key, patch.name ?? key));
       }),
     deleteAgent: (key) =>
       Effect.sync(() => {
         calls.push(["delete", key]);
-        return { ok: true, agent: made(key) };
+        return answer(made(key, key));
       }),
     setAgentSetting: (doName, key, value) =>
       Effect.sync(() => void calls.push(["set", doName, key, value])),
     reloadAgent: (doName) => Effect.sync(() => void calls.push(["reload", doName])),
   });
-  return Effect.runPromise(applyAgentAction(host, encodeAgentAction(action))).then((said) => ({
-    said,
-    calls,
-  }));
+  return applyAgentAction(host, json).pipe(Effect.map((said) => ({ said, calls })));
 };
 
-test("an approved create makes the agent, then sets its model on the new agent", async () => {
-  const { said, calls } = await apply({
-    op: "create",
-    slug: "grok",
-    role: "Check claims.",
-    tools: ["web_search"],
-    model: "deepseek-pro",
-  });
-  expect(calls).toEqual([
-    [
-      "create",
-      { slug: "grok", name: "grok", role: "Check claims.", persona: "", tools: ["web_search"] },
-    ],
-    ["set", "agent:id_grok", "model", "deepseek-pro"],
-  ]);
-  expect(said).toBe("Created /grok (grok).");
-});
+const action = Arbitrary.schema(AgentAction);
 
-test("an update changes only the fields given, gives back every tool on null, and reloads the agent", async () => {
-  const { calls } = await apply({ op: "update", slug: "grok", newSlug: "fact", tools: null });
-  expect(calls).toEqual([
-    ["update", "grok", { slug: "fact", tools: null }],
-    ["reload", "agent:id_fact"],
-  ]);
-});
+const failure = Arbitrary.all({
+  fails: Arbitrary.schema(Schema.Boolean),
+  error: Arbitrary.schema(Schema.String),
+}).pipe(Arbitrary.map(({ fails, error }) => (fails ? error : undefined)));
 
-test("a refused change says why and touches nothing else", async () => {
-  const { said, calls } = await apply(
-    { op: "create", slug: "help", model: "x" },
-    "/help is already a command",
-  );
-  expect(said).toBe("It failed: /help is already a command.");
-  expect(calls).toHaveLength(1);
-});
+const defined = <A extends object>(fields: A) =>
+  Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 
-test("a delete sets nothing on the agent it removed", async () => {
-  const { said, calls } = await apply({ op: "delete", slug: "grok", model: "x" });
-  expect(calls).toEqual([["delete", "grok"]]);
-  expect(said).toBe("Deleted /grok.");
-});
+property(
+  "an approved action asks the host for exactly the change it names, then sets the model and reloads only where that applies",
+  action,
+  (a) =>
+    Effect.gen(function* () {
+      const { said, calls } = yield* apply(encodeAgentAction(a), undefined);
+      if (a.op === "delete") {
+        expect(calls).toEqual([["delete", a.slug]]);
+        expect(said).toBe(`Deleted /${a.slug}.`);
+        return;
+      }
+      const slug = a.op === "create" ? a.slug : (a.newSlug ?? a.slug);
+      const name = a.name ?? a.slug;
+      const doName = `agent:id_${slug}`;
+      const first =
+        a.op === "create"
+          ? [
+              "create",
+              defined({
+                slug: a.slug,
+                name: a.name ?? a.slug,
+                role: a.role ?? "",
+                persona: a.persona ?? "",
+                tools: a.tools,
+              }),
+            ]
+          : [
+              "update",
+              a.slug,
+              defined({
+                slug: a.newSlug,
+                name: a.name,
+                role: a.role,
+                persona: a.persona,
+                tools: a.tools,
+              }),
+            ];
+      expect(calls).toEqual([
+        first,
+        ...(a.model === undefined ? [] : [["set", doName, "model", a.model]]),
+        ...(a.op === "update" ? [["reload", doName]] : []),
+      ]);
+      expect(said).toBe(`${a.op === "create" ? "Created" : "Changed"} /${slug} (${name}).`);
+    }),
+);
+
+property(
+  "a refused change says why and touches nothing after the refused call",
+  Arbitrary.all({ a: action, error: Arbitrary.schema(Schema.String) }),
+  ({ a, error }) =>
+    Effect.gen(function* () {
+      const { said, calls } = yield* apply(encodeAgentAction(a), error);
+      expect(said).toBe(`It failed: ${error}.`);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![0]).toBe(a.op);
+    }),
+);
+
+property(
+  "an action that is not valid JSON for an agent change fails with a message and calls nothing",
+  Arbitrary.all({
+    body: Arbitrary.schema(Schema.String),
+    fail: failure,
+    shape: Arbitrary.schema(Schema.Literals(["raw", "bad op", "no slug"])),
+  }),
+  ({ body, fail, shape }) =>
+    Effect.gen(function* () {
+      const json =
+        shape === "raw"
+          ? `{${body}`
+          : shape === "bad op"
+            ? JSON.stringify({ op: `x${body}`, slug: body })
+            : JSON.stringify({ op: "create", name: body });
+      const { said, calls } = yield* apply(json, fail);
+      expect(said.startsWith("It failed: ")).toBe(true);
+      expect(calls).toEqual([]);
+    }),
+);

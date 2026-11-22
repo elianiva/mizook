@@ -1,95 +1,184 @@
 import { validateToolArguments, type Tool } from "@earendil-works/pi-ai";
-import { Effect } from "effect";
-import { expect, test } from "vite-plus/test";
-import { catalogText, runProgram, type Call } from "../src/codemode.ts";
+import { Arbitrary, Effect, Schema } from "effect";
+import { expect } from "vite-plus/test";
+import { allows, catalogText, runProgram, toolPaths, type Call } from "../src/codemode.ts";
 import { ToolError } from "../src/errors.ts";
-import { agentTools, ZOOM_DESCRIPTION } from "../src/tools.ts";
+import {
+  agentTools,
+  AutomationIdArgs,
+  DateArgs,
+  ZOOM_DESCRIPTION,
+  ZoomArgs,
+} from "../src/tools.ts";
+import { property } from "./property.ts";
 
-/** A fake handler set that records each call and answers with its name and arguments. */
-const recorder = () => {
+const recorder = (failure: string) => {
   const calls: Array<{ name: string; args: unknown }> = [];
   const call: Call = (name, args) => {
     calls.push({ name, args });
     return name === "web_fetch"
-      ? Effect.fail(new ToolError({ reason: "403 from the site" }))
+      ? Effect.fail(new ToolError({ reason: failure }))
       : Effect.succeed(`${name}:${JSON.stringify(args)}`);
   };
   return { calls, call };
 };
 
-const run = (list: ReadonlyArray<string> | undefined, call: Call, code: string) =>
-  Effect.runPromise(runProgram(list, call, code));
+const text = Arbitrary.schema(Schema.String).pipe(
+  Arbitrary.filter((value) => !/\p{Cs}/u.test(value)),
+);
 
-test("a program calls tools by path and reaches the handlers by name", async () => {
-  const { calls, call } = recorder();
-  const out = await run(
-    undefined,
-    call,
-    `const [a, b] = await Promise.all([
-       tools.memory.zoom({ id: 4, n: 2 }),
-       tools.automations.cancel({ id: 7 }),
-     ])
-     console.log("both done")
-     return a + " | " + b`,
+const lineOf = (schema: Schema.String) =>
+  Arbitrary.schema(schema).pipe(
+    Arbitrary.filter((value) => !/[\p{Cs}\n\r\u2028\u2029]/u.test(value)),
   );
-  expect(out).toBe('zoom:{"id":4,"n":2} | automation_cancel:{"id":7}\n\nLogs:\nboth done');
-  expect(calls.map((c) => c.name).sort()).toEqual(["automation_cancel", "zoom"]);
-});
 
-test("a failed tool throws what the handler said, and bad input never reaches the handler", async () => {
-  const { calls, call } = recorder();
-  expect(
-    await run(
-      undefined,
-      call,
-      `try { await tools.web.fetch({ url: "https://x.test" }) } catch (e) { return "caught: " + e.message }`,
+const line = lineOf(Schema.String);
+
+const NAMESPACES = [...new Set(toolPaths.map((path) => path.slice(0, path.indexOf("."))))];
+
+const roleList = Arbitrary.array(
+  Arbitrary.schema(Schema.Literals([...toolPaths, ...NAMESPACES] as [string, ...string[]])),
+  { maxLength: 6 },
+);
+
+const referenceAllows = (list: ReadonlyArray<string> | undefined, path: string) =>
+  list === undefined || list.some((entry) => entry === path || path.startsWith(`${entry}.`));
+
+property(
+  "a program calls tools by path, reaches the handlers by name with its input, and returns their answers with its logs",
+  Arbitrary.all({
+    zoom: Arbitrary.schema(ZoomArgs),
+    cancel: Arbitrary.schema(AutomationIdArgs),
+    log: line,
+  }),
+  ({ zoom, cancel, log }) =>
+    Effect.gen(function* () {
+      const { calls, call } = recorder("unused");
+      const out = yield* runProgram(
+        undefined,
+        call,
+        `const [a, b] = await Promise.all([
+           tools.memory.zoom(${JSON.stringify(zoom)}),
+           tools.automations.cancel(${JSON.stringify(cancel)}),
+         ])
+         console.log(${JSON.stringify(log)})
+         return a + " | " + b`,
+      );
+      expect(out).toBe(
+        `zoom:${JSON.stringify(zoom)} | automation_cancel:${JSON.stringify(cancel)}\n\nLogs:\n${log}`,
+      );
+      expect(calls.map((c) => c.name).sort()).toEqual(["automation_cancel", "zoom"]);
+    }),
+  { runs: 30 },
+);
+
+property(
+  "a failed tool throws exactly what the handler said",
+  lineOf(Schema.String.check(Schema.isMinLength(1))),
+  (reason) =>
+    Effect.gen(function* () {
+      const { calls, call } = recorder(reason);
+      const out = yield* runProgram(
+        undefined,
+        call,
+        `try { await tools.web.fetch({ url: "https://x.test" }) } catch (e) { return "caught: " + e.message }`,
+      );
+      expect(out).toBe(`caught: ${reason}`);
+      expect(calls.map((c) => c.name)).toEqual(["web_fetch"]);
+    }),
+  { runs: 30 },
+);
+
+property(
+  "input that breaks a tool's schema is refused before it reaches the handler",
+  Arbitrary.all({
+    id: Arbitrary.schema(
+      Schema.Int.check(Schema.isBetween({ minimum: -1_000_000, maximum: 1_000 })),
     ),
-  ).toBe("caught: 403 from the site");
+    n: Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: -1_000, maximum: 1_000 }))),
+  }).pipe(Arbitrary.filter(({ id, n }) => id < 0 || n < 1)),
+  ({ id, n }) =>
+    Effect.gen(function* () {
+      const { calls, call } = recorder("unused");
+      const out = yield* runProgram(
+        undefined,
+        call,
+        `return await tools.memory.zoom({ id: ${id}, n: ${n} })`,
+      );
+      expect(out).toMatch(/^Error \(InvalidToolInput/);
+      expect(calls).toEqual([]);
+    }),
+  { runs: 30 },
+);
 
-  const bad = await run(undefined, call, `return await tools.memory.zoom({ id: -1, n: 2 })`);
-  expect(bad).toMatch(/^Error \(InvalidToolInput/);
-  expect(calls.map((c) => c.name)).toEqual(["web_fetch"]);
-});
+property(
+  "a role's tools list allows a path when it names the path or its namespace, and the catalog lists exactly those, sorted",
+  Arbitrary.all({ list: roleList, everything: Arbitrary.schema(Schema.Boolean) }),
+  ({ list, everything }) => {
+    const given = everything ? undefined : list;
+    const expected = toolPaths.filter((path) => referenceAllows(given, path)).sort();
+    for (const path of toolPaths) expect(allows(given, path)).toBe(referenceAllows(given, path));
+    const catalog = catalogText(given);
+    const lines = catalog === "" ? [] : catalog.split("\n");
+    expect(lines.map((l) => /^- tools\.([\w.]+)\(/.exec(l)?.[1])).toEqual(expected);
+    if (expected.includes("memory.zoom")) {
+      expect(lines).toContain(
+        `- tools.memory.zoom({ id: number, n: number }): Promise<string>: ${ZOOM_DESCRIPTION}`,
+      );
+    }
+    if (expected.includes("executor.call")) {
+      expect(lines).toContain(
+        "- tools.executor.call({ calls: Array<{ path: string, input: {} }> }): Promise<string>: Run app tools by path.",
+      );
+    }
+  },
+);
 
-test("a role's tools list hides the rest, by path or by namespace", async () => {
-  const { calls, call } = recorder();
-  const denied = await run(
-    ["memory", "executor.call"],
-    call,
-    `return await tools.web.search({ query: "x" })`,
+property(
+  "a program calling a tool its role hides gets UnknownTool and no handler runs, while an allowed one answers",
+  Arbitrary.all({
+    list: roleList.pipe(Arbitrary.filter((list) => !referenceAllows(list, "web.search"))),
+    date: Arbitrary.schema(DateArgs),
+  }),
+  ({ list, date }) =>
+    Effect.gen(function* () {
+      const { calls, call } = recorder("unused");
+      const denied = yield* runProgram(list, call, `return await tools.web.search({ query: "x" })`);
+      expect(denied).toMatch(/^Error \(UnknownTool/);
+      expect(calls).toEqual([]);
+      const withDate = [...list, "memory.date", "executor"];
+      const out = yield* runProgram(
+        withDate,
+        call,
+        `return [await tools.memory.date(${JSON.stringify(date)}), await tools.executor.call({ calls: [] })].join(" | ")`,
+      );
+      expect(out).toBe(
+        `date:${JSON.stringify(date)} | executor:{"tool":"call","input":{"calls":[]}}`,
+      );
+    }),
+  { runs: 30 },
+);
+
+const validate = (name: string, args: object) =>
+  validateToolArguments(
+    agentTools.find((t) => t.name === name) as Tool,
+    { type: "toolCall", id: "1", name, arguments: args } as never,
   );
-  expect(denied).toMatch(/^Error \(UnknownTool/);
-  expect(calls).toEqual([]);
 
-  const out = await run(
-    ["memory", "executor.call"],
-    call,
-    `return [await tools.memory.date({ id: 3 }), await tools.executor.call({ calls: [] })].join(" | ")`,
-  );
-  expect(out).toBe('date:{"id":3} | executor:{"tool":"call","input":{"calls":[]}}');
+property(
+  "the model gets only send_to_user and execute, and send_to_user takes one to eight messages",
+  Arbitrary.array(text, { maxLength: 12 }),
+  (messages) => {
+    expect(agentTools.map((t) => t.name)).toEqual(["send_to_user", "execute"]);
+    if (messages.length >= 1 && messages.length <= 8) {
+      expect(validate("send_to_user", { messages })).toEqual({ messages });
+    } else {
+      expect(() => validate("send_to_user", { messages })).toThrow();
+    }
+  },
+);
 
-  const lines = catalogText(["memory.zoom", "executor.call"]).split("\n");
-  expect(lines).toEqual([
-    "- tools.executor.call({ calls: Array<{ path: string, input: {} }> }): Promise<string>: Run app tools by path.",
-    `- tools.memory.zoom({ id: number, n: number }): Promise<string>: ${ZOOM_DESCRIPTION}`,
-  ]);
-});
-
-test("the model gets send_to_user and execute only, checked against their schemas", () => {
-  expect(agentTools.map((t) => t.name)).toEqual(["send_to_user", "execute"]);
-  const check = (name: string, args: object) => () =>
-    validateToolArguments(
-      agentTools.find((t) => t.name === name) as Tool,
-      {
-        type: "toolCall",
-        id: "1",
-        name,
-        arguments: args,
-      } as never,
-    );
-  expect(check("send_to_user", { messages: ["hey", "one sec"] })()).toBeTruthy();
-  expect(check("send_to_user", { messages: [] })).toThrow();
-  expect(check("send_to_user", { messages: Array(9).fill("x") })).toThrow();
-  expect(check("execute", { code: "return 1" })()).toEqual({ code: "return 1" });
-  expect(check("execute", {})).toThrow();
+property("execute takes any code string and refuses a call without one", text, (code) => {
+  expect(validate("execute", { code })).toEqual({ code });
+  expect(() => validate("execute", {})).toThrow();
 });
