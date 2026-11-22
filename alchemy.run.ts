@@ -42,9 +42,21 @@ export default Alchemy.Stack(
       policies: [{ decision: "allow", include: [{ email: yield* Config.String("ADMIN_EMAIL") }] }],
     });
 
+    const chatAccessApplication = yield* Cloudflare.Access.Application("WebChat", {
+      type: "self_hosted",
+      name: "Mizook web chat",
+      domain: `${DOMAIN}/c*`,
+      sessionDuration: "24h",
+      ...(githubProvider && {
+        allowedIdps: [githubProvider.identityProviderId],
+        autoRedirectToIdentity: true,
+      }),
+      policies: [{ decision: "allow", include: [{ email: yield* Config.String("ADMIN_EMAIL") }] }],
+    });
+
     const worker = yield* Cloudflare.Worker("Mizook", {
       main: "./src/worker.ts",
-      assets: { directory: "./apps/dashboard/dist", base: "/admin", runWorkerFirst: true },
+      assets: { directory: "./dist", runWorkerFirst: true },
       domain: { name: DOMAIN },
       compatibility: { date: "2026-05-08", flags: ["nodejs_compat"] },
       env: {
@@ -59,6 +71,7 @@ export default Alchemy.Stack(
         PUBLIC_URL: `https://${DOMAIN}`,
         ACCESS_TEAM_DOMAIN: accessTeamDomain,
         ACCESS_AUD: dashboardAccessApplication.aud,
+        CHAT_ACCESS_AUD: chatAccessApplication.aud,
 
         BOT_TOKEN: Config.Redacted("BOT_TOKEN"),
         MIZOOK_WEBHOOK_SECRET: Config.Redacted("MIZOOK_WEBHOOK_SECRET"),

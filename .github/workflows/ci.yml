@@ -50,10 +50,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
   # Cloudflare is the deploy target (Alchemy), as in quorum. Only a push to the default branch
   # deploys, and only once every check has passed.
   deploy:
-    needs: [check, typecheck, test]
+    needs: [check, typecheck, test, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment:
@@ -84,7 +96,7 @@ jobs:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @mizook/dashboard build
+      - run: pnpm run build
       - run: pnpm exec alchemy deploy --stage prod --yes
       # Telegram must know where the bot lives and what its menu holds. Both calls are idempotent, so every deploy repeats them.
       - run: node scripts/set-webhook.ts https://mzk.elianiva.com

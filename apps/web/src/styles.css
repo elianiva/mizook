@@ -1,0 +1,9 @@
+@import "@mizook/design/styles.css";
+
+@layer reset, base, tokens, recipes, utilities;
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}

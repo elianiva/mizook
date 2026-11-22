@@ -4,11 +4,15 @@
 
 **Agent** — an identity with its own memory, settings, skills and intents. One Durable
 Object, `agent:<id>`; the id is random and stable, and the slug (`/grok`) can change. The Hub lists
-the agents. A fresh install has one, `mizook`, the default.
+the agents. A fresh install has two: `mizook`, the default, and `web`, the default for the web chat.
 
 **Place** — where a message was said: a Chat SDK thread id, `telegram:<chat>` or
-`telegram:<chat>:<topic>`. Turns, replies, approvals and `/stop` are keyed by place, so
-one agent can answer in several places at once.
+`telegram:<chat>:<topic>`, or a web thread, `web:<id>`. Turns, replies, approvals and `/stop` are
+keyed by place, so one agent can answer in several places at once.
+
+**Web thread** — one conversation in the web chat. The Hub keeps its title, preview and agent. The
+agent keeps its transcript in `web_messages`, keyed by the `web:<id>` place. Every web thread that
+uses `web` shares that agent's one memory.
 
 **Binding** — a Hub row from a place to an agent. A place with no binding talks to the default
 agent. `/<slug> …` sends one message to another agent without changing the binding.

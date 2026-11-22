@@ -3,7 +3,7 @@ import type { Env } from "../env.ts";
 import type { AgentInfo, Profile } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
 import type { AutomationsObject } from "../automations-object.ts";
-import { makeVerifier, type Verifier } from "./access.ts";
+import { verifierFor } from "./access.ts";
 
 interface ChannelRpc {
   dashboard(page: string, params: Record<string, string>): Promise<unknown>;
@@ -23,18 +23,6 @@ interface ChannelRpc {
   ): Promise<{ ok: true; said: string } | { ok: false; error: string }>;
   setting(who: string, key: string, value: string | undefined): Promise<string>;
 }
-
-let verifier: { key: string; value: Verifier } | undefined;
-const verifierFor = (env: Env): Verifier | undefined => {
-  if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return undefined;
-  const key = `${env.ACCESS_TEAM_DOMAIN}|${env.ACCESS_AUD}`;
-  if (verifier?.key !== key)
-    verifier = {
-      key,
-      value: makeVerifier({ teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }),
-    };
-  return verifier.value;
-};
 
 const PAGES = new Set([
   "overview",

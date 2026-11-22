@@ -17,7 +17,10 @@ export const typingPause = (text: string): Duration.Duration =>
 export class Outbox extends Context.Service<
   Outbox,
   {
-    attach(sink: Sink): Effect.Effect<void>;
+    attach(
+      sink: Sink,
+      options?: { readonly pace?: (threadId: string) => boolean },
+    ): Effect.Effect<void>;
     send(
       threadId: string,
       texts: ReadonlyArray<string>,
@@ -30,15 +33,21 @@ export class Outbox extends Context.Service<
     Effect.gen(function* () {
       const state = yield* State;
       let sink: Sink | undefined;
+      let pace: ((threadId: string) => boolean) | undefined;
       const key = (threadId: string) => `sent:${threadId}`;
       return Outbox.of({
-        attach: (next) => Effect.sync(() => void (sink = next)),
+        attach: (next, options) =>
+          Effect.sync(() => {
+            sink = next;
+            pace = options?.pace;
+          }),
         send: (threadId, texts) =>
           Effect.gen(function* () {
             const out = sink;
             if (!out) return yield* new ToolError({ reason: "the chat is not connected" });
+            const shouldPace = pace?.(threadId) ?? true;
             for (const [i, text] of texts.entries()) {
-              if (i > 0) yield* Effect.sleep(typingPause(text));
+              if (i > 0 && shouldPace) yield* Effect.sleep(typingPause(text));
               yield* out(threadId, text);
               const sent = Number((yield* state.meta(key(threadId))) ?? "0");
               yield* state.setMeta(key(threadId), String(sent + 1));

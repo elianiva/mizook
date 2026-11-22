@@ -1,0 +1,30 @@
+{
+  "name": "@mizook/ui",
+  "private": true,
+  "description": "ui-sdk behaviors adapted to Foldkit: state in the Model, Messages out, pure parts views.",
+  "license": "GPL-3.0-only",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsrs --noEmit -p tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@ui-sdk/core": "0.1.0-beta.7"
+  },
+  "devDependencies": {
+    "effect": "4.1.4",
+    "foldkit": "0.171.0",
+    "happy-dom": "21.0.4"
+  },
+  "peerDependencies": {
+    "effect": "4.1.4",
+    "foldkit": "0.171.0"
+  }
+}

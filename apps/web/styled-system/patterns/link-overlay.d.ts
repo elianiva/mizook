@@ -1,0 +1,17 @@
+import type { SystemStyleObject } from '../types/system';
+
+export interface LinkOverlayProperties {}
+
+type LinkOverlayRestStyles = Omit<SystemStyleObject, keyof LinkOverlayProperties>
+
+interface LinkOverlayStyles extends LinkOverlayProperties, LinkOverlayRestStyles {}
+
+interface LinkOverlayPatternFn {
+  (styles?: LinkOverlayStyles): string
+  raw: (styles?: LinkOverlayStyles) => SystemStyleObject
+  propKeys: Array<keyof LinkOverlayProperties>
+}
+
+export declare function linkOverlayRaw(styles?: LinkOverlayStyles): SystemStyleObject;
+
+export declare const linkOverlay: LinkOverlayPatternFn;

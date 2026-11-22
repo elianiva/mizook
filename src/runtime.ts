@@ -26,6 +26,7 @@ import { Commands } from "./commands.ts";
 import { Backup } from "./backup.ts";
 import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
+import { WebThreads } from "./chat/threads.ts";
 import { Skills } from "./skills.ts";
 import { SummarizerLive } from "./summarizer.ts";
 import { PERSONA } from "./persona.ts";
@@ -90,6 +91,8 @@ export const makeRuntime = (
     Layer.provideMerge(models),
   );
 
+  const hostLayer = Layer.succeed(Host, host);
+
   const app = Bot.layer.pipe(
     Layer.provideMerge(Commands.layer),
     Layer.provideMerge(Agent.layer),
@@ -100,7 +103,8 @@ export const makeRuntime = (
     Layer.provideMerge(Approvals.layer(sql)),
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(Usage.layer(sql)),
-    Layer.provideMerge(Layer.succeed(Host, host)),
+    Layer.provideMerge(hostLayer),
+    Layer.provideMerge(WebThreads.layer(sql).pipe(Layer.provide(hostLayer))),
     Layer.provideMerge(Artifacts.layer(sql)),
     Layer.provideMerge(
       Layer.merge(

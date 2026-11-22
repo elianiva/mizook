@@ -1,8 +1,8 @@
 # Mizook
 
-A personal assistant in Telegram, on Cloudflare Workers. It is one or more agents, each a chat that
-never ends: an agent remembers everything said to it in every topic it answers in, and nothing needs
-resetting.
+A personal assistant in Telegram and on the web, on Cloudflare Workers. It is one or more agents,
+each a chat that never ends: an agent remembers everything said to it in every topic it answers in,
+and nothing needs resetting.
 
 - **Memory** — [`@mizook/memory`](packages/memory): the whole chat is logged word for word and
   compressed into a binary tree of one-line summaries. Each turn sees a constant-size view of it
@@ -12,6 +12,7 @@ resetting.
   every turn is a durable run. Model calls and tool calls are committed to the Durable Object's
   SQLite before anything is shown, so a restart picks the turn up where it stopped.
 - **Telegram** — [Chat SDK](https://chat-sdk.dev) with the Telegram adapter.
+- **Web chat:** [`apps/web`](apps/web) is a full-page chat at `https://mzk.elianiva.com`. It has its own `web` agent and a thread list from the Hub. Foldkit holds the state, `@mizook/ui` supplies the interactive behaviors, and `@mizook/design` supplies the Panda preset both apps use.
 - **Deploy** — [Alchemy](https://alchemy.run), declared in `alchemy.run.ts`.
 - Everything is [Effect](https://effect.website): services, layers, typed errors.
 
@@ -82,7 +83,8 @@ vp run webhook https://<the url deploy printed>
 ```sh
 vp check          # format, lint and type-check, all on tsrs
 pnpm typecheck    # whole-program tsrs check plus effect-tsrs Effect diagnostics
-vp test      # the memory package's tests and the Telegram chunker
+vp test           # the Worker, dashboard, chat and memory tests
+pnpm run build    # build the chat and dashboard into dist/
 ```
 
 ## CI and deploy
@@ -99,16 +101,22 @@ Each name may be a secret or a variable; the workflow reads both.
 
 The deploy job points Telegram at the Worker after each deploy. To do it by hand: `vp run webhook https://mzk.elianiva.com`.
 
-## Dashboard
+## Dashboard and web chat
 
 A dashboard lives at `/admin`, per agent: an overview (every agent's spend and what waits on you, the running turn, approvals, recent messages, a budget warning), the log, the memory view, usage (per day, model, kind and tool), the automations that act for it, settings, and an audit of what was done from it. It can answer an approval, cancel an automation and stop the running turn, each after a second click, and it edits an agent's model, budget, time zone and instructions through the same code as the slash commands. Writes need the Access token, a same-origin post with an `x-mizook-csrf` header, and are logged in the agent's `app_audit` table. It is a Foldkit app in `apps/dashboard`, styled with Panda, and the Worker serves its build as static assets next to a JSON API at `/admin/api`.
 
-To work on it, run the mock-free path: `pnpm --filter @mizook/dashboard dev` proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`). `pnpm deploy` builds it before `alchemy deploy`.
+The web chat lives at `/c`, and its API at `/c/api`. The Worker redirects `/` to `/c`. Its transcript is the `web_messages` table in the web agent's Durable Object, while thread titles and the agent for each thread live in the Hub. Threads are places named `web:<id>`, so one web agent shares its memory across every web thread.
 
-Alchemy declares the Access application and policy (`alchemy.run.ts`), so `alchemy deploy` is the whole setup. Set these first:
+To work on the dashboard, run `pnpm --filter @mizook/dashboard dev`; it proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`). To work on the chat, run `pnpm --filter @mizook/web dev`; it proxies `/c/api` to `CHAT_API` (default `http://localhost:8788`). `pnpm run build` builds both apps and assembles `dist/` as one asset directory.
+
+Alchemy declares both Access applications and their policies (`alchemy.run.ts`), so `alchemy deploy` is the whole setup. Set these first:
 
 - `ACCESS_TEAM_DOMAIN`: your Zero Trust team domain, `<team>.cloudflareaccess.com`.
-- `ADMIN_EMAIL`: the one email the policy allows.
+- `ADMIN_EMAIL`: the one email both policies allow.
 - `GH_CLIENT_ID` and `GH_CLIENT_SECRET` (optional): a GitHub OAuth app whose callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Alchemy creates the GitHub login method from it. Without them, Access uses the login methods the account already has.
 
-The application covers `/admin*` only, so `/telegram/webhook`, `/hook`, `/a`, `/d` and `/x` stay outside it. The Worker also checks the Access token itself (RS256, issuer, audience, expiry), and `/admin` answers 503 while the team domain or audience is missing.
+The dashboard application covers `/admin*`, and the web chat application covers `/c*`, so `/telegram/webhook`, `/hook`, `/a`, `/d` and `/x` stay outside both. The Worker checks the Access token itself (RS256, issuer, audience, expiry) for each application. `/admin` answers 503 while the team domain or dashboard audience is missing; the chat API answers 503 while the chat audience is missing.
+
+## License
+
+Mizook is licensed under GPL-3.0-only. See [LICENSE](LICENSE).

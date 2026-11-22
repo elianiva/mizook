@@ -14,6 +14,7 @@ import {
   type AgentSpec,
   type AutomationsApi,
   type Profile,
+  type WebThreadInfo,
 } from "./host.ts";
 import type { Skill, Skills } from "./skills.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
@@ -22,6 +23,9 @@ import { Usage, type Spend } from "./usage.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Commands } from "./commands.ts";
 import { State } from "./state.ts";
+import { Approvals } from "./approvals.ts";
+import { WebThreads } from "./chat/threads.ts";
+import type { WebState, WebTurnResult } from "./chat/types.ts";
 import * as read from "./admin/read.ts";
 import { edit as applyEdit, type EditOutcome } from "./admin/edit.ts";
 
@@ -49,6 +53,13 @@ export interface HubApi {
   bind(place: string, key: string | undefined): Promise<AgentInfo | undefined>;
   placeName(place: string): Promise<string | undefined>;
   setPlaceName(place: string, name: string): Promise<void>;
+  touchWebThread(place: string, preview: string): Promise<void>;
+  webThreads(): Promise<WebThreadInfo[]>;
+  webThread(id: string): Promise<WebThreadInfo | undefined>;
+  createWebThread(agentKey: string | undefined): Promise<WebThreadInfo | undefined>;
+  renameWebThread(id: string, title: string): Promise<WebThreadInfo | undefined>;
+  archiveWebThread(id: string): Promise<boolean>;
+  webDefaultAgent(): Promise<AgentInfo>;
   profile(): Promise<Profile>;
   setProfile(about: string | undefined, rules: string[] | undefined): Promise<Profile>;
 }
@@ -175,6 +186,14 @@ export class AgentObject extends DurableObject<Env> {
           Effect.orElseSucceed(() => shortPlace(place)),
         ),
       namePlace: (place, name) => Effect.promise(() => hub().setPlaceName(place, name)),
+      touchWebThread: (place, preview) =>
+        Effect.tryPromise({
+          try: () => hub().touchWebThread(place, preview),
+          catch: () => undefined,
+        }).pipe(
+          Effect.orElseSucceed(() => undefined),
+          Effect.asVoid,
+        ),
       createAgent: (spec) => Effect.promise(() => hub().createAgent(spec)),
       updateAgent: (key, patch) => Effect.promise(() => hub().updateAgent(key, patch)),
       deleteAgent: (key) => Effect.promise(() => hub().deleteAgent(key)),
@@ -249,6 +268,50 @@ export class AgentObject extends DurableObject<Env> {
     const reply = this.runtime.runPromise(Bot.use((bot) => bot.turn(place, text, requestId)));
     await this.rearmAlarm();
     return reply;
+  }
+
+  async webTurn(place: string, text: string, requestId: string): Promise<WebTurnResult> {
+    try {
+      const result = await this.runtime.runPromise(
+        Bot.use((bot) => bot.beginWebTurn(place, text, requestId)),
+      );
+      await this.rearmAlarm();
+      return result;
+    } catch (cause) {
+      console.error("web turn failed to start", cause);
+      return { ok: false, reason: "The turn could not start. Try again." };
+    }
+  }
+
+  async webState(place: string, after = 0): Promise<WebState> {
+    const [messages, running, approvals] = await Promise.all([
+      this.runtime.runPromise(WebThreads.use((threads) => threads.messages(place, after))),
+      this.runtime.runPromise(
+        Agent.use((agent) =>
+          Effect.map(agent.pending, (turns) => turns.some((turn) => turn.chatId === place)),
+        ),
+      ),
+      this.runtime.runPromise(Approvals.use((pending) => pending.unposted(place))),
+    ]);
+    return {
+      messages,
+      running,
+      approvals: approvals.map(({ id, summary, match, created }) => ({
+        id,
+        summary,
+        match,
+        created,
+      })),
+    };
+  }
+
+  async webStop(place: string): Promise<boolean> {
+    try {
+      return await this.runtime.runPromise(Agent.use((agent) => agent.stop(place)));
+    } catch (cause) {
+      console.error("stopping a web turn failed", cause);
+      return false;
+    }
   }
 
   async postTo(place: string, text: string): Promise<void> {

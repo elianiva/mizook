@@ -26,6 +26,7 @@ export interface Env {
   BROWSER?: BrowserRun;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  CHAT_ACCESS_AUD?: string;
   ASSETS?: Fetcher;
   PARALLEL_API_KEY?: string;
   EXA_API_KEY?: string;

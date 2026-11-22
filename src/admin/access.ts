@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import type { Env } from "../env.ts";
 import { AccessDenied } from "../errors.ts";
 
 const Jwk = Schema.Struct({
@@ -127,4 +128,35 @@ export const makeVerifier = (
         return claims.email ?? "unknown";
       }),
   };
+};
+
+const verifiers = new Map<string, Verifier>();
+
+/** The verifier for an Access application, reused across requests. */
+export const verifierFor = (
+  env: Env,
+  aud: string | undefined = env.ACCESS_AUD,
+): Verifier | undefined => {
+  if (!env.ACCESS_TEAM_DOMAIN || !aud) return undefined;
+  const key = `${env.ACCESS_TEAM_DOMAIN}|${aud}`;
+  const cached = verifiers.get(key);
+  if (cached !== undefined) return cached;
+  const made = makeVerifier({ teamDomain: env.ACCESS_TEAM_DOMAIN, aud });
+  verifiers.set(key, made);
+  return made;
+};
+
+/** The email Access signed for this request, or undefined when it is not valid. */
+export const accessWho = async (
+  request: Request,
+  env: Env,
+  aud: string | undefined = env.ACCESS_AUD,
+): Promise<string | undefined> => {
+  const found = verifierFor(env, aud);
+  if (!found) return undefined;
+  return Effect.runPromise(
+    found
+      .verify(request.headers.get("cf-access-jwt-assertion"))
+      .pipe(Effect.match({ onSuccess: (email) => email, onFailure: () => undefined })),
+  );
 };

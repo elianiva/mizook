@@ -2,8 +2,9 @@ import { DurableObject } from "cloudflare:workers";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Effect } from "effect";
 import { AGENT_SLUG, menuWith, RESERVED_COMMANDS } from "./command-list.ts";
-import type { AgentChange, AgentInfo, AgentSpec, Profile } from "./host.ts";
+import type { AgentChange, AgentInfo, AgentSpec, Profile, WebThreadInfo } from "./host.ts";
 import type { Env } from "./env.ts";
+import { WEB_PERSONA, WEB_ROLE } from "./persona.ts";
 import { Skills, type Skill } from "./skills.ts";
 
 const DEFAULT_SLUG = "mizook";
@@ -22,6 +23,16 @@ type AgentRow = {
   tools: string;
   created: number;
   last_active: number;
+};
+
+type WebThreadRow = {
+  id: string;
+  agent_id: string;
+  title: string;
+  preview: string;
+  created: number;
+  updated: number;
+  archived: number;
 };
 
 const COLUMNS = "id, slug, name, role, persona, tools, created, last_active";
@@ -64,6 +75,15 @@ export class Hub extends DurableObject<Env> {
          id INTEGER PRIMARY KEY CHECK (id = 1), about TEXT NOT NULL,
          rules TEXT NOT NULL, updated INTEGER NOT NULL)`,
     );
+    sql.exec(
+      `CREATE TABLE IF NOT EXISTS web_threads (
+         id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, title TEXT NOT NULL,
+         preview TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
+         updated INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0)`,
+    );
+    sql.exec(
+      `CREATE INDEX IF NOT EXISTS web_threads_updated ON web_threads (archived, updated DESC)`,
+    );
     const isFreshInstall = sql.exec(`SELECT 1 FROM agents LIMIT 1`).toArray().length === 0;
     if (isFreshInstall) {
       const id = randomId();
@@ -76,6 +96,34 @@ export class Hub extends DurableObject<Env> {
       );
       sql.exec(`INSERT INTO hub_meta (key, value) VALUES ('default', ?)`, id);
     }
+    const webRow = sql
+      .exec<AgentRow>(`SELECT ${COLUMNS} FROM agents WHERE slug = 'web'`)
+      .toArray()[0];
+    let webId = webRow?.id;
+    if (webId === undefined) {
+      webId = randomId();
+      sql.exec(
+        `INSERT INTO agents (id, slug, name, role, persona, tools, created)
+         VALUES (?, 'web', ?, ?, ?, '', ?)`,
+        webId,
+        `${env.AGENT_NAME || "Mizook"} Web`.slice(0, 64),
+        WEB_ROLE,
+        WEB_PERSONA,
+        Date.now(),
+      );
+    }
+    const savedWebDefault = sql
+      .exec<{ value: string }>(`SELECT value FROM hub_meta WHERE key = 'default_web'`)
+      .toArray()[0]?.value;
+    const savedWebAgentIsStillHere =
+      savedWebDefault !== undefined &&
+      sql.exec(`SELECT 1 FROM agents WHERE id = ?`, savedWebDefault).toArray().length > 0;
+    if (!savedWebAgentIsStillHere)
+      sql.exec(
+        `INSERT INTO hub_meta (key, value) VALUES ('default_web', ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+        webId,
+      );
     const hubSqlDriver: SqlDriver = {
       all: <T>(query: string, ...params: unknown[]) =>
         sql.exec(query, ...(params as never[])).toArray() as T[],
@@ -91,6 +139,17 @@ export class Hub extends DurableObject<Env> {
     return this.ctx.storage.sql
       .exec<{ value: string }>(`SELECT value FROM hub_meta WHERE key = 'default'`)
       .one().value;
+  }
+
+  private get webDefaultId(): string {
+    const saved = this.ctx.storage.sql
+      .exec<{ value: string }>(`SELECT value FROM hub_meta WHERE key = 'default_web'`)
+      .toArray()[0]?.value;
+    return saved !== undefined && this.row(saved) !== undefined ? saved : this.defaultId;
+  }
+
+  webDefaultAgent(): AgentInfo {
+    return this.agent(this.webDefaultId)!;
   }
 
   private info(row: AgentRow): AgentInfo {
@@ -144,6 +203,107 @@ export class Hub extends DurableObject<Env> {
   agent(key: string): AgentInfo | undefined {
     const row = this.row(key);
     return row && this.info(row);
+  }
+
+  private webThreadInfo(row: WebThreadRow): WebThreadInfo | undefined {
+    const agent = this.agent(row.agent_id);
+    return agent === undefined
+      ? undefined
+      : {
+          id: row.id,
+          agent,
+          title: row.title,
+          preview: row.preview,
+          created: row.created,
+          updated: row.updated,
+          archived: row.archived === 1,
+        };
+  }
+
+  private webThreadRow(id: string): WebThreadRow | undefined {
+    return this.ctx.storage.sql
+      .exec<WebThreadRow>(
+        `SELECT id, agent_id, title, preview, created, updated, archived
+         FROM web_threads WHERE id = ?`,
+        id,
+      )
+      .toArray()[0];
+  }
+
+  webThreads(): WebThreadInfo[] {
+    return this.ctx.storage.sql
+      .exec<WebThreadRow>(
+        `SELECT id, agent_id, title, preview, created, updated, archived
+         FROM web_threads WHERE archived = 0 ORDER BY updated DESC`,
+      )
+      .toArray()
+      .flatMap((row) => {
+        const info = this.webThreadInfo(row);
+        return info === undefined ? [] : [info];
+      });
+  }
+
+  webThread(id: string): WebThreadInfo | undefined {
+    const row = this.webThreadRow(id);
+    return row && this.webThreadInfo(row);
+  }
+
+  createWebThread(agentKey: string | undefined): WebThreadInfo | undefined {
+    const agent = agentKey === undefined ? this.webDefaultAgent() : this.agent(agentKey);
+    if (agent === undefined) return undefined;
+    const id = randomId();
+    const place = `web:${id}`;
+    const now = Date.now();
+    this.ctx.storage.sql.exec(
+      `INSERT INTO web_threads (id, agent_id, title, preview, created, updated)
+       VALUES (?, ?, 'New chat', '', ?, ?)`,
+      id,
+      agent.id,
+      now,
+      now,
+    );
+    this.bind(place, agent.id);
+    this.setPlaceName(place, "New chat");
+    return this.webThread(id);
+  }
+
+  renameWebThread(id: string, title: string): WebThreadInfo | undefined {
+    const clean = title.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (clean === "" || this.webThreadRow(id) === undefined) return undefined;
+    this.ctx.storage.sql.exec(
+      `UPDATE web_threads SET title = ?, updated = ? WHERE id = ?`,
+      clean,
+      Date.now(),
+      id,
+    );
+    this.setPlaceName(`web:${id}`, clean);
+    return this.webThread(id);
+  }
+
+  archiveWebThread(id: string): boolean {
+    if (this.webThreadRow(id) === undefined) return false;
+    this.ctx.storage.sql.exec(
+      `UPDATE web_threads SET archived = 1, updated = ? WHERE id = ?`,
+      Date.now(),
+      id,
+    );
+    return true;
+  }
+
+  touchWebThread(place: string, preview: string): void {
+    const id = place.replace(/^web:/, "");
+    const row = this.webThreadRow(id);
+    if (row === undefined) return;
+    const clean = preview.replace(/\s+/g, " ").trim().slice(0, 160);
+    const title = row.title === "New chat" && clean !== "" ? clean.slice(0, 60) : row.title;
+    this.ctx.storage.sql.exec(
+      `UPDATE web_threads SET title = ?, preview = ?, updated = ? WHERE id = ?`,
+      title,
+      clean,
+      Date.now(),
+      id,
+    );
+    if (title !== row.title) this.setPlaceName(place, title);
   }
 
   private badSpec(spec: Partial<AgentSpec>, id?: string): string | undefined {
@@ -217,7 +377,18 @@ export class Hub extends DurableObject<Env> {
     if (row.id === this.defaultId)
       return { ok: false, error: "the default agent cannot be deleted" };
     const gone = this.info(row);
+    const wasWebDefault = row.id === this.webDefaultId;
     this.ctx.storage.sql.exec(`DELETE FROM bindings WHERE agent_id = ?`, row.id);
+    this.ctx.storage.sql.exec(
+      `UPDATE web_threads SET archived = 1, updated = ? WHERE agent_id = ?`,
+      Date.now(),
+      row.id,
+    );
+    if (wasWebDefault)
+      this.ctx.storage.sql.exec(
+        `UPDATE hub_meta SET value = ? WHERE key = 'default_web'`,
+        this.defaultId,
+      );
     this.ctx.storage.sql.exec(`DELETE FROM agents WHERE id = ?`, row.id);
     await (this.env.AgentObject.getByName(gone.doName) as unknown as { destroy(): Promise<void> })
       .destroy()
@@ -234,7 +405,7 @@ export class Hub extends DurableObject<Env> {
       (agentId !== undefined ? this.row(agentId) : undefined) ??
       (command !== undefined && !RESERVED_COMMANDS.has(command) ? this.row(command) : undefined) ??
       (bound && this.row(bound.agent_id)) ??
-      this.row(this.defaultId)!;
+      this.row(place.startsWith("web:") ? this.webDefaultId : this.defaultId)!;
     this.ctx.storage.sql.exec(`UPDATE agents SET last_active = ? WHERE id = ?`, Date.now(), row.id);
     return this.info(row);
   }
@@ -242,7 +413,7 @@ export class Hub extends DurableObject<Env> {
   bind(place: string, key: string | undefined): AgentInfo | undefined {
     if (key === undefined) {
       this.ctx.storage.sql.exec(`DELETE FROM bindings WHERE place = ?`, place);
-      return this.agent(this.defaultId);
+      return this.agent(place.startsWith("web:") ? this.webDefaultId : this.defaultId);
     }
     const row = this.row(key);
     if (!row) return undefined;

@@ -1,6 +1,7 @@
 {
   "name": "@mizook/dashboard",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "prepare": "panda codegen",
@@ -8,9 +9,7 @@
     "build": "panda codegen && vite build"
   },
   "dependencies": {
-    "@foldkit/ui": "0.171.0",
-    "@fontsource-variable/google-sans": "^5.3.2",
-    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@mizook/design": "workspace:*",
     "effect": "4.1.4",
     "foldkit": "0.171.0"
   },

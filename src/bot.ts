@@ -25,6 +25,8 @@ import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
 import { COMMANDS } from "./command-list.ts";
+import { WebThreads } from "./chat/threads.ts";
+import type { WebTurnResult } from "./chat/types.ts";
 import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
 import { State } from "./state.ts";
@@ -57,6 +59,11 @@ export class Bot extends Context.Service<
       text: string,
       requestId: string,
     ): Effect.Effect<string, AgentError | StateError | TelegramError>;
+    beginWebTurn(
+      place: string,
+      text: string,
+      requestId: string,
+    ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError>;
     postTo(place: string, text: string): Effect.Effect<void, StateError | TelegramError>;
     approve(
       id: number,
@@ -81,6 +88,7 @@ export class Bot extends Context.Service<
       const blobs = yield* Blobs;
       const usage = yield* Usage;
       const host = yield* Host;
+      const webThreads = yield* WebThreads;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
 
@@ -118,6 +126,7 @@ export class Bot extends Context.Service<
       });
 
       const connectAdapters = () => chat.initialize();
+      const isWebPlace = (place: string) => place.startsWith("web:");
 
       const post = (threadId: string, text: string) =>
         Effect.tryPromise({
@@ -129,22 +138,39 @@ export class Bot extends Context.Service<
           catch: (cause) => new TelegramError({ operation: "post", cause }),
         });
 
+      const deliver = (threadId: string, text: string) =>
+        isWebPlace(threadId)
+          ? webThreads.append(threadId, "agent", text).pipe(
+              Effect.tapError((error) => Effect.logError("web bubble failed", error)),
+              Effect.ignore,
+            )
+          : post(threadId, text);
+
       const postMidTurnBubbleStraightToChat = (threadId: string, text: string) =>
-        post(threadId, text).pipe(Effect.ignore);
-      yield* outbox.attach(postMidTurnBubbleStraightToChat);
+        deliver(threadId, text).pipe(Effect.ignore);
+      yield* outbox.attach(postMidTurnBubbleStraightToChat, {
+        pace: (place) => !isWebPlace(place),
+      });
 
       const keepTyping = (threadId: string) =>
-        Effect.tryPromise({
-          try: async () => {
-            await connectAdapters();
-            await chat.thread(threadId).startTyping();
-          },
-          catch: (cause) => new TelegramError({ operation: "typing", cause }),
-        }).pipe(Effect.ignore, Effect.repeat(Schedule.spaced(TYPING_REFRESH)), Effect.forkScoped);
+        isWebPlace(threadId)
+          ? Effect.void
+          : Effect.tryPromise({
+              try: async () => {
+                await connectAdapters();
+                await chat.thread(threadId).startTyping();
+              },
+              catch: (cause) => new TelegramError({ operation: "typing", cause }),
+            }).pipe(
+              Effect.ignore,
+              Effect.repeat(Schedule.spaced(TYPING_REFRESH)),
+              Effect.forkScoped,
+            );
 
       const buttonIdNamingThisAgent = (verb: string, id: number) => `${verb}:${host.self.id}:${id}`;
       const postApprovalCards = (threadId: string) =>
         Effect.gen(function* () {
+          if (isWebPlace(threadId)) return;
           for (const a of yield* approvals.unposted(threadId)) {
             yield* Effect.tryPromise({
               try: async () => {
@@ -189,7 +215,7 @@ export class Bot extends Context.Service<
         Effect.gen(function* () {
           if (!typingStarted) yield* keepTyping(threadId);
           const reply = yield* agent.finish(chatId);
-          if (reply.trim() !== "") yield* post(threadId, reply);
+          if (reply.trim() !== "") yield* deliver(threadId, reply);
           yield* postApprovalCards(threadId);
           return reply;
         }).pipe(Effect.scoped);
@@ -351,7 +377,7 @@ export class Bot extends Context.Service<
       const startTurn = (
         text: string,
         requestId: string,
-        source: "scheduled" | "approval",
+        source: "scheduled" | "approval" | "user",
         place: string,
       ) =>
         Effect.gen(function* () {
@@ -370,6 +396,61 @@ export class Bot extends Context.Service<
               return yield* waitForAnswerAndPost(threadId, threadId);
             }),
           );
+        });
+
+      const beginWebTurn = (
+        place: string,
+        text: string,
+        requestId: string,
+      ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError> =>
+        Effect.gen(function* () {
+          if (settings.budgetDaily > 0) {
+            const spent = yield* usage.spentSince(Date.now() - DAY_MS);
+            if (spent >= settings.budgetDaily)
+              return {
+                ok: false as const,
+                reason: `Daily budget reached (${spent.toFixed(2)} of ${settings.budgetDaily}). Raise it with /budget.`,
+              };
+          }
+          const message = yield* webThreads.append(place, "user", text);
+          const started = yield* agent.begin({
+            chatId: place,
+            threadId: place,
+            text,
+            where: yield* host.placeLabel(place),
+            requestId: `${place}:${requestId}`,
+            source: "user",
+          });
+          if (started === "folded")
+            return {
+              ok: true as const,
+              folded: true,
+              messageId: message.id,
+              at: message.at,
+            };
+          yield* Effect.forkDetach(
+            Effect.scoped(Effect.andThen(holdChat(place), waitForAnswerAndPost(place, place))).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logError("web turn failed", cause).pipe(
+                  Effect.andThen(
+                    webThreads
+                      .append(
+                        place,
+                        "agent",
+                        "Something went wrong on my side. I'll try to finish that.",
+                      )
+                      .pipe(Effect.ignore),
+                  ),
+                ),
+              ),
+            ),
+          );
+          return {
+            ok: true as const,
+            folded: false,
+            messageId: message.id,
+            at: message.at,
+          };
         });
 
       const nextWake = Effect.map(agent.pending, (pending) =>
@@ -522,8 +603,9 @@ export class Bot extends Context.Service<
         approve,
         nextWake,
         turn: (place, text, requestId) => startTurn(text, requestId, "scheduled", place),
+        beginWebTurn,
         postTo: (place, text) =>
-          Effect.flatMap(resolvePlace(place), (target) => post(target, text)),
+          Effect.flatMap(resolvePlace(place), (target) => deliver(target, text)),
         webhook: (request, waitUntil) =>
           Effect.tryPromise({
             try: () => chat.webhooks.telegram(request, { waitUntil }),

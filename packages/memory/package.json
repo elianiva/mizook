@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "One chat that never ends: an append-only log compressed into a binary tree of one-line summaries, served to the model as a constant-size view.",
+  "license": "GPL-3.0-only",
   "files": [
     "src"
   ],

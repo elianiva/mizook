@@ -1,6 +1,6 @@
 import { Arbitrary, Clock, Duration, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
-import { expect } from "vite-plus/test";
+import { expect, test } from "vite-plus/test";
 import { Outbox, typingPause } from "../src/outbox.ts";
 import { State } from "../src/state.ts";
 import { property } from "./property.ts";
@@ -97,6 +97,37 @@ property(
     ),
   { runs: 20 },
 );
+
+test("a sink that opts out of pacing delivers every bubble with no typing pause", () => {
+  const sleeps: number[] = [];
+  const delivered: string[] = [];
+  return Effect.runPromise(
+    withOutbox(
+      Effect.gen(function* () {
+        const outbox = yield* Outbox;
+        yield* outbox.attach(
+          (id, text) => Effect.sync(() => void delivered.push(`${id}|${text}`)),
+          {
+            pace: (place) => !place.startsWith("web:"),
+          },
+        );
+        yield* outbox.send("web:one", ["first", "second", "third"]);
+        yield* outbox.send("telegram:42", ["first", "second"]);
+        expect(delivered).toEqual([
+          "web:one|first",
+          "web:one|second",
+          "web:one|third",
+          "telegram:42|first",
+          "telegram:42|second",
+        ]);
+        expect(sleeps).toEqual([pausedMillis("second")]);
+        expect(yield* outbox.take("web:one")).toBe(3);
+        expect(yield* outbox.take("telegram:42")).toBe(2);
+      }),
+      sleeps,
+    ),
+  );
+});
 
 property(
   "the typing pause is 300 ms plus 25 ms per character, capped at 1.5 s",

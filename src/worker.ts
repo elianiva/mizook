@@ -6,6 +6,7 @@ import { hookTokenValid } from "./hooks.ts";
 import { routeOf } from "./route.ts";
 import type { HubApi } from "./agent-object.ts";
 import { handleAdmin } from "./admin/handler.ts";
+import { handleChat } from "./chat/handler.ts";
 
 export { AgentObject } from "./agent-object.ts";
 export { Hub } from "./hub.ts";
@@ -38,11 +39,35 @@ const ANY_ORIGIN_READ_ONLY_CORS = {
   "access-control-allow-headers": "content-type",
 };
 
+const WEB_CONTENT_SECURITY_POLICY =
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+const looksLikeAFile = (pathname: string) => /\.[a-z0-9]+$/i.test(pathname);
+
+const serveWebApp = async (request: Request, env: Env, url: URL): Promise<Response> => {
+  if (!env.ASSETS) return new Response("The web app is not built", { status: 503 });
+  const isFile = looksLikeAFile(url.pathname);
+  const asset = await env.ASSETS.fetch(
+    isFile ? request : new Request(new URL("/index.html", url), request),
+  );
+  const response = new Response(asset.body, asset);
+  response.headers.set("content-security-policy", WEB_CONTENT_SECURITY_POLICY);
+  response.headers.set("x-content-type-options", "nosniff");
+  if (!isFile) response.headers.set("cache-control", "no-store");
+  return response;
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
+
+    if (pathname === "/") {
+      return Response.redirect(new URL("/c", url).toString(), 302);
+    }
 
     if (pathname === "/admin" || pathname.startsWith("/admin/")) return handleAdmin(request, env);
+    if (pathname === "/c/api" || pathname.startsWith("/c/api/")) return handleChat(request, env);
 
     if (pathname === "/telegram/webhook" && request.method === "POST") {
       const secretSentByTelegram = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
@@ -144,7 +169,8 @@ export default {
       return new Response((await automations.hook(id, body)) ? "ok" : "ignored", { status: 202 });
     }
 
-    if (pathname === "/") return new Response("mizook");
+    if (request.method === "GET" || request.method === "HEAD")
+      return serveWebApp(request, env, new URL(request.url));
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

@@ -21,6 +21,7 @@ export const fakeHost = (overrides: Partial<typeof Host.Service> = {}) =>
     bind: () => Effect.undefined,
     placeLabel: (place) => Effect.succeed(place),
     namePlace: () => Effect.void,
+    touchWebThread: () => Effect.void,
     createAgent: () => Effect.succeed({ ok: false, error: "no hub" }),
     updateAgent: () => Effect.succeed({ ok: false, error: "no hub" }),
     deleteAgent: () => Effect.succeed({ ok: false, error: "no hub" }),

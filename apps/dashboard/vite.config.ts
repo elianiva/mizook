@@ -10,6 +10,7 @@ export default defineConfig({
   base: WORKER_SERVES_DASHBOARD_AT,
   plugins: [pandacss(), foldkit()],
   optimizeDeps: { entries: ["src/entry.ts"] },
+  resolve: { dedupe: ["effect", "foldkit"] },
   server: {
     ...(process.env["VITE_ALLOWED_HOSTS"] !== undefined && { allowedHosts: true as const }),
     proxy: { [WORKER_ADMIN_API_PATH]: process.env["ADMIN_API"] ?? LOCAL_WORKER_URL },

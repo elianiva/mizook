@@ -46,6 +46,16 @@ export interface Profile {
   readonly rules: ReadonlyArray<string>;
 }
 
+export interface WebThreadInfo {
+  readonly id: string;
+  readonly agent: AgentInfo;
+  readonly title: string;
+  readonly preview: string;
+  readonly created: number;
+  readonly updated: number;
+  readonly archived: boolean;
+}
+
 export const EMPTY_PROFILE: Profile = { about: "", rules: [] };
 
 export class Host extends Context.Service<
@@ -57,6 +67,7 @@ export class Host extends Context.Service<
     bind(place: string, slug: string | undefined): Effect.Effect<AgentInfo | undefined>;
     placeLabel(place: string): Effect.Effect<string>;
     namePlace(place: string, name: string): Effect.Effect<void>;
+    touchWebThread(place: string, preview: string): Effect.Effect<void>;
     createAgent(spec: AgentSpec): Effect.Effect<AgentChange>;
     updateAgent(key: string, patch: Partial<AgentSpec>): Effect.Effect<AgentChange>;
     deleteAgent(key: string): Effect.Effect<AgentChange>;
