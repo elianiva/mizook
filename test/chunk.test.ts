@@ -53,9 +53,9 @@ property(
 );
 
 property(
-  "every part is non-empty, trimmed, within the limit, and the parts keep every visible character in order",
+  "every part is non-empty, trimmed, within the limit, never splits an emoji, and the parts keep every visible character in order",
   Arbitrary.all({
-    limit: int(1, 50),
+    limit: int(2, 50),
     pieces: Arbitrary.array(Arbitrary.all([solid(0, 70), separator]), { maxLength: 30 }),
   }),
   ({ limit, pieces }) => {
@@ -65,6 +65,7 @@ property(
       expect(part).not.toBe("");
       expect(part.length).toBeLessThanOrEqual(limit);
       expect(part).toBe(part.trim());
+      expect(part).not.toMatch(/\p{Cs}/u);
     }
     expect(withoutWhitespace(parts.join(""))).toBe(withoutWhitespace(text));
   },
