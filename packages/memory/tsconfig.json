@@ -13,7 +13,13 @@
     "skipLibCheck": true,
     "plugins": [
       {
-        "name": "@effect/language-service"
+        "name": "@effect/language-service",
+        "overrides": [
+          {
+            "include": ["test/**/*.ts"],
+            "options": { "allowedUnstableApis": ["effect/Arbitrary"] }
+          }
+        ]
       }
     ]
   },

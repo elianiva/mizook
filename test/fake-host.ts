@@ -1,7 +1,6 @@
 import { Effect } from "effect";
 import { EMPTY_PROFILE, Host } from "../src/host.ts";
 
-/** A Host for tests: one default agent with no peers. Override what a test needs. */
 export const fakeHost = (overrides: Partial<typeof Host.Service> = {}) =>
   Host.of({
     self: {
