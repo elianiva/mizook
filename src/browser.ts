@@ -29,6 +29,46 @@ export const splitFrontmatter = (markdown: string): { title?: string; text: stri
   };
 };
 
+const isPrivateIpv4 = ([a = 0, b = 0]: ReadonlyArray<number>) =>
+  a === 0 ||
+  a === 10 ||
+  a === 127 ||
+  (a === 100 && b >= 64 && b <= 127) ||
+  (a === 169 && b === 254) ||
+  (a === 172 && b >= 16 && b <= 31) ||
+  (a === 192 && b === 168);
+
+const IPV6_GROUPS = 8;
+
+const ipv6Groups = (host: string): number[] | undefined => {
+  if (!host.includes(":")) return undefined;
+  const [head = "", tail] = host.split("::");
+  const parse = (part: string) => (part === "" ? [] : part.split(":").map((g) => parseInt(g, 16)));
+  const front = parse(head);
+  const back = tail === undefined ? [] : parse(tail);
+  const zeros = Array<number>(IPV6_GROUPS - front.length - back.length).fill(0);
+  return [...front, ...zeros, ...back];
+};
+
+const ipv4OfGroups = (high: number, low: number) => [high >> 8, high & 0xff, low >> 8, low & 0xff];
+
+const isPrivateIpv6 = (groups: ReadonlyArray<number>) => {
+  const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
+  const embedsIpv4 =
+    (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0 || g5 === 0xffff)) ||
+    (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0);
+  const uniqueLocal = (g0 & 0xfe00) === 0xfc00;
+  const linkLocal = (g0 & 0xffc0) === 0xfe80;
+  return uniqueLocal || linkLocal || (embedsIpv4 && isPrivateIpv4(ipv4OfGroups(g6, g7)));
+};
+
+const isPrivateAddress = (host: string) => {
+  const groups = ipv6Groups(host);
+  if (groups) return isPrivateIpv6(groups);
+  const octets = /^\d+\.\d+\.\d+\.\d+$/.test(host) ? host.split(".").map(Number) : undefined;
+  return octets !== undefined && isPrivateIpv4(octets);
+};
+
 export const publicUrl = (input: string): URL => {
   let url: URL;
   try {
@@ -39,21 +79,16 @@ export const publicUrl = (input: string): URL => {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new BrowserError({ url: input, reason: "only http and https" });
   }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
   const isPrivateOrLocalHost =
     host === "localhost" ||
     host.endsWith(".localhost") ||
-    host === "0.0.0.0" ||
-    host === "::" ||
-    host === "::1" ||
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    host.startsWith("169.254.") ||
     host.endsWith(".internal") ||
     host.endsWith(".local") ||
-    host === "metadata.google.internal";
+    isPrivateAddress(host);
   if (isPrivateOrLocalHost) throw new BrowserError({ url: input, reason: "not a public host" });
   return url;
 };

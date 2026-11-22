@@ -41,17 +41,32 @@ const label = Arbitrary.schema(
 );
 
 const privateHost = Arbitrary.all({
-  form: pick(["loopback", "ten", "home", "carrier", "link", "name"]),
+  form: pick([
+    "loopback",
+    "ten",
+    "home",
+    "carrier",
+    "link",
+    "name",
+    "zero",
+    "shared",
+    "mapped",
+    "unique6",
+    "link6",
+    "trailingDot",
+  ]),
   a: octet,
   b: octet,
   c: octet,
   middle: int(16, 31),
+  shared: int(64, 127),
+  group: int(0, 0xffff),
   label,
   suffix: pick([".localhost", ".internal", ".local", ".LOCAL"]),
   named: pick(["localhost", "LOCALHOST", "0.0.0.0", "[::1]", "[::]", "metadata.google.internal"]),
   useNamed: Arbitrary.schema(Schema.Boolean),
 }).pipe(
-  Arbitrary.map(({ form, a, b, c, middle, label, suffix, named, useNamed }) => {
+  Arbitrary.map(({ form, a, b, c, middle, shared, group, label, suffix, named, useNamed }) => {
     switch (form) {
       case "loopback":
         return useNamed
@@ -67,18 +82,43 @@ const privateHost = Arbitrary.all({
         return `169.254.${a}.${b}`;
       case "name":
         return useNamed ? named : `${label}${suffix}`;
+      case "zero":
+        return `0.${a}.${b}.${c}`;
+      case "shared":
+        return `100.${shared}.${a}.${b}`;
+      case "mapped":
+        return useNamed ? `[::ffff:127.${a}.${b}.${c}]` : `[::10.${a}.${b}.${c}]`;
+      case "unique6":
+        return `[${useNamed ? "fd" : "fc"}${(a % 256).toString(16).padStart(2, "0")}::${group.toString(16)}]`;
+      case "link6":
+        return `[fe${(8 + (a % 4)).toString(16)}0::${group.toString(16)}]`;
+      case "trailingDot":
+        return useNamed ? "localhost." : `${label}${suffix}.`;
     }
   }),
 );
 
 const isPrivateIp = ([a, b]: ReadonlyArray<number>) =>
+  a === 0 ||
+  (a === 100 && b! >= 64 && b! <= 127) ||
   a === 127 ||
   a === 10 ||
   (a === 192 && b === 168) ||
   (a === 172 && b! >= 16 && b! <= 31) ||
   (a === 169 && b === 254);
 
-const publicIp = Arbitrary.all([pick(["", "172", "192", "169"]), octet, octet, octet, octet]).pipe(
+const publicIp6 = Arbitrary.all([
+  pick(["2606:4700", "fe00", "fbff", "fec0", "2001:db8"]),
+  int(1, 0xffff),
+]).pipe(Arbitrary.map(([prefix, last]) => `[${prefix}::${last.toString(16)}]`));
+
+const publicIp = Arbitrary.all([
+  pick(["", "172", "192", "169", "100"]),
+  octet,
+  octet,
+  octet,
+  octet,
+]).pipe(
   Arbitrary.map(([lead, a, b, c, d]) => [lead === "" ? a : Number(lead), b, c, d]),
   Arbitrary.filter((octets) => !isPrivateIp(octets) && octets.some((n) => n !== 0)),
   Arbitrary.map((octets) => octets.join(".")),
@@ -166,12 +206,12 @@ property(
   "public names and public addresses, including the neighbours of private ranges, are accepted as the parsed URL",
   Arbitrary.all({
     scheme,
-    host: Arbitrary.all([publicIp, publicName, Arbitrary.schema(Schema.Boolean)]),
+    host: Arbitrary.all([publicIp, publicIp6, publicName, pick(["ip", "ip6", "name"])]),
     port,
     path,
   }),
-  ({ scheme, host: [ip, domain, useIp], port, path }) => {
-    const input = `${scheme}://${useIp ? ip : domain}${port}${path}`;
+  ({ scheme, host: [ip, ip6, domain, kind], port, path }) => {
+    const input = `${scheme}://${kind === "ip" ? ip : kind === "ip6" ? ip6 : domain}${port}${path}`;
     expect(publicUrl(input).href).toBe(new URL(input).href);
   },
 );
