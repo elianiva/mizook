@@ -100,3 +100,33 @@ test("a read limit is clamped to at least one and at most two hundred messages",
       }),
     ),
   ));
+
+test("the preview names a program's first component instead of showing its code", () => {
+  const previews: Array<string> = [];
+  const host = fakeHost({
+    touchWebThread: (_place, preview) =>
+      Effect.sync(() => {
+        previews.push(preview);
+      }),
+  });
+  const closed =
+    'Spend so far:\n```openui-lang\nroot = Stack([spend])\nspend = Metrics([Metric("Today", "$4")])\n```\nmore soon';
+  const open = 'Here:\n```openui-lang\nroot = Bars([Bar("Mon"';
+
+  return Effect.runPromise(
+    withThreads(
+      Effect.gen(function* () {
+        const threads = yield* WebThreads;
+        yield* threads.append("web:one", "agent", closed);
+        yield* threads.append("web:one", "agent", open);
+        yield* threads.append("web:one", "agent", "```js\nconst x = 1\n```");
+        expect(previews).toEqual([
+          "Spend so far: Metrics more soon",
+          "Here: Bars",
+          "```js const x = 1 ```",
+        ]);
+      }),
+      host,
+    ),
+  );
+});

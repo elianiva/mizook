@@ -10,7 +10,7 @@ const ENTITIES: Readonly<Record<string, string>> = {
 
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (char) => ENTITIES[char]!);
 
-const safeHref = (href: string, image: boolean): string | undefined => {
+export const safeHref = (href: string, image: boolean): string | undefined => {
   try {
     const url = new URL(href);
     if (image) return url.protocol === "https:" ? href : undefined;
@@ -49,6 +49,6 @@ safeRenderer.image = function (this: Renderer, { href, title, text, tokens }) {
   return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(text)}"${titleAttribute} loading="lazy" />`;
 };
 
-const marked = new Marked({ gfm: true, breaks: true, renderer: safeRenderer });
+export const marked = new Marked({ gfm: true, breaks: true, renderer: safeRenderer });
 
 export const renderMarkdown = (text: string): string => marked.parse(text) as string;

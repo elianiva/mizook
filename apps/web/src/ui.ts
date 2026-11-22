@@ -257,9 +257,16 @@ export const ui = {
     ...container,
     display: "flex",
     flexDirection: "column",
-    gap: "18px",
+    gap: "24px",
   }),
-  message: css({ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }),
+  message: cva({
+    base: { display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 },
+    variants: {
+      role: { user: { alignItems: "flex-end" }, agent: {} },
+      // Bubbles in a row from the same side read as one turn.
+      continued: { true: { marginTop: "-12px" } },
+    },
+  }),
   meta: css({
     display: "flex",
     alignItems: "center",
@@ -270,10 +277,6 @@ export const ui = {
     letterSpacing: "caps",
     textTransform: "uppercase",
   }),
-  roleMark: cva({
-    base: { width: "8px", height: "8px", flexShrink: 0 },
-    variants: { role: { user: { backgroundColor: "accent" }, agent: { backgroundColor: "ok" } } },
-  }),
   time: css({
     color: "fgFaint",
     fontFamily: "mono",
@@ -282,11 +285,14 @@ export const ui = {
     letterSpacing: "0",
     textTransform: "none",
   }),
-  body: cva({
-    base: { minWidth: 0, paddingLeft: "10px", borderLeftWidth: "2px", borderLeftStyle: "solid" },
-    variants: {
-      role: { user: { borderLeftColor: "accent" }, agent: { borderLeftColor: "ok" } },
-    },
+  bubble: css({
+    maxWidth: "min(36rem, 88%)",
+    minWidth: 0,
+    padding: "10px 14px",
+    border: "1px solid {colors.border}",
+    borderRightWidth: "2px",
+    borderRightColor: "accent",
+    backgroundColor: "bgSubtle",
   }),
   text: css({
     margin: 0,
@@ -380,7 +386,6 @@ export const ui = {
     display: "flex",
     alignItems: "center",
     gap: "8px",
-    paddingLeft: "10px",
     color: "fgMuted",
     fontFamily: "mono",
     fontSize: "xs",
@@ -393,6 +398,184 @@ export const ui = {
     backgroundColor: "accent",
     animation: "pulse 1.6s ease-in-out infinite",
   }),
+
+  blocks: css({ display: "flex", flexDirection: "column", gap: "12px", minWidth: 0 }),
+  blockTitle: css({
+    marginBottom: "8px",
+    color: "fgMuted",
+    fontSize: "xs",
+    fontWeight: 700,
+    letterSpacing: "caps",
+    textTransform: "uppercase",
+  }),
+  pending: css({
+    height: "64px",
+    border: "1px dashed {colors.borderStrong}",
+    backgroundColor: "bgSubtle",
+    animation: "pulse 1.6s ease-in-out infinite",
+  }),
+
+  metrics: css({
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))",
+    borderLeft: "1px solid {colors.border}",
+    borderTop: "1px solid {colors.border}",
+  }),
+  metric: css({
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    padding: "12px 14px",
+    boxShadow: "1px 0 0 0 {colors.border}, 0 1px 0 0 {colors.border}",
+  }),
+  metricLabel: css({ color: "fgMuted", fontSize: "xs" }),
+  metricValue: css({
+    fontSize: "xl",
+    fontWeight: 600,
+    letterSpacing: "tight",
+    lineHeight: "1.2",
+    fontVariantNumeric: "tabular-nums",
+  }),
+  metricDelta: cva({
+    base: { fontFamily: "mono", fontSize: "xs", color: "fgMuted" },
+    variants: { good: { true: { color: "ok" }, false: { color: "danger" } } },
+  }),
+
+  bars: css({
+    display: "grid",
+    gridTemplateColumns: "minmax(0, max-content) minmax(0, 1fr) auto",
+    alignItems: "center",
+    columnGap: "12px",
+    rowGap: "6px",
+    margin: 0,
+  }),
+  barLabel: css({
+    maxWidth: "12rem",
+    overflow: "hidden",
+    fontSize: "sm",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  }),
+  barTrack: css({ height: "10px", backgroundColor: "bgHover" }),
+  barFill: css({ height: "100%", minWidth: "2px", backgroundColor: "accent" }),
+  barValue: css({
+    margin: 0,
+    fontFamily: "mono",
+    fontSize: "xs",
+    color: "fgMuted",
+    textAlign: "right",
+    fontVariantNumeric: "tabular-nums",
+  }),
+
+  steps: css({
+    display: "flex",
+    flexDirection: "column",
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  }),
+  step: cva({
+    base: {
+      display: "flex",
+      alignItems: "baseline",
+      gap: "10px",
+      paddingBlock: "5px",
+      fontSize: "sm",
+      lineHeight: "1.45",
+      "&::before": {
+        content: '""',
+        flexShrink: 0,
+        width: "9px",
+        height: "9px",
+        border: "1.5px solid {colors.borderStrong}",
+        translate: "0 1px",
+      },
+    },
+    variants: {
+      state: {
+        done: {
+          color: "fgMuted",
+          "&::before": { borderColor: "accent", backgroundColor: "accent" },
+        },
+        current: { fontWeight: 600, "&::before": { borderColor: "accent" } },
+        todo: {},
+      },
+    },
+  }),
+
+  sources: css({
+    display: "flex",
+    flexDirection: "column",
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+    border: "1px solid {colors.border}",
+    counterReset: "source",
+  }),
+  source: css({
+    counterIncrement: "source",
+    "& + &": { borderTop: "1px solid {colors.border}" },
+    "& a": {
+      display: "flex",
+      alignItems: "baseline",
+      gap: "10px",
+      padding: "8px 12px",
+      color: "fg",
+      textDecoration: "none",
+      ...motion,
+      _hover: { backgroundColor: "bgHover" },
+      "&::before": {
+        content: "counter(source)",
+        minWidth: "1ch",
+        color: "accent",
+        fontFamily: "mono",
+        fontSize: "xs",
+      },
+    },
+  }),
+  sourceTitle: css({ minWidth: 0, flex: "1", fontSize: "sm", fontWeight: 500 }),
+  sourceHost: css({ color: "fgFaint", fontFamily: "mono", fontSize: "xs", whiteSpace: "nowrap" }),
+
+  callout: cva({
+    base: {
+      padding: "10px 12px",
+      borderLeftWidth: "2px",
+      borderLeftStyle: "solid",
+      backgroundColor: "bgSubtle",
+      fontSize: "sm",
+      lineHeight: "1.5",
+      whiteSpace: "pre-wrap",
+    },
+    variants: {
+      tone: {
+        info: { borderLeftColor: "borderStrong" },
+        ok: { borderLeftColor: "ok" },
+        warn: { borderLeftColor: "warn" },
+        danger: { borderLeftColor: "danger" },
+      },
+    },
+  }),
+  calloutTitle: cva({
+    base: {
+      display: "block",
+      marginBottom: "2px",
+      fontSize: "xs",
+      fontWeight: 700,
+      letterSpacing: "caps",
+      textTransform: "uppercase",
+      whiteSpace: "normal",
+    },
+    variants: {
+      tone: {
+        info: { color: "fgMuted" },
+        ok: { color: "ok" },
+        warn: { color: "warn" },
+        danger: { color: "danger" },
+      },
+    },
+  }),
+
+  choices: css({ display: "flex", flexWrap: "wrap", gap: "6px" }),
 
   approval: css({
     display: "flex",

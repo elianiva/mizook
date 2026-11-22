@@ -4,6 +4,7 @@ packages:
 allowBuilds:
   "@google/genai": false
   "@mongodb-js/zstd": true
+  "@openuidev/lang-core": false
   "@parcel/watcher": false
   core-js-pure: true
   esbuild: true

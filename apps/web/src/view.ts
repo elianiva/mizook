@@ -19,7 +19,7 @@ import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
 import { AppRoute, routeThread } from "./route.ts";
 import { ui } from "./ui.ts";
-import { renderMarkdown } from "./markdown.ts";
+import { type Block, type Segment, segmentsOf } from "./generative.ts";
 
 type H = HtmlBuilder<Message>;
 
@@ -184,29 +184,162 @@ const noticeView = (model: Model, h: H): Html =>
 const agentRoleLabel = (thread: ThreadSummary): string =>
   thread.agent.slug === "web" ? "Web" : thread.agent.name;
 
-const messageView = (message: ChatMessage, h: H, agent: string): Html => {
-  const user = message.role === "user";
-  return h.article(
-    [h.Key(String(message.id)), h.Class(ui.message)],
-    [
-      h.div(
-        [h.Class(ui.meta)],
+const hostOf = (url: string): string => new URL(url).hostname.replace(/^www\./, "");
+
+const TREND_GLYPH = { up: "▲ ", down: "▼ ", flat: "– " } as const;
+
+const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+
+const titled = (h: H, title: string | undefined, body: Html): Html =>
+  title === undefined || title === ""
+    ? body
+    : h.section([], [h.h3([h.Class(ui.blockTitle)], [title]), body]);
+
+/** One catalog component. Every text is a child node, so nothing in the JSON becomes markup. */
+const blockView = (h: H, { type, props: block }: Block): Html => {
+  switch (type) {
+    case "Metrics":
+      return h.div(
+        [h.Class(ui.metrics)],
+        block.items.map((item) =>
+          h.div(
+            [h.Class(ui.metric)],
+            [
+              h.span([h.Class(ui.metricLabel)], [item.label]),
+              h.span([h.Class(ui.metricValue)], [item.value]),
+              ...(item.delta === undefined || item.delta === ""
+                ? []
+                : [
+                    h.span(
+                      [h.Class(ui.metricDelta(item.good === undefined ? {} : { good: item.good }))],
+                      [`${item.trend === undefined ? "" : TREND_GLYPH[item.trend]}${item.delta}`],
+                    ),
+                  ]),
+            ],
+          ),
+        ),
+      );
+    case "Bars": {
+      const max = Math.max(...block.items.map((item) => Math.abs(item.value)), 0);
+      return titled(
+        h,
+        block.title,
+        h.dl(
+          [h.Class(ui.bars)],
+          block.items.flatMap((item) => [
+            h.dt([h.Class(ui.barLabel), h.Title(item.label)], [item.label]),
+            h.div(
+              [h.Class(ui.barTrack), h.AriaHidden(true)],
+              [
+                h.div(
+                  [
+                    h.Class(ui.barFill),
+                    h.Style({ width: `${max === 0 ? 0 : (Math.abs(item.value) / max) * 100}%` }),
+                  ],
+                  [],
+                ),
+              ],
+            ),
+            h.dd([h.Class(ui.barValue)], [number.format(item.value)]),
+          ]),
+        ),
+      );
+    }
+    case "Steps":
+      return titled(
+        h,
+        block.title,
+        h.ol(
+          [h.Class(ui.steps)],
+          block.items.map((item) => {
+            const state = item.state ?? "todo";
+            return h.li(
+              [
+                h.Class(ui.step({ state })),
+                ...(state === "current" ? [h.AriaCurrent("step")] : []),
+              ],
+              [...(state === "done" ? [h.span([h.Class(ui.srOnly)], ["Done: "])] : []), item.text],
+            );
+          }),
+        ),
+      );
+    case "Sources":
+      return h.ol(
+        [h.Class(ui.sources), h.AriaLabel("Sources")],
+        block.items.map((item) =>
+          h.li(
+            [h.Class(ui.source)],
+            [
+              h.a(
+                [h.Href(item.url), h.Target("_blank"), h.Rel("noopener noreferrer")],
+                [
+                  h.span([h.Class(ui.sourceTitle)], [item.title]),
+                  h.span([h.Class(ui.sourceHost)], [hostOf(item.url)]),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    case "Callout": {
+      const tone = block.tone ?? "info";
+      return h.div(
+        [h.Class(ui.callout({ tone })), h.Role(tone === "danger" ? "alert" : "note")],
         [
-          h.span([h.Class(ui.roleMark({ role: user ? "user" : "agent" }))], []),
-          h.span([], [user ? "You" : agent]),
-          h.time(
-            [h.Class(ui.time), h.Attribute("datetime", new Date(message.at).toISOString())],
-            [clock(message.at)],
+          ...(block.title === undefined || block.title === ""
+            ? []
+            : [h.strong([h.Class(ui.calloutTitle({ tone }))], [block.title])]),
+          block.body,
+        ],
+      );
+    }
+    case "Choices":
+      return titled(
+        h,
+        block.prompt,
+        h.div(
+          [h.Class(ui.choices)],
+          block.items.map((text) =>
+            actionButton(h, text, [h.OnClick(Message.ClickedChoice({ text }))], undefined, true),
+          ),
+        ),
+      );
+  }
+};
+
+const segmentView = (h: H, segment: Segment): Html =>
+  segment.kind === "markdown"
+    ? h.div([h.Class(ui.markdown), h.InnerHTML(segment.html)], [])
+    : segment.kind === "ui"
+      ? h.div(
+          [h.Class(ui.blocks)],
+          segment.blocks.map((block) => blockView(h, block)),
+        )
+      : h.div([h.Class(ui.pending), h.AriaBusy(true)], []);
+
+const messageView = (message: ChatMessage, h: H, agent: string, continued: boolean): Html => {
+  const user = message.role === "user";
+  const time = h.time(
+    [h.Class(ui.time), h.Attribute("datetime", new Date(message.at).toISOString())],
+    [clock(message.at)],
+  );
+  return h.article(
+    [h.Key(String(message.id)), h.Class(ui.message({ role: message.role, continued }))],
+    user
+      ? [
+          h.div(
+            [h.Class(ui.bubble)],
+            [h.span([h.Class(ui.srOnly)], ["You said: "]), h.p([h.Class(ui.text)], [message.text])],
+          ),
+          ...(continued ? [] : [time]),
+        ]
+      : [
+          ...(continued ? [] : [h.div([h.Class(ui.meta)], [h.span([], [agent]), time])]),
+          h.div(
+            [h.Class(ui.blocks)],
+            segmentsOf(message.text).map((segment) => segmentView(h, segment)),
           ),
         ],
-      ),
-      h.div(
-        [h.Class(ui.body({ role: user ? "user" : "agent" }))],
-        user
-          ? [h.p([h.Class(ui.text)], [message.text])]
-          : [h.div([h.Class(ui.markdown), h.InnerHTML(renderMarkdown(message.text))], [])],
-      ),
-    ],
   );
 };
 
@@ -260,7 +393,14 @@ const threadMessages = (state: ThreadState, h: H): Html =>
       h.div(
         [h.Class(ui.messagesInner)],
         [
-          ...state.messages.map((message) => messageView(message, h, agentRoleLabel(state.thread))),
+          ...state.messages.map((message, index) =>
+            messageView(
+              message,
+              h,
+              agentRoleLabel(state.thread),
+              state.messages[index - 1]?.role === message.role,
+            ),
+          ),
           ...state.approvals.map((approval) => approvalView(h, approval)),
           ...(state.running
             ? [

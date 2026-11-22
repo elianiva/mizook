@@ -717,6 +717,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       };
     },
 
+    ClickedChoice: ({ text }) => {
+      const filled = uiChange(model, "textarea", "composer", { value: text });
+      const sent = update({ ...model, ui: filled.ui }, Message.ClickedSend());
+      return { model: sent.model, commands: [...filled.commands, ...(sent.commands ?? [])] };
+    },
+
     ClickedDismissNotice: () => ({
       model: { ...model, notice: Option.none(), armedArchive: Option.none() },
     }),

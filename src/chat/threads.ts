@@ -123,5 +123,16 @@ export class WebThreads extends Context.Service<
     );
 }
 
+/**
+ * An openui-lang program is drawn, not read, so the preview names its first
+ * component instead of showing its code, even when the block is cut off.
+ */
 const previewOf = (text: string): string =>
-  text.replace(/\s+/g, " ").trim().slice(0, PREVIEW_CHARS);
+  text
+    .replace(/(```|~~~)openui-lang\b[\s\S]*?(\1|$)/g, (block) => {
+      const names = [...block.matchAll(/^\s*\w+\s*=\s*([A-Z]\w*)\(/gm)].map((match) => match[1]);
+      return ` ${names.find((name) => name !== "Stack") ?? ""} `;
+    })
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, PREVIEW_CHARS);
