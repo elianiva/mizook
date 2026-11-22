@@ -5,6 +5,7 @@ import { edit, type EditOutcome } from "../src/admin/edit.ts";
 import type { StateError } from "../src/errors.ts";
 import { Host, type Profile } from "../src/host.ts";
 import { Intents } from "../src/intents.ts";
+import { fakeHost } from "./fake-host.ts";
 import { Policies } from "../src/policies.ts";
 import { Skills } from "../src/skills.ts";
 
@@ -22,12 +23,7 @@ const go = async <A>(
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  const host = Host.of({
-    hookUrl: Effect.succeed(""),
-    reload: Effect.void,
-    register: () => Effect.void,
-    channels: Effect.succeed([]),
-    ask: () => Effect.succeed(""),
+  const host = fakeHost({
     profile: Effect.sync(() => profile.current),
     updateProfile: (about, rules) =>
       Effect.sync(() => {
@@ -37,9 +33,6 @@ const go = async <A>(
         };
         return profile.current;
       }),
-    testSchedule: () => Effect.succeed(false),
-    spendAll: Effect.succeed([]),
-    exportNow: Effect.succeed(""),
   });
   return Effect.runPromise(
     Effect.provide(

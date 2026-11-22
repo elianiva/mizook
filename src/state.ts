@@ -211,7 +211,3 @@ export const readSettings = (sql: SqlDriver) =>
       Object.fromEntries(rows.map((r) => [r.key.slice("setting:".length), r.value])),
     ),
   );
-
-/** The key a channel's files go under: its thread id, safe in a path. */
-export const channelKey = (state: Context.Service.Shape<typeof State>) =>
-  Effect.map(state.meta("thread"), (id) => (id ?? "main").replaceAll(/[^a-zA-Z0-9:_-]/g, "_"));

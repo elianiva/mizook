@@ -9,7 +9,8 @@ import { Policies } from "./policies.ts";
 import { Schedules } from "./schedules.ts";
 import { Spec } from "./schedule.ts";
 import { Skills } from "./skills.ts";
-import { channelKey, State } from "./state.ts";
+import { Host } from "./host.ts";
+import { State } from "./state.ts";
 import { packTar, unpackTar } from "./tar.ts";
 
 export type BackupError = ArchiveError | BlobError | StateError | StoreError | ToolError;
@@ -105,6 +106,9 @@ export class Backup extends Context.Service<
       const artifacts = yield* Artifacts;
       const blobs = yield* Blobs;
       const { publicUrl } = yield* Settings;
+      // Exports and backups are filed under the agent's Durable Object.
+      const { self } = yield* Host;
+      const channel = self.doName;
 
       const tar = Effect.gen(function* () {
         const files: Record<string, string | Uint8Array> = { ...toFiles(yield* store.snapshot) };
@@ -168,7 +172,7 @@ export class Backup extends Context.Service<
           contentType: "application/x-tar",
           meta: {
             expires: String(Date.now() + LINK_LIFETIME),
-            filename: `${yield* channelKey(state)}.tar`,
+            filename: `${self.slug}.tar`,
           },
         });
         return `${publicUrl}/x/${key}`;
@@ -183,7 +187,6 @@ export class Backup extends Context.Service<
             return false;
           }
           if (now < due) return false;
-          const channel = yield* channelKey(state);
           yield* blobs.put(`backup/${channel}/${new Date(now).toISOString()}.tar`, yield* tar, {
             contentType: "application/x-tar",
           });
@@ -260,7 +263,6 @@ export class Backup extends Context.Service<
             const meta = text("artifacts.json");
             if (meta) {
               const all = yield* Schema.decodeEffect(ArtifactsFile)(meta).pipe(Effect.orDie);
-              const channel = yield* channelKey(state);
               for (const { name, contentType } of all) {
                 const body = files[`artifacts/${name}`];
                 if (body) {

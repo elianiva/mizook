@@ -5,7 +5,7 @@ import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
 import type { Env } from "./env.ts";
 import { StateError, ToolError } from "./errors.ts";
-import { EMPTY_PROFILE, Host, type ChannelInfo, type Profile } from "./host.ts";
+import { EMPTY_PROFILE, Host, shortPlace, type AgentInfo, type Profile } from "./host.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
@@ -19,37 +19,61 @@ import { edit as applyEdit, type EditOutcome } from "./admin/edit.ts";
 type Hosted = Context.Service.Shape<typeof Host>;
 
 /** The Hub's methods, spelled out: its stub type loops back through `Env`. */
-interface HubApi {
-  register(doName: string, threadId: string, name: string | undefined): Promise<void>;
-  list(): Promise<ChannelInfo[]>;
+export interface HubApi {
+  agents(): Promise<AgentInfo[]>;
+  agent(key: string): Promise<AgentInfo | undefined>;
+  route(
+    place: string,
+    command: string | undefined,
+    agentId: string | undefined,
+  ): Promise<AgentInfo>;
+  bind(place: string, key: string | undefined): Promise<AgentInfo | undefined>;
+  placeName(place: string): Promise<string | undefined>;
+  setPlaceName(place: string, name: string): Promise<void>;
   profile(): Promise<Profile>;
   setProfile(about: string | undefined, rules: string[] | undefined): Promise<Profile>;
 }
 
-interface ChannelApi {
+interface AgentApi {
   ask(question: string): Promise<string>;
   spend(): Promise<Spend>;
 }
 
 /**
- * One channel: a Telegram forum topic, a group's General topic or a DM. It owns the memory,
- * pi-durable, the schedules and the bot for that channel, in one Durable Object with one SQLite.
+ * One agent: its memory, pi-durable, schedules, skills and settings, in one Durable Object with one
+ * SQLite, named `agent:<id>`. It answers in every Telegram place bound to it, and in any place
+ * where someone invokes it with `/<slug>`.
  */
-export class ChatAgent extends DurableObject<Env> {
-  private runtime: AppRuntime;
+export class AgentObject extends DurableObject<Env> {
+  private runtime!: AppRuntime;
+  private self!: AgentInfo;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.runtime = makeRuntime(ctx.storage, env, this.host());
-    // Build the layers (open the storage, resume what a restart interrupted) before any request.
-    // Delivering a turn can take minutes, so work starts after this, not inside it: the gate has 30 seconds.
+    // Read who this agent is, then build the layers (open the storage, resume what a restart
+    // interrupted) before any request. Delivering a turn can take minutes, so work starts after
+    // this, not inside it: the gate has 30 seconds.
     void ctx
-      .blockConcurrencyWhile(() => this.runtime.runPromise(Effect.void))
+      .blockConcurrencyWhile(async () => {
+        const id = this.doName.replace(/^agent:/, "");
+        this.self = (await this.hub().agent(id)) ?? {
+          id,
+          slug: id,
+          name: env.AGENT_NAME || "Mizook",
+          doName: this.doName,
+          isDefault: false,
+          bound: [],
+          created: 0,
+          lastActive: 0,
+        };
+        this.runtime = makeRuntime(ctx.storage, env, this.host());
+        await this.runtime.runPromise(Effect.void);
+      })
       .then(() => this.alarm());
   }
 
   private get doName(): string {
-    return this.ctx.id.name ?? "main";
+    return this.ctx.id.name ?? "agent:main";
   }
 
   private hub(): HubApi {
@@ -63,27 +87,35 @@ export class ChatAgent extends DurableObject<Env> {
       (async () => {
         await new Promise((resolve) => setTimeout(resolve, 1_500));
         await old.dispose();
+        this.self = (await this.hub().agent(this.self.id)) ?? this.self;
         this.runtime = makeRuntime(this.ctx.storage, this.env, this.host());
         await this.runtime.runPromise(Effect.void);
       })(),
     );
   }
 
-  /** What this channel can ask of the world outside it. */
+  /** What this agent can ask of the world outside it. */
   private host(): Hosted {
     const hub = () => this.hub();
-    const doName = this.doName;
+    const self = this.self;
     const reload = () => this.reloadRuntime();
     const exportLink = this.runtimeEffect(Backup.use((backup) => backup.exportLink));
-    const peer = (name: string) => this.env.ChatAgent.getByName(name) as unknown as ChannelApi;
+    const peer = (doName: string) => this.env.AgentObject.getByName(doName) as unknown as AgentApi;
     return {
+      self,
       reload: Effect.sync(reload),
       hookUrl: Effect.promise(async () => {
-        const token = await hookToken(this.env.MIZOOK_WEBHOOK_SECRET, doName);
-        return `${this.env.PUBLIC_URL ?? ""}/hook/${encodeURIComponent(doName)}/${token}`;
+        const token = await hookToken(this.env.MIZOOK_WEBHOOK_SECRET, self.doName);
+        return `${this.env.PUBLIC_URL ?? ""}/hook/${encodeURIComponent(self.doName)}/${token}`;
       }),
-      register: (threadId, name) => Effect.promise(() => hub().register(doName, threadId, name)),
-      channels: Effect.promise(() => hub().list()),
+      agents: Effect.promise(() => hub().agents()),
+      bind: (place, slug) => Effect.promise(() => hub().bind(place, slug)),
+      placeLabel: (place) =>
+        Effect.tryPromise(() => hub().placeName(place)).pipe(
+          Effect.map((name) => name ?? shortPlace(place)),
+          Effect.orElseSucceed(() => shortPlace(place)),
+        ),
+      namePlace: (place, name) => Effect.promise(() => hub().setPlaceName(place, name)),
       profile: Effect.tryPromise({ try: () => hub().profile(), catch: () => undefined }).pipe(
         Effect.orElseSucceed(() => EMPTY_PROFILE),
       ),
@@ -93,30 +125,30 @@ export class ChatAgent extends DurableObject<Env> {
           catch: (cause) => new StateError({ operation: "profile", cause }),
         }),
       testSchedule: (id) => Effect.sync(() => this.scheduleTest(id)),
-      ask: (channel, question) =>
+      ask: (agent, question) =>
         Effect.gen(function* () {
-          const all = yield* Effect.promise(() => hub().list());
-          const wanted = channel.trim().toLowerCase();
-          const found = all.find((c) => c.name.toLowerCase() === wanted || c.doName === channel);
+          const all = yield* Effect.promise(() => hub().agents());
+          const wanted = agent.trim().replace(/^\//, "").toLowerCase();
+          const found = all.find((a) => a.slug === wanted || a.name.toLowerCase() === wanted);
           if (!found) {
             return yield* new ToolError({
-              reason: `no channel "${channel}". Channels: ${all.map((c) => c.name).join(", ") || "none yet"}`,
+              reason: `no agent "${agent}". Agents: ${all.map((a) => a.slug).join(", ")}`,
             });
           }
-          if (found.doName === doName) {
-            return yield* new ToolError({ reason: "that is this channel: use your own memory" });
+          if (found.id === self.id) {
+            return yield* new ToolError({ reason: "that is you: use your own memory" });
           }
           return yield* Effect.tryPromise({
             try: () => peer(found.doName).ask(question),
             catch: (cause) =>
-              new ToolError({ reason: `asking ${found.name} failed: ${String(cause)}` }),
+              new ToolError({ reason: `asking ${found.slug} failed: ${String(cause)}` }),
           });
         }),
       spendAll: Effect.gen(function* () {
-        const all: ChannelInfo[] = yield* Effect.promise(() => hub().list());
-        return yield* Effect.forEach(all, (c) =>
-          Effect.promise(() => peer(c.doName).spend()).pipe(
-            Effect.map((spend) => ({ name: c.name, spend })),
+        const all = yield* Effect.promise(() => hub().agents());
+        return yield* Effect.forEach(all, (a) =>
+          Effect.promise(() => peer(a.doName).spend()).pipe(
+            Effect.map((spend) => ({ name: a.slug, spend })),
           ),
         );
       }),
@@ -128,7 +160,7 @@ export class ChatAgent extends DurableObject<Env> {
     return Effect.promise(() => this.runtime.runPromise(effect as never) as Promise<A>);
   }
 
-  /** Called by another channel through `ask_channel`: read-only, nothing is logged here. */
+  /** Called by another agent through `ask_agent`: read-only, nothing is logged here. */
   async ask(question: string): Promise<string> {
     return this.runtime.runPromise(Agent.use((agent) => agent.ask(question)));
   }
@@ -302,12 +334,14 @@ export class ChatAgent extends DurableObject<Env> {
     return result;
   }
 
-  /** Stop the turn that is running, as `/stop` does. */
+  /** Stop every turn that is running, as `/stop` does in each place. */
   async stop(who: string): Promise<boolean> {
     const stopped = await this.runtime.runPromise(
       Effect.gen(function* () {
-        const thread = yield* (yield* State).meta("thread");
-        return thread === undefined ? false : yield* (yield* Agent).stop(thread);
+        const agent = yield* Agent;
+        const turns = yield* agent.pending;
+        const done = yield* Effect.forEach(turns, (turn) => agent.stop(turn.chatId));
+        return done.some(Boolean);
       }),
     );
     await this.runtime.runPromise(State.use((state) => state.audit(who, "stop", 0, stopped)));
@@ -315,16 +349,14 @@ export class ChatAgent extends DurableObject<Env> {
   }
 
   /**
-   * Change one of this channel's settings the way its slash command does, so the checks and the
+   * Change one of this agent's settings the way its slash command does, so the checks and the
    * reload are the command's own. `undefined` resets it. Returns the command's reply.
    */
   async setting(who: string, key: string, value: string | undefined): Promise<string> {
     const reply = await this.runtime.runPromise(
       Effect.gen(function* () {
-        const thread = yield* (yield* State).meta("thread");
-        if (thread === undefined) return "Nothing has been said in this channel yet.";
         const text = `/${key} ${value === undefined ? "reset" : value}`;
-        return (yield* (yield* Commands).run(thread, thread, text)) ?? "Unknown setting.";
+        return (yield* (yield* Commands).run("dashboard", text)) ?? "Unknown setting.";
       }),
     );
     await this.runtime.runPromise(State.use((state) => state.audit(who, `set:${key}`, 0, true)));

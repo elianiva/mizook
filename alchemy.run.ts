@@ -3,7 +3,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import type { ChatAgent } from "./src/chat-agent.ts";
+import type { AgentObject } from "./src/agent-object.ts";
 import type { Hub } from "./src/hub.ts";
 
 /** A plain variable the bot reads at runtime. Left empty it is ignored, and the bot uses its own default. */
@@ -52,9 +52,10 @@ export default Alchemy.Stack(
       domain: { name: DOMAIN },
       compatibility: { date: "2026-05-08", flags: ["nodejs_compat"] },
       env: {
-        // The chat: one Durable Object owns the memory, pi-durable, and the bot.
-        ChatAgent: Cloudflare.DurableObject<ChatAgent>("ChatAgent"),
-        // The registry of channels.
+        // One Durable Object per agent owns its memory, pi-durable, and the bot. It replaced the
+        // per-topic `ChatAgent` class: dropping that binding deleted those objects.
+        AgentObject: Cloudflare.DurableObject<AgentObject>("AgentObject"),
+        // The registry: agents, bindings, place names, and the shared profile.
         Hub: Cloudflare.DurableObject<Hub>("Hub"),
         // Artifacts, exports and backups.
         Files: files,

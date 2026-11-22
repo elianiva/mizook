@@ -18,6 +18,7 @@ import { Context, Effect, Layer } from "effect";
 import { DurableError } from "./errors.ts";
 import { Models } from "./models.ts";
 import { Handlers } from "./handlers.ts";
+import { State } from "./state.ts";
 import { toolSpecs } from "./tools.ts";
 
 export class Durable extends Context.Service<
@@ -43,6 +44,7 @@ export class Durable extends Context.Service<
         const { models, main } = yield* Models;
         const memory = yield* Memory;
         const handlers = yield* Handlers;
+        const state = yield* State;
         const services = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(services);
         const turnInputs = new Map<ConversationId, string>();
@@ -55,7 +57,21 @@ export class Durable extends Context.Service<
             description: spec.description,
             parameters: spec.parameters,
             replay: spec.replay,
-            execute: async (args) => text(await run(handlers.call(spec.name, args))),
+            // The tool answers in the place of the turn that called it.
+            execute: async (args, api) =>
+              text(
+                await run(
+                  Effect.flatMap(
+                    Effect.orElseSucceed(state.turns, () => []),
+                    (turns) =>
+                      handlers.call(
+                        spec.name,
+                        args,
+                        turns.find((t) => t.conversationId === api.conversationId)?.threadId,
+                      ),
+                  ),
+                ),
+              ),
           }),
         );
 

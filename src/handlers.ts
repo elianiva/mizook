@@ -22,11 +22,11 @@ import { Approvals } from "./approvals.ts";
 import { Executor, pausedExecution } from "./executor.ts";
 import { Host } from "./host.ts";
 import { ToolError } from "./errors.ts";
-import { channelKey, State } from "./state.ts";
+import { State } from "./state.ts";
 import { Outbox } from "./outbox.ts";
 import { Web } from "./search.ts";
 import {
-  AskChannelArgs,
+  AskAgentArgs,
   FileReadArgs,
   SendToUserArgs,
   ExecutorArgs,
@@ -52,7 +52,10 @@ import {
 /** What a tool does, by name. The arguments were already checked against the tool's schema. */
 export class Handlers extends Context.Service<
   Handlers,
-  { call(name: string, args: unknown): Effect.Effect<string> }
+  {
+    /** `place` is where the turn that called it is talking; undefined outside a turn. */
+    call(name: string, args: unknown, place: string | undefined): Effect.Effect<string>;
+  }
 >()("mizook/Handlers") {
   static readonly layer = Layer.effect(
     Handlers,
@@ -72,7 +75,7 @@ export class Handlers extends Context.Service<
       const blobs = yield* Blobs;
       const artifacts = yield* Artifacts;
       const state = yield* State;
-      const channel = channelKey(state);
+      const channel = Effect.succeed(host.self.doName);
       const { timezone } = yield* Settings;
 
       const describe = (s: Schedule) => {
@@ -119,6 +122,7 @@ export class Handlers extends Context.Service<
       const run = (
         name: string,
         args: unknown,
+        place: string | undefined,
       ): Effect.Effect<string, { readonly message: string }> => {
         switch (name) {
           case "zoom":
@@ -171,10 +175,8 @@ export class Handlers extends Context.Service<
             });
           case "webhook_link":
             return host.hookUrl;
-          case "ask_channel":
-            return Effect.flatMap(decode(AskChannelArgs, args), (a) =>
-              host.ask(a.channel, a.question),
-            );
+          case "ask_agent":
+            return Effect.flatMap(decode(AskAgentArgs, args), (a) => host.ask(a.agent, a.question));
           case "profile_manage":
             return Effect.gen(function* () {
               const a = yield* decode(ProfileArgs, args);
@@ -265,7 +267,7 @@ export class Handlers extends Context.Service<
                 });
                 return clipToolOutput(resumed);
               }
-              yield* approvals.add(paused.executionId, paused.summary, target);
+              yield* approvals.add(paused.executionId, paused.summary, target, place ?? "");
               return "Waiting for the user's approval. They have been shown Approve, Always allow and Deny buttons.";
             });
           case "artifact_publish":
@@ -342,10 +344,9 @@ export class Handlers extends Context.Service<
           case "send_to_user":
             return Effect.gen(function* () {
               const a = yield* decode(SendToUserArgs, args);
-              const threadId = yield* state.meta("thread");
-              if (!threadId) return yield* new ToolError({ reason: "no chat to send to yet" });
+              if (!place) return yield* new ToolError({ reason: "no chat to send to here" });
               const texts = a.messages.map((m) => m.trim()).filter((m) => m !== "");
-              yield* outbox.send(threadId, texts);
+              yield* outbox.send(place, texts);
               return `Sent ${texts.length}.`;
             });
           case "web_search":
@@ -522,6 +523,7 @@ export class Handlers extends Context.Service<
                 a.prompt,
                 now,
                 skill === "" ? undefined : skill,
+                place,
               );
               return `Scheduled. ${describe(made)}`;
             });
@@ -552,17 +554,15 @@ export class Handlers extends Context.Service<
           case "schedule_test":
             return Effect.gen(function* () {
               const a = yield* decode(ScheduleCancelArgs, args);
-              const threadId = yield* state.meta("thread");
-              if (!threadId) {
-                return yield* new ToolError({
-                  reason: "nothing has been said in this channel yet",
-                });
-              }
-              if (yield* state.turn(threadId)) {
-                return yield* new ToolError({ reason: "a turn is already running" });
-              }
               const found = yield* schedules.get(a.id);
               if (!found) return yield* new ToolError({ reason: `no schedule #${a.id}` });
+              const target = found.place || (yield* state.meta("place"));
+              if (!target) {
+                return yield* new ToolError({ reason: "nobody has talked to this agent yet" });
+              }
+              if (yield* state.turn(target)) {
+                return yield* new ToolError({ reason: "a turn is already running there" });
+              }
               const started = yield* host.testSchedule(a.id);
               return started
                 ? `Test #${a.id} started; the result goes to the chat.`
@@ -575,8 +575,10 @@ export class Handlers extends Context.Service<
 
       // A failure becomes text the agent reads and can act on; it never fails the turn.
       return Handlers.of({
-        call: (name, args) =>
-          run(name, args).pipe(Effect.catch((error) => Effect.succeed(`Error: ${error.message}`))),
+        call: (name, args, place) =>
+          run(name, args, place).pipe(
+            Effect.catch((error) => Effect.succeed(`Error: ${error.message}`)),
+          ),
       });
     }),
   );

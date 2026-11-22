@@ -19,10 +19,13 @@ import { State, type PendingTurn } from "./state.ts";
 export type AgentError = DurableError | StoreError | StateError;
 
 export interface Incoming {
+  /** The place the turn talks in: a Chat SDK thread id. One turn runs per place at a time. */
   readonly chatId: string;
-  /** Where the reply goes: a Chat SDK thread id. */
+  /** Where the reply goes: the same place. */
   readonly threadId: string;
   readonly text: string;
+  /** What the user calls the place. The memory logs the message as `[in <where>] <text>`. */
+  readonly where?: string;
   /** The id of the message, so a retry finds the same submission. */
   readonly requestId: string;
   /** What started the turn. Only a user message matches standing intents. */
@@ -172,16 +175,19 @@ export class Agent extends Context.Service<
       });
 
       const begin = Effect.fn("Agent.begin")(function* (incoming: Incoming) {
+        // One memory covers every place this agent talks in, so each message says where it was said.
+        const said =
+          incoming.where === undefined ? incoming.text : `[in ${incoming.where}] ${incoming.text}`;
         const running = yield* state.turn(incoming.chatId);
         if (running) {
           // The user wrote while the agent works: the message reaches it between tool calls.
           const conversation = yield* conversationOf(running);
-          yield* memory.append("user", incoming.text);
+          yield* memory.append("user", said);
           const submission = yield* call("submit", () =>
             conversation.submit(
               {
                 type: "input",
-                content: incoming.text,
+                content: said,
                 whenBusy: "steer",
                 requestId: incoming.requestId,
               },
@@ -207,7 +213,7 @@ export class Agent extends Context.Service<
         ]
           .filter((part) => part !== "")
           .join("\n\n");
-        const turn = yield* memory.beginTurn(incoming.text, { context: turnContext });
+        const turn = yield* memory.beginTurn(said, { context: turnContext });
         const conversation = yield* call("createConversation", () =>
           harness.createConversation(
             {
@@ -227,14 +233,14 @@ export class Agent extends Context.Service<
           threadId: incoming.threadId,
           conversationId: conversation.id,
           requestId: incoming.requestId,
-          text: incoming.text,
+          text: said,
           submissions: [],
           logged: false,
         };
         yield* state.putTurn(record);
         const submission = yield* call("submit", () =>
           conversation.submit(
-            { type: "input", content: incoming.text, requestId: incoming.requestId },
+            { type: "input", content: said, requestId: incoming.requestId },
             context,
           ),
         );
@@ -315,7 +321,7 @@ export class Agent extends Context.Service<
             content: [
               {
                 type: "text",
-                text: `${view.text}\n\n${turnContext}\n\nAnother channel of the same user asks you a question. Answer from your memory only, and say so if you do not know.\n\n${question}`,
+                text: `${view.text}\n\n${turnContext}\n\nAnother of the user's agents asks you a question. Answer from your memory only, and say so if you do not know.\n\n${question}`,
               },
             ],
             timestamp: Date.now(),
@@ -336,7 +342,7 @@ export class Agent extends Context.Service<
           for (const toolCall of calls) {
             const output =
               toolCall.name === "zoom" || toolCall.name === "date"
-                ? yield* handlers.call(toolCall.name, toolCall.arguments)
+                ? yield* handlers.call(toolCall.name, toolCall.arguments, undefined)
                 : `No tool ${toolCall.name} here.`;
             messages.push({
               role: "toolResult",

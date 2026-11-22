@@ -2,15 +2,23 @@ import { Context, type Effect } from "effect";
 import type { StateError, ToolError } from "./errors.ts";
 import type { Spend } from "./usage.ts";
 
-export interface ChannelInfo {
-  /** The Durable Object's name: `chatId` or `chatId:topicId`. */
-  readonly doName: string;
-  readonly threadId: string;
+/** An agent as the Hub knows it. */
+export interface AgentInfo {
+  /** Random and stable: the Durable Object is `agent:<id>`, so the slug can change. */
+  readonly id: string;
+  /** What `/<slug>` invokes and `/agent <slug>` binds. */
+  readonly slug: string;
   readonly name: string;
+  readonly doName: string;
+  readonly isDefault: boolean;
+  /** The Telegram places bound to this agent. The default agent also answers every unbound one. */
+  readonly bound: ReadonlyArray<string>;
+  readonly created: number;
+  /** When an update was last routed to it, in epoch milliseconds; 0 for never. */
   readonly lastActive: number;
 }
 
-/** What the user is, across every channel: a short profile and the rules they want followed. */
+/** What the user is, across every agent: a short profile and the rules they want followed. */
 export interface Profile {
   readonly about: string;
   readonly rules: ReadonlyArray<string>;
@@ -19,22 +27,27 @@ export interface Profile {
 export const EMPTY_PROFILE: Profile = { about: "", rules: [] };
 
 /**
- * What a channel needs from outside itself, which only the Durable Object can give: its siblings
- * through the Hub, and a restart of its own runtime after its settings change.
+ * What an agent needs from outside itself, which only the Durable Object can give: the Hub and
+ * the other agents, and a restart of its own runtime after its settings change.
  */
 export class Host extends Context.Service<
   Host,
   {
-    /** The link other services call to start a turn in this channel. */
+    /** This agent. */
+    readonly self: AgentInfo;
+    /** The link other services call to start a turn with this agent. */
     readonly hookUrl: Effect.Effect<string>;
-    /** Rebuild this channel's runtime, so new settings take effect. */
+    /** Rebuild this agent's runtime, so new settings take effect. */
     readonly reload: Effect.Effect<void>;
-    /** Tell the Hub this channel exists and was just used. */
-    register(threadId: string, name: string | undefined): Effect.Effect<void>;
-    readonly channels: Effect.Effect<ReadonlyArray<ChannelInfo>>;
-    /** Ask another channel a question, by its name, read-only. */
-    ask(channel: string, question: string): Effect.Effect<string, ToolError>;
-    /** What every channel knows about the user. Empty when the Hub cannot answer. */
+    readonly agents: Effect.Effect<ReadonlyArray<AgentInfo>>;
+    /** Make a place use the agent `slug`, or the default agent when undefined. */
+    bind(place: string, slug: string | undefined): Effect.Effect<AgentInfo | undefined>;
+    /** What the user calls a place, or a short form of its id. */
+    placeLabel(place: string): Effect.Effect<string>;
+    namePlace(place: string, name: string): Effect.Effect<void>;
+    /** Ask another agent a question, by its slug, read-only. */
+    ask(agent: string, question: string): Effect.Effect<string, ToolError>;
+    /** What every agent knows about the user. Empty when the Hub cannot answer. */
     readonly profile: Effect.Effect<Profile>;
     /** Change the shared profile. Fields left out keep their value. */
     updateProfile(
@@ -43,11 +56,19 @@ export class Host extends Context.Service<
     ): Effect.Effect<Profile, StateError>;
     /** Start one schedule now, in the background. The result goes to the chat. */
     testSchedule(id: number): Effect.Effect<boolean>;
-    /** What every channel spent. */
+    /** What every agent spent. */
     readonly spendAll: Effect.Effect<
       ReadonlyArray<{ readonly name: string; readonly spend: Spend }>
     >;
-    /** Write this channel's archive to the blob store and give the key. */
+    /** Write this agent's archive to the blob store and give the key. */
     readonly exportNow: Effect.Effect<string>;
   }
 >()("mizook/Host") {}
+
+/** A place id without its platform prefix, for when the user has not named it. */
+export const shortPlace = (place: string): string => {
+  const [, chat, topic] = /^telegram:(-?\d+)(?::(\d+))?$/.exec(place) ?? [];
+  if (chat === undefined) return place;
+  if (topic !== undefined) return `topic ${topic}`;
+  return chat.startsWith("-") ? "group" : "DM";
+};

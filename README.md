@@ -1,7 +1,8 @@
 # Mizook
 
-A personal assistant in Telegram, on Cloudflare Workers. Every forum topic of your group is its own
-chat that never ends: it remembers everything you say there, and nothing needs resetting.
+A personal assistant in Telegram, on Cloudflare Workers. It is one or more agents, each a chat that
+never ends: an agent remembers everything said to it in every topic it answers in, and nothing needs
+resetting.
 
 - **Memory** — [`@mizook/memory`](packages/memory): the whole chat is logged word for word and
   compressed into a binary tree of one-line summaries. Each turn sees a constant-size view of it
@@ -15,10 +16,10 @@ chat that never ends: it remembers everything you say there, and nothing needs r
 - Everything is [Effect](https://effect.website): services, layers, typed errors.
 
 ```
-Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, then
-                       │
+Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, asks the Hub which agent
+                       │                               the place, command or button is for, then
                        ▼
-                    ChatAgent Durable Object (src/chat-agent.ts)       one chat = one object
+                    AgentObject Durable Object (src/agent-object.ts)       one agent = one object
                        ├─ Bot      Chat SDK ⇄ Telegram
                        ├─ Agent    one pi-durable conversation per turn
                        ├─ Memory   log, tree, view, compactions         (packages/memory)
@@ -27,8 +28,8 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 
 ## Features
 
-- **Channels:** each forum topic, General topic and DM is one Durable Object with its own memory, schedules and settings. `/channels` lists them; `ask_channel` reads another one, read-only.
-- **Profile:** a short "about you" and the rules to follow, shared by every channel. `/profile` shows it; the agent updates it when it learns a stable preference.
+- **Agents:** each agent is one Durable Object with its own memory, schedules and settings. Every topic, group and DM talks to the default agent until `/agent <slug>` binds it to another. `/<slug> …` sends one message to that agent from anywhere, and a reply to a message brings the message along. `/agents` lists them; `ask_agent` reads another one's memory, read-only. `/name` names the place you are in.
+- **Profile:** a short "about you" and the rules to follow, shared by every agent. `/profile` shows it; the agent updates it when it learns a stable preference.
 - **Skills:** reusable procedures the agent saves after a repeatable task and reads by name. A schedule can name a skill to read when it fires; a pinned skill cannot be deleted while a schedule needs it.
 - **Standing intents:** "when I mention the launch, remind me about rollback" waits for trigger words in a later message. Matching is a token scan, not a model call; `/intents` lists them.
 - **Schedules:** `once`, `cron` and `watch` (polls a URL, wakes the agent only when it changes), plus `webhook_link` for services that notify you. Pause, resume or test one by number; `/runs` shows the last ten and why one failed. Capped at 20 turns an hour.
@@ -37,8 +38,8 @@ Telegram ─webhook─▶ Worker (src/worker.ts)            checks the secret, t
 - **Executor:** one `executor` tool over MCP. A call that needs approval shows Approve, Always allow and Deny buttons in the chat; the press resumes it and the agent sees the result. `/policies allow|ask|deny <match>` sets standing rules, and an approval expires after 30 minutes. Use the plain `/mcp` URL (model mode).
 - **Files:** attachments are stored. Text is read directly, voice notes are transcribed, images are described, and PDF or Office files are converted by Workers AI. `file_read` reads a stored one later.
 - **Receipt:** a 👀 reaction means the message reached the bot. Typing starts when the model does, so an eye without typing is a slow model, not a lost message.
-- **Commands:** `/stop /cost /model /instructions /timezone /budget /name /channels /profile /skills /intents /policies /schedules /runs /export`.
-- **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `skills.json`, `intents.json`, `policies.json`, `settings.json` and artifacts. A nightly backup of every channel goes to R2 (14 kept).
+- **Commands:** `/stop /cost /model /instructions /timezone /budget /agent /agents /name /profile /skills /intents /policies /schedules /runs /export`, plus `/<slug>` for each agent.
+- **Portability:** `/export` gives a tar in the design's layout (`main/`, `tree/`, `view.json`) plus `schedules.json`, `skills.json`, `intents.json`, `policies.json`, `settings.json` and artifacts. A nightly backup of every agent goes to R2 (14 kept).
 
 ## Setup
 
@@ -54,11 +55,11 @@ cp .env.example .env     # then fill it in
 | `DEEPSEEK_API_KEY`                | yes      | [DeepSeek](https://platform.deepseek.com) API key                                 |
 | `PARALLEL_API_KEY`, `EXA_API_KEY` | no       | Web search keys, tried in `SEARCH_PROVIDERS` order (default `parallel,exa`)       |
 | `EXECUTOR_URL`, `EXECUTOR_TOKEN`  | no       | Executor MCP endpoint (`https://mcp.executor.sh/mcp`) and a personal access token |
-| `BUDGET_DAILY`                    | no       | Dollars a channel may spend in 24 hours; 0 or unset is no limit                   |
+| `BUDGET_DAILY`                    | no       | Dollars an agent may spend in 24 hours; 0 or unset is no limit                    |
 | `TELEGRAM_ALLOWED_USER_IDS`       | yes      | Comma-separated Telegram user ids. Nobody else gets an answer                     |
 | `MODEL`                           | no       | The agent's model (default `deepseek-flash`)                                      |
 | `SUMMARY_MODEL`                   | no       | The cheap model that writes the memory (default `deepseek-flash`)                 |
-| `AGENT_NAME`                      | no       | What the agent calls itself (default `Mizook`)                                    |
+| `AGENT_NAME`                      | no       | The default agent's name, set when the Hub creates it (default `Mizook`)          |
 | `INSTRUCTIONS`                    | no       | Who you are and how you want work done: goes last in the system prompt            |
 | `TIMEZONE`                        | no       | IANA zone for the dates the agent sees (default `Asia/Jakarta`)                   |
 
@@ -69,7 +70,7 @@ Message the bot before you know your id: it answers a stranger with their Telegr
 Alchemy needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (or a profile: `alchemy profile`).
 
 ```sh
-vp run deploy            # alchemy deploy: Worker + ChatAgent Durable Object
+vp run deploy            # alchemy deploy: Worker + AgentObject Durable Object
 vp run webhook https://<the url deploy printed>
 ```
 
@@ -99,7 +100,7 @@ The deploy job points Telegram at the Worker after each deploy. To do it by hand
 
 ## Dashboard
 
-A dashboard lives at `/admin`, per channel: an overview (every channel's spend and what waits on you, the running turn, approvals, recent messages, a budget warning), the log, the memory view, usage (per day, model, kind and tool), schedules, settings, and an audit of what was done from it. It can answer an approval, cancel a schedule and stop the running turn, each after a second click, and it edits a channel's model, budget, time zone and instructions through the same code as the slash commands. Writes need the Access token, a same-origin post with an `x-mizook-csrf` header, and are logged in the channel's `app_audit` table. It is a Foldkit app in `apps/dashboard`, styled with Panda, and the Worker serves its build as static assets next to a JSON API at `/admin/api`.
+A dashboard lives at `/admin`, per agent: an overview (every agent's spend and what waits on you, the running turn, approvals, recent messages, a budget warning), the log, the memory view, usage (per day, model, kind and tool), schedules, settings, and an audit of what was done from it. It can answer an approval, cancel a schedule and stop the running turn, each after a second click, and it edits an agent's model, budget, time zone and instructions through the same code as the slash commands. Writes need the Access token, a same-origin post with an `x-mizook-csrf` header, and are logged in the agent's `app_audit` table. It is a Foldkit app in `apps/dashboard`, styled with Panda, and the Worker serves its build as static assets next to a JSON API at `/admin/api`.
 
 To work on it, run the mock-free path: `pnpm --filter @mizook/dashboard dev` proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`). `pnpm deploy` builds it before `alchemy deploy`.
 

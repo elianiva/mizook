@@ -389,7 +389,7 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
       [
         budget > 0 ? budgetAlert(used, maybeChannel, h) : h.empty,
         heroView(data, budget, used, h),
-        sectionView("Channels", channelsTable(model, h), h),
+        sectionView("Agents", channelsTable(model, h), h),
         h.div(
           [h.Class(ui.columns)],
           [
@@ -1352,7 +1352,7 @@ const profileBody = (model: Model, h: H) => {
         h.div(
           [h.Class(ui.titleRow)],
           [
-            h.p([h.Class(ui.muted)], ["Shared by every channel."]),
+            h.p([h.Class(ui.muted)], ["Shared by every agent."]),
             h.button(
               [
                 h.Type("button"),

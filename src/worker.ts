@@ -3,10 +3,11 @@ import type { Env } from "./env.ts";
 import { artifactHeaders, renderArtifact } from "./artifact-render.ts";
 import { DATA_KEY, dataKey, dataPrefix, MAX_KEYS } from "./artifact-data.ts";
 import { hookTokenValid } from "./hooks.ts";
-import { channelOf } from "./route.ts";
+import { routeOf } from "./route.ts";
+import type { HubApi } from "./agent-object.ts";
 import { handleAdmin } from "./admin/handler.ts";
 
-export { ChatAgent } from "./chat-agent.ts";
+export { AgentObject } from "./agent-object.ts";
 export { Hub } from "./hub.ts";
 
 /** Constant-time comparison of two secrets of any length. */
@@ -30,11 +31,15 @@ export default {
       if (!(await sameSecret(secret, env.MIZOOK_WEBHOOK_SECRET))) {
         return new Response("Unauthorized", { status: 401 });
       }
-      // One Durable Object per forum topic: each topic is its own endless chat.
+      // One Durable Object per agent. The Hub says which agent this update is for: the one a
+      // command or a button names, the one bound to the place, or the default.
       const body = await request.text();
-      const channel = await Effect.runPromise(Effect.option(channelOf(body)));
-      if (channel._tag === "None") return new Response("Bad request", { status: 400 });
-      return env.ChatAgent.getByName(channel.value).fetch(
+      const routing = await Effect.runPromise(Effect.option(routeOf(body)));
+      if (routing._tag === "None") return new Response("Bad request", { status: 400 });
+      const { place, command, agentId } = routing.value;
+      const hub = env.Hub.getByName("hub") as unknown as HubApi;
+      const agent = await hub.route(place, command, agentId);
+      return env.AgentObject.getByName(agent.doName).fetch(
         new Request(request.url, { method: "POST", headers: request.headers, body }),
       );
     }
@@ -122,15 +127,15 @@ export default {
       });
     }
 
-    // Webhooks: the token is an HMAC of the channel name, so a link works for one channel only.
+    // Webhooks: the token is an HMAC of the agent's Durable Object name, so a link works for one agent only.
     const hooked = /^\/hook\/([^/]+)\/([\w-]{16,64})$/.exec(pathname);
     if (hooked && request.method === "POST") {
-      const channel = decodeURIComponent(hooked[1]!);
-      if (!(await hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, channel, hooked[2]!))) {
+      const agent = decodeURIComponent(hooked[1]!);
+      if (!(await hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, agent, hooked[2]!))) {
         return new Response("Not found", { status: 404 });
       }
       const body = (await request.text()).slice(0, 100_000);
-      const stub = env.ChatAgent.getByName(channel) as unknown as {
+      const stub = env.AgentObject.getByName(agent) as unknown as {
         hook(body: string): Promise<boolean>;
       };
       return new Response((await stub.hook(body)) ? "ok" : "ignored", { status: 202 });

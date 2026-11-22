@@ -49,12 +49,22 @@ const call = (
   headers: Record<string, string> = {},
 ) => handleAdmin(new Request(`https://x.test${path}`, { ...init, headers }), env as Env);
 
-const channel = { doName: "-100:1", threadId: "t", name: "finance", lastActive: 1 };
+const agent = {
+  id: "a1",
+  slug: "finance",
+  name: "Finance",
+  doName: "agent:a1",
+  isDefault: true,
+  bound: [],
+  created: 0,
+  lastActive: 1,
+};
+const channel = { doName: "agent:a1", threadId: "finance", name: "Finance", lastActive: 1 };
 const configured = (extra: Partial<Env> = {}): Partial<Env> => ({
   ACCESS_TEAM_DOMAIN: TEAM,
   ACCESS_AUD: AUD,
-  Hub: { getByName: () => ({ list: async () => [channel] }) } as never,
-  ChatAgent: {
+  Hub: { getByName: () => ({ agents: async () => [agent] }) } as never,
+  AgentObject: {
     getByName: () => ({
       dashboard: async (page: string) => (page === "message" ? undefined : { page }),
     }),
@@ -77,11 +87,11 @@ test("a signed-in request reads channels and one channel's pages, and unknown on
   const env = configured();
   const channels = await call(env, "/admin/api/channels", undefined, headers);
   expect(await channels.json()).toEqual([channel]);
-  const page = await call(env, "/admin/api/memory?c=-100%3A1", undefined, headers);
+  const page = await call(env, "/admin/api/memory?c=agent%3Aa1", undefined, headers);
   expect(await page.json()).toEqual({ page: "memory" });
   expect((await call(env, "/admin/api/memory?c=other", undefined, headers)).status).toBe(404);
-  expect((await call(env, "/admin/api/nothing?c=-100%3A1", undefined, headers)).status).toBe(404);
-  expect((await call(env, "/admin/api/message?c=-100%3A1&i=9", undefined, headers)).status).toBe(
+  expect((await call(env, "/admin/api/nothing?c=agent%3Aa1", undefined, headers)).status).toBe(404);
+  expect((await call(env, "/admin/api/message?c=agent%3Aa1&i=9", undefined, headers)).status).toBe(
     404,
   );
   vi.unstubAllGlobals();
@@ -111,7 +121,7 @@ test("a write needs the token, the csrf header and this origin, and acts once", 
   const token = await signedIn();
   const calls: unknown[][] = [];
   const env = configured({
-    ChatAgent: {
+    AgentObject: {
       getByName: () => ({
         act: async (...args: unknown[]) => {
           calls.push(args);
@@ -123,7 +133,7 @@ test("a write needs the token, the csrf header and this origin, and acts once", 
   const post = (path: string, headers: Record<string, string>) =>
     call(env, path, { method: "POST" }, { "cf-access-jwt-assertion": token, ...headers });
   const good = { "x-mizook-csrf": "1", origin: "https://x.test" };
-  const path = "/admin/api/approvals/7/deny?c=-100%3A1";
+  const path = "/admin/api/approvals/7/deny?c=agent%3Aa1";
 
   expect((await post(path, { origin: "https://x.test" })).status).toBe(403);
   expect((await post(path, { "x-mizook-csrf": "1", origin: "https://evil.test" })).status).toBe(
@@ -134,9 +144,9 @@ test("a write needs the token, the csrf header and this origin, and acts once", 
   expect((await post(path, good)).status).toBe(200);
   expect(calls).toEqual([["me@example.com", "deny", 7]]);
   expect((await post(path, good)).status).toBe(409);
-  expect((await post("/admin/api/schedules/3/cancel?c=-100%3A1", good)).status).toBe(409);
+  expect((await post("/admin/api/schedules/3/cancel?c=agent%3Aa1", good)).status).toBe(409);
   expect(calls.at(-1)).toEqual(["me@example.com", "cancel_schedule", 3]);
-  expect((await post("/admin/api/schedules/3/approve?c=-100%3A1", good)).status).toBe(404);
+  expect((await post("/admin/api/schedules/3/approve?c=agent%3Aa1", good)).status).toBe(404);
   expect((await post("/admin/api/approvals/7/deny?c=nope", good)).status).toBe(404);
   vi.unstubAllGlobals();
 });
@@ -145,7 +155,7 @@ test("stop and settings are writes too, and settings are checked before they rea
   const token = await signedIn();
   const calls: unknown[][] = [];
   const env = configured({
-    ChatAgent: {
+    AgentObject: {
       getByName: () => ({
         stop: async (...args: unknown[]) => (calls.push(["stop", ...args]), true),
         setting: async (...args: unknown[]) => (calls.push(["setting", ...args]), "saved"),
@@ -159,7 +169,7 @@ test("stop and settings are writes too, and settings are checked before they rea
       { method: "POST", ...(body !== undefined && { body: JSON.stringify(body) }) },
       { "cf-access-jwt-assertion": token, "x-mizook-csrf": "1", origin: "https://x.test" },
     );
-  const c = "?c=-100%3A1";
+  const c = "?c=agent%3Aa1";
 
   expect((await post(`/admin/api/stop${c}`)).status).toBe(200);
   expect((await post(`/admin/api/settings/budget${c}`, { value: "2.5" })).status).toBe(200);
@@ -183,7 +193,7 @@ test("agent edits go through the channel, and a bad body or refusal is a 400", a
   const token = await signedIn();
   const calls: unknown[][] = [];
   const env = configured({
-    ChatAgent: {
+    AgentObject: {
       getByName: () => ({
         edit: async (...args: unknown[]) => {
           calls.push(args);
@@ -197,7 +207,7 @@ test("agent edits go through the channel, and a bad body or refusal is a 400", a
   const post = (body?: unknown) =>
     call(
       env,
-      "/admin/api/skills?c=-100%3A1",
+      "/admin/api/skills?c=agent%3Aa1",
       {
         method: "POST",
         ...(body === undefined
@@ -222,10 +232,10 @@ test("agent edits go through the channel, and a bad body or refusal is a 400", a
   vi.unstubAllGlobals();
 });
 
-test("the summary has one line per channel", async () => {
+test("the summary has one line per agent", async () => {
   const headers = { "cf-access-jwt-assertion": await signedIn() };
   const env = configured({
-    ChatAgent: {
+    AgentObject: {
       getByName: () => ({
         dashboard: async () => ({
           messages: 4,
@@ -241,8 +251,8 @@ test("the summary has one line per channel", async () => {
   const res = await call(env, "/admin/api/summary", undefined, headers);
   expect(await res.json()).toEqual([
     {
-      doName: "-100:1",
-      name: "finance",
+      doName: "agent:a1",
+      name: "Finance",
       lastActive: 1,
       messages: 4,
       spend24h: 0.5,

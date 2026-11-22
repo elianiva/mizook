@@ -2,14 +2,25 @@
 
 ## Glossary
 
-**Chat** — the one conversation the user has with the agent. It never ends. The chat itself is the
-memory.
+**Agent** — an identity with its own memory, settings, skills, intents and schedules. One Durable
+Object, `agent:<id>`; the id is random and stable, and the slug (`/grok`) can change. The Hub lists
+the agents. A fresh install has one, `mizook`, the default.
+
+**Place** — where a message was said: a Chat SDK thread id, `telegram:<chat>` or
+`telegram:<chat>:<topic>`. Turns, replies, approvals, `/stop` and schedules are keyed by place, so
+one agent can answer in several places at once.
+
+**Binding** — a Hub row from a place to an agent. A place with no binding talks to the default
+agent. `/<slug> …` sends one message to another agent without changing the binding.
+
+**Chat** — the one conversation the user has with an agent, across all its places. It never ends.
+The chat itself is the memory. A user message is logged as `[in <place>] <text>`.
 
 **Message** — one entry of the chat log, with a permanent id. Kinds: `user`, `agent`, `tool`
 (a tool call), `echo` (its result), `note` (imported memory). Thoughts are never logged. A text too
 long for one message is logged as several in a row.
 
-**Profile** — the short "about you" and the standing rules every channel shares. It lives in the
+**Profile** — the short "about you" and the standing rules every agent shares. It lives in the
 Hub, not in a chat's memory: identity, not history.
 
 **Skill** — a reusable procedure, saved by name. The index goes into a turn; the body is read only
@@ -41,6 +52,6 @@ be inspected, paused, resumed and tested.
 
 ## One process owns the chat
 
-`ChatAgent` is a single Durable Object: it owns the log, pi-durable's storage, and the bot's state
-in one SQLite connection. Everything that writes goes through pi-durable's serialized database
+`AgentObject` is one Durable Object per agent: it owns the log, pi-durable's storage, and the bot's
+state in one SQLite connection. Everything that writes goes through pi-durable's serialized database
 wrapper, so no write lands inside one of its transactions.

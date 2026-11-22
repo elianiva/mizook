@@ -141,8 +141,8 @@ export const ArtifactDeleteArgs = Schema.Struct({
   name: described(Schema.String, "The artifact's name, from artifact_list."),
 });
 
-export const AskChannelArgs = Schema.Struct({
-  channel: described(Schema.String, "The channel's name, from /channels."),
+export const AskAgentArgs = Schema.Struct({
+  agent: described(Schema.String, "The other agent's slug, from /agents."),
   question: described(Schema.String, "What to ask. It answers from its own memory, read-only."),
 });
 
@@ -372,16 +372,16 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "unsafe",
   },
   {
-    name: "ask_channel",
+    name: "ask_agent",
     description:
-      "Ask another channel of the same user a question; it answers from its own memory, read-only.",
-    parameters: parametersOf(AskChannelArgs),
+      "Ask another of the user's agents a question; it answers from its own memory, read-only.",
+    parameters: parametersOf(AskAgentArgs),
     replay: "safe",
   },
   {
     name: "profile_manage",
     description:
-      "Read or change what every channel knows about the user. Use it when you learn a stable fact about them, or a rule they want followed everywhere. Do not put conversation details here.",
+      "Read or change what every agent knows about the user. Use it when you learn a stable fact about them, or a rule they want followed everywhere. Do not put conversation details here.",
     parameters: parametersOf(ProfileArgs),
     replay: "unsafe",
   },
@@ -416,7 +416,7 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: "webhook_link",
     description:
-      "The link other services (GitHub, Executor workflows, a phone shortcut) can POST to, to start a turn in this channel with the request body. Treat it as a secret.",
+      "The link other services (GitHub, Executor workflows, a phone shortcut) can POST to, to start a turn with you, with the request body. Treat it as a secret.",
     parameters: parametersOf(Schema.Struct({})),
     replay: "safe",
   },
@@ -498,15 +498,19 @@ or execute. A call that needs approval returns "Waiting for the user's approval"
 Approve and Deny buttons in the chat. Say in one line what you are waiting for and end your turn. The
 answer arrives as a message starting [approval]. Never run the call again to get past a refusal.
 
-# Other channels
+# Places and other agents
 
-webhook_link gives a URL that starts a turn here when called; give it to services that should notify the user.
+You are one of the user's agents, and you may talk in several Telegram places (forum topics, groups,
+DMs). A user message starts with [in <place>] to say where it was said; your reply goes back there.
+Your memory covers every place, so keep track of which one a thing belongs to.
 
-ask_channel reads another channel's memory. Use it only when the user's question is about that channel.
+webhook_link gives a URL that starts a turn with you when called; give it to services that should notify the user.
+
+ask_agent reads another agent's memory. Use it only when the user's question is about what that agent knows.
 
 # The user
 
-profile_manage is the one thing every channel shares: who the user is and the rules they want followed. Save a stable preference or rule there when you learn it, not conversation details. Keep the profile short.
+profile_manage is the one thing every agent shares: who the user is and the rules they want followed. Save a stable preference or rule there when you learn it, not conversation details. Keep the profile short.
 
 # Skills
 

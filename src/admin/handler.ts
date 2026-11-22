@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { Env } from "../env.ts";
-import type { ChannelInfo, Profile } from "../host.ts";
+import type { AgentInfo, Profile } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
 import { makeVerifier, type Verifier } from "./access.ts";
 
@@ -51,6 +51,14 @@ const PAGES = new Set([
   "artifact",
 ]);
 
+/** An agent in the shape the dashboard lists: until its pages are per agent, each agent is one row. */
+const asChannel = (a: AgentInfo) => ({
+  doName: a.doName,
+  threadId: a.slug,
+  name: a.name,
+  lastActive: a.lastActive,
+});
+
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
@@ -60,17 +68,17 @@ const SHELL_POLICY =
 
 const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const hub = env.Hub.getByName("hub") as unknown as {
-    list(): Promise<ChannelInfo[]>;
+    agents(): Promise<AgentInfo[]>;
     profile(): Promise<Profile>;
   };
-  const channels = await hub.list();
+  const channels = (await hub.agents()).map(asChannel);
   if (name === "channels") return json(channels);
   if (name === "profile") return json(await hub.profile());
   if (name === "summary") {
     // One line per channel, for the overview: what each costs and what waits on a person.
     const lines = await Promise.all(
       channels.map(async (c) => {
-        const rpc = env.ChatAgent.getByName(c.doName) as unknown as ChannelRpc;
+        const rpc = env.AgentObject.getByName(c.doName) as unknown as ChannelRpc;
         const o = (await rpc.dashboard("overview", {})) as {
           messages: number;
           spend: { last24h: number; last7d: number };
@@ -99,7 +107,7 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const wanted = url.searchParams.get("c") ?? "";
   const channel = channels.find((c) => c.doName === wanted);
   if (!channel) return json({ error: "no such channel" }, 404);
-  const rpc = env.ChatAgent.getByName(channel.doName) as unknown as ChannelRpc;
+  const rpc = env.AgentObject.getByName(channel.doName) as unknown as ChannelRpc;
   const data = await rpc.dashboard(name, Object.fromEntries(url.searchParams));
   return data === undefined ? json({ error: "not found" }, 404) : json(data);
 };
@@ -148,10 +156,10 @@ const badSetting = (key: string, value: string): string | undefined => {
 const act = async (request: Request, url: URL, who: string, env: Env): Promise<Response> => {
   if (request.headers.get("x-mizook-csrf") !== "1" || request.headers.get("origin") !== url.origin)
     return json({ error: "forbidden" }, 403);
-  const hub = env.Hub.getByName("hub") as unknown as { list(): Promise<ChannelInfo[]> };
-  const channel = (await hub.list()).find((c) => c.doName === url.searchParams.get("c"));
+  const hub = env.Hub.getByName("hub") as unknown as { agents(): Promise<AgentInfo[]> };
+  const channel = (await hub.agents()).find((a) => a.doName === url.searchParams.get("c"));
   if (!channel) return json({ error: "no such channel" }, 404);
-  const rpc = env.ChatAgent.getByName(channel.doName) as unknown as ChannelRpc;
+  const rpc = env.AgentObject.getByName(channel.doName) as unknown as ChannelRpc;
 
   if (url.pathname === "/admin/api/stop") {
     return (await rpc.stop(who)) ? json({ ok: true }) : json({ error: "already gone" }, 409);

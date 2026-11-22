@@ -15,16 +15,15 @@ import { Usage } from "./usage.ts";
 
 const dollars = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 
-/** Slash commands: the user's controls over a channel. They never reach the model. */
+/** Slash commands: the user's controls over an agent and the place they type in. They never reach the model. */
 export class Commands extends Context.Service<
   Commands,
   {
-    /** The reply to a command, or `undefined` when the text is not a command at all. Every command gets a reply. */
-    run(
-      chatId: string,
-      threadId: string,
-      text: string,
-    ): Effect.Effect<string | undefined, AgentError | StateError>;
+    /**
+     * The reply to a command typed in `place`, or `undefined` when the text is not a command at
+     * all. Every command gets a reply.
+     */
+    run(place: string, text: string): Effect.Effect<string | undefined, AgentError | StateError>;
   }
 >()("mizook/Commands") {
   static readonly layer = Layer.effect(
@@ -41,7 +40,7 @@ export class Commands extends Context.Service<
       const host = yield* Host;
       const agent = yield* Agent;
 
-      /** Save a setting of this channel and rebuild it so the setting takes effect. */
+      /** Save a setting of this agent and rebuild it so the setting takes effect. */
       const set = (key: string, value: string, said: string) =>
         Effect.gen(function* () {
           yield* state.setMeta(`setting:${key}`, value);
@@ -49,7 +48,7 @@ export class Commands extends Context.Service<
           return said;
         });
 
-      /** Drop a channel's own setting so the environment's value applies again. */
+      /** Drop an agent's own setting so the environment's value applies again. */
       const reset = (key: string, said: string) =>
         Effect.gen(function* () {
           yield* state.deleteMeta(`setting:${key}`);
@@ -57,11 +56,7 @@ export class Commands extends Context.Service<
           return said;
         });
 
-      const run = Effect.fn("Commands.run")(function* (
-        chatId: string,
-        threadId: string,
-        text: string,
-      ) {
+      const run = Effect.fn("Commands.run")(function* (place: string, text: string) {
         const match = /^\/([a-z_]+)(?:@\w+)?(?:\s+([\s\S]*))?$/.exec(text);
         if (!match) return undefined;
         const arg = (match[2] ?? "").trim();
@@ -71,15 +66,15 @@ export class Commands extends Context.Service<
         }
         switch (name) {
           case "stop":
-            return (yield* agent.stop(chatId)) ? "Stopped." : "Nothing is running.";
+            return (yield* agent.stop(place)) ? "Stopped." : "Nothing is running here.";
           case "cost": {
             const mine = yield* usage.spend;
             const all = yield* host.spendAll;
-            const own = `This channel: ${dollars(mine.last24h)} in 24 h, ${dollars(mine.last7d)} in 7 d, ${dollars(mine.total)} in all.`;
+            const own = `${host.self.slug}: ${dollars(mine.last24h)} in 24 h, ${dollars(mine.last7d)} in 7 d, ${dollars(mine.total)} in all.`;
             if (all.length === 0) return own;
             const sum = (pick: (s: (typeof all)[number]["spend"]) => number) =>
               all.reduce((n, c) => n + pick(c.spend), 0);
-            return `${own}\nAll channels: ${dollars(sum((s) => s.last24h))} in 24 h, ${dollars(sum((s) => s.last7d))} in 7 d.\n${all
+            return `${own}\nAll agents: ${dollars(sum((s) => s.last24h))} in 24 h, ${dollars(sum((s) => s.last7d))} in 7 d.\n${all
               .map((c) => `- ${c.name}: ${dollars(c.spend.last24h)} in 24 h`)
               .join("\n")}`;
           }
@@ -90,7 +85,7 @@ export class Commands extends Context.Service<
           case "instructions":
             return arg === ""
               ? settings.instructions === ""
-                ? "No instructions for this channel. Set them with /instructions <text>."
+                ? `No instructions for ${host.self.slug}. Set them with /instructions <text>.`
                 : `${settings.instructions}\n\n/instructions reset clears it.`
               : yield* set("instructions", arg, "Instructions saved.");
           case "timezone":
@@ -110,18 +105,37 @@ export class Commands extends Context.Service<
                 ? yield* set("budget", arg, `Daily budget set to ${arg}.`)
                 : "Give a number of dollars, 0 for none.";
           case "name":
-            if (arg === "") return "Give this channel a name: /name finance";
-            yield* host.register(threadId, arg);
-            return `This channel is now called ${arg}.`;
-          case "channels": {
-            const all = yield* host.channels;
-            return all.length === 0
-              ? "No channels yet."
-              : all
-                  .map(
-                    (c) => `- ${c.name} (${formatDate(new Date(c.lastActive), settings.timezone)})`,
-                  )
-                  .join("\n");
+            if (arg === "")
+              return `This place is ${yield* host.placeLabel(place)}. Rename it with /name <name>.`;
+            yield* host.namePlace(place, arg);
+            return `This place is now called ${arg}.`;
+          case "agents": {
+            const all = yield* host.agents;
+            const lines = yield* Effect.forEach(all, (a) =>
+              Effect.gen(function* () {
+                const where = yield* Effect.forEach(a.bound, (p) => host.placeLabel(p));
+                const roles = [
+                  a.isDefault ? "default, answers every unbound place" : "",
+                  where.length === 0 ? "" : `bound to ${where.join(", ")}`,
+                ].filter((part) => part !== "");
+                return `- /${a.slug} ${a.name}${roles.length === 0 ? "" : ` (${roles.join("; ")})`}`;
+              }),
+            );
+            return lines.join("\n");
+          }
+          case "agent": {
+            if (arg === "") {
+              const label = yield* host.placeLabel(place);
+              return `${label} talks to ${host.self.slug}. Change it with /agent <slug>, or /agent default.`;
+            }
+            const bound = yield* host.bind(place, arg === "default" ? undefined : arg);
+            if (!bound) {
+              const all = yield* host.agents;
+              return `No agent "${arg}". Agents: ${all.map((a) => a.slug).join(", ")}.`;
+            }
+            return arg === "default"
+              ? `This place talks to the default agent, ${bound.slug}, again.`
+              : `This place now talks to ${bound.slug}.`;
           }
           case "skills": {
             const [verb = "", ...rest] = arg.split(/\s+/);
@@ -220,7 +234,7 @@ export class Commands extends Context.Service<
             }
             const profile = yield* host.profile;
             if (profile.about.trim() === "" && profile.rules.length === 0) {
-              return "No profile yet. Tell the agent about yourself and it will remember across channels.";
+              return "No profile yet. Tell the agent about yourself and every agent will know it.";
             }
             return [
               profile.about.trim() === "" ? "" : `About: ${profile.about.trim()}`,
@@ -232,7 +246,7 @@ export class Commands extends Context.Service<
               .join("\n\n");
           }
           case "export":
-            return `Your export of this channel (works for one hour): ${yield* host.exportNow}`;
+            return `Your export of ${host.self.slug} (works for one hour): ${yield* host.exportNow}`;
           case "help":
             return COMMANDS.map((c) => `/${c.command}: ${c.description}`).join("\n");
           default:

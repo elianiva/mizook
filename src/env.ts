@@ -1,9 +1,9 @@
-import type { ChatAgent } from "./chat-agent.ts";
+import type { AgentObject } from "./agent-object.ts";
 import type { Hub } from "./hub.ts";
 
 /** The Worker's bindings: what `alchemy.run.ts` declares. */
 export interface Env {
-  ChatAgent: DurableObjectNamespace<ChatAgent>;
+  AgentObject: DurableObjectNamespace<AgentObject>;
   Hub: DurableObjectNamespace<Hub>;
   EXECUTOR_URL?: string;
   EXECUTOR_TOKEN?: string;

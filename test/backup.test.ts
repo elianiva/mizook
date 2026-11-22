@@ -6,6 +6,8 @@ import { Artifacts } from "../src/artifacts.ts";
 import { Backup } from "../src/backup.ts";
 import { Blobs } from "../src/blobs.ts";
 import { Settings } from "../src/config.ts";
+import { Host } from "../src/host.ts";
+import { fakeHost } from "./fake-host.ts";
 import { Intents } from "../src/intents.ts";
 import { Policies } from "../src/policies.ts";
 import { Schedules } from "../src/schedules.ts";
@@ -42,6 +44,8 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
     Layer.provideMerge(sqliteStore(sql)),
     Layer.provideMerge(blobs),
     Layer.provide(settings),
+    // Backup reads only who the agent is: its exports are filed under its Durable Object.
+    Layer.provide(Layer.succeed(Host, fakeHost())),
   );
 };
 

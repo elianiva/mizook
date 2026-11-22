@@ -80,9 +80,9 @@ export const makeRuntime = (
   const models = Models.layer.pipe(Layer.provideMerge(settings));
   const memory = Layer.unwrap(
     Effect.gen(function* () {
-      const { agentName, instructions, timezone } = yield* Settings;
+      const { instructions, timezone } = yield* Settings;
       return Memory.layer({
-        name: agentName,
+        name: host.self.name,
         instructions: [PERSONA, TOOL_GUIDE, instructions]
           .filter((part) => part !== "")
           .join("\n\n"),

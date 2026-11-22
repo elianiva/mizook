@@ -10,8 +10,10 @@ export interface Approval {
   readonly summary: string;
   /** The action a policy would match, so Always allow can save it. Empty when unknown. */
   readonly match: string;
-  /** When it was asked; zero for rows written before this column existed. */
+  /** When it was asked. */
   readonly created: number;
+  /** Where the turn that asked was talking: the card goes there. */
+  readonly place: string;
 }
 
 const Row = Schema.Struct({
@@ -20,6 +22,7 @@ const Row = Schema.Struct({
   summary: Schema.String,
   match: Schema.String,
   created: Schema.Finite,
+  place: Schema.String,
 });
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
@@ -29,6 +32,7 @@ const toApproval = (r: typeof Row.Type): Approval => ({
   summary: r.summary,
   match: r.match,
   created: r.created,
+  place: r.place,
 });
 
 /** An approval nobody answered in this long is stale: the turn that asked is long over. */
@@ -41,9 +45,14 @@ export const APPROVAL_TTL_MS = 30 * 60_000;
 export class Approvals extends Context.Service<
   Approvals,
   {
-    add(executionId: string, summary: string, match?: string): Effect.Effect<Approval, StateError>;
-    /** Approvals not yet shown to the user. */
-    readonly unposted: Effect.Effect<ReadonlyArray<Approval>, StateError>;
+    add(
+      executionId: string,
+      summary: string,
+      match: string,
+      place: string,
+    ): Effect.Effect<Approval, StateError>;
+    /** Approvals of a place not yet shown to the user. */
+    unposted(place: string): Effect.Effect<ReadonlyArray<Approval>, StateError>;
     markPosted(id: number): Effect.Effect<void, StateError>;
     /** Remove and return an approval: a button press answers it once. */
     take(id: number): Effect.Effect<Approval | undefined, StateError>;
@@ -58,23 +67,15 @@ export class Approvals extends Context.Service<
             try: async () => f(),
             catch: (cause) => new StateError({ operation, cause }),
           });
-        yield* run("migrate approvals", async () => {
-          await sql.all(
+        yield* run("migrate approvals", () =>
+          sql.all(
             `CREATE TABLE IF NOT EXISTS app_approvals (
                id INTEGER PRIMARY KEY AUTOINCREMENT, execution_id TEXT NOT NULL,
                summary TEXT NOT NULL, posted INTEGER NOT NULL DEFAULT 0,
-               match TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT 0)`,
-          );
-          const columns = await sql.all<{ name: string }>(`PRAGMA table_info(app_approvals)`);
-          if (!columns.some((column) => column.name === "match")) {
-            await sql.all(`ALTER TABLE app_approvals ADD COLUMN match TEXT NOT NULL DEFAULT ''`);
-          }
-          if (!columns.some((column) => column.name === "created")) {
-            await sql.all(
-              `ALTER TABLE app_approvals ADD COLUMN created INTEGER NOT NULL DEFAULT 0`,
-            );
-          }
-        });
+               match TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
+               place TEXT NOT NULL DEFAULT '')`,
+          ),
+        );
         const query = (operation: string, text: string, ...params: unknown[]) =>
           run(operation, () => sql.all(text, ...params)).pipe(
             Effect.flatMap(decodeRows),
@@ -84,24 +85,28 @@ export class Approvals extends Context.Service<
             Effect.map((rows) => rows.map(toApproval)),
           );
         return Approvals.of({
-          add: (executionId, summary, match) =>
+          add: (executionId, summary, match, place) =>
             query(
               "add approval",
-              `INSERT INTO app_approvals (execution_id, summary, match, created) VALUES (?, ?, ?, ?)
-               RETURNING id, execution_id, summary, match, created`,
+              `INSERT INTO app_approvals (execution_id, summary, match, created, place)
+               VALUES (?, ?, ?, ?, ?)
+               RETURNING id, execution_id, summary, match, created, place`,
               executionId,
               summary,
-              match ?? "",
+              match,
               Date.now(),
+              place,
             ).pipe(Effect.map((rows) => rows[0]!)),
-          unposted: Effect.suspend(() =>
-            query(
-              "unposted approvals",
-              `SELECT id, execution_id, summary, match, created FROM app_approvals
-               WHERE posted = 0 AND (created = 0 OR created > ?) ORDER BY id`,
-              Date.now() - APPROVAL_TTL_MS,
+          unposted: (place) =>
+            Effect.suspend(() =>
+              query(
+                "unposted approvals",
+                `SELECT id, execution_id, summary, match, created, place FROM app_approvals
+                 WHERE posted = 0 AND place = ? AND created > ? ORDER BY id`,
+                place,
+                Date.now() - APPROVAL_TTL_MS,
+              ),
             ),
-          ),
           markPosted: (id) =>
             run("mark approval posted", () =>
               sql.all(`UPDATE app_approvals SET posted = 1 WHERE id = ?`, id),
@@ -109,15 +114,14 @@ export class Approvals extends Context.Service<
           take: (id) =>
             query(
               "take approval",
-              `DELETE FROM app_approvals WHERE id = ? RETURNING id, execution_id, summary, match, created`,
+              `DELETE FROM app_approvals WHERE id = ?
+               RETURNING id, execution_id, summary, match, created, place`,
               id,
             ).pipe(
               Effect.map((rows) => {
                 const found = rows[0];
                 if (!found) return undefined;
-                return found.created > 0 && found.created < Date.now() - APPROVAL_TTL_MS
-                  ? undefined
-                  : found;
+                return found.created < Date.now() - APPROVAL_TTL_MS ? undefined : found;
               }),
             ),
         });

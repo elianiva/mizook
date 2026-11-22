@@ -24,6 +24,7 @@ import { Runs } from "./runs.ts";
 import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
+import { COMMANDS } from "./command-list.ts";
 import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
 import { Schedules, type Schedule as Scheduled } from "./schedules.ts";
@@ -39,8 +40,10 @@ const FIRES_PER_HOUR = 20;
 const BURST_QUIET_MS = 1_500;
 const BURST_MAX_MS = 8_000;
 
+const COMMAND_NAMES: ReadonlySet<string> = new Set([...COMMANDS.map((c) => c.command), "start"]);
+
 const GREETING = (name: string) =>
-  `hey, ${name} here. I remember everything said in this chat, so no resets. what are we doing?`;
+  `hey, ${name} here. I remember everything said to me, so no resets. what are we doing?`;
 
 export class Bot extends Context.Service<
   Bot,
@@ -52,7 +55,7 @@ export class Bot extends Context.Service<
     ): Effect.Effect<Response, TelegramError>;
     /** Deliver the replies of turns a restart interrupted. Returns how many turns are still pending. */
     readonly recover: Effect.Effect<number, AgentError | TelegramError>;
-    /** A webhook call: start a turn with its body. False when the channel is silent or over its hourly limit. */
+    /** A webhook call: start a turn with its body where the agent talked last. False when it has nowhere to talk or is over its hourly limit. */
     hook(body: string): Effect.Effect<boolean, AgentError | StateError | TelegramError>;
     /**
      * Take an approval off the list. Undefined when it was already answered; otherwise the work of
@@ -65,7 +68,7 @@ export class Bot extends Context.Service<
     ): Effect.Effect<{ readonly resume: Effect.Effect<void> } | undefined, StateError>;
     /** Start a turn for each schedule that is due. */
     readonly wake: Effect.Effect<void, AgentError | StateError>;
-    /** Run one schedule now, as a test. False when the channel has nowhere to post or is busy. */
+    /** Run one schedule now, as a test. False when it has nowhere to post or that place is busy. */
     testSchedule(id: number): Effect.Effect<boolean, AgentError | StateError>;
     /** When the Durable Object's alarm should ring next: a pending turn's recovery or the next schedule. */
     readonly nextWake: Effect.Effect<number | undefined, AgentError | StateError>;
@@ -158,10 +161,14 @@ export class Bot extends Context.Service<
           Effect.forkScoped,
         );
 
-      /** Show each question Executor paused on as a card with Approve and Deny. */
+      /**
+       * Show each question Executor paused on in this place as a card with Approve and Deny. The
+       * buttons name this agent: in a place bound to another one, the press must still come here.
+       */
+      const button = (verb: string, id: number) => `${verb}:${host.self.id}:${id}`;
       const postApprovals = (threadId: string) =>
         Effect.gen(function* () {
-          for (const a of yield* approvals.unposted) {
+          for (const a of yield* approvals.unposted(threadId)) {
             yield* Effect.tryPromise({
               try: async () => {
                 await chat.initialize();
@@ -171,17 +178,17 @@ export class Bot extends Context.Service<
                     children: [
                       CardText(a.summary),
                       Actions([
-                        Button({ id: `approve:${a.id}`, label: "Approve", style: "primary" }),
+                        Button({ id: button("approve", a.id), label: "Approve", style: "primary" }),
                         ...(a.match === ""
                           ? []
                           : [
                               Button({
-                                id: `always:${a.id}`,
+                                id: button("always", a.id),
                                 label: "Always allow",
                                 style: "primary",
                               }),
                             ]),
-                        Button({ id: `deny:${a.id}`, label: "Deny", style: "danger" }),
+                        Button({ id: button("deny", a.id), label: "Deny", style: "danger" }),
                       ]),
                     ],
                   }),
@@ -273,34 +280,42 @@ export class Bot extends Context.Service<
         const joined = [quoted, typed, ...saved].filter((part) => part !== "").join("\n");
         if (joined === "") return;
         if (joined === "/start") {
-          yield* post(thread.id, GREETING(settings.agentName));
+          yield* post(thread.id, GREETING(host.self.name));
           return;
         }
         // Slash commands are the user's controls: they never reach the model.
-        const reply = yield* commands.run(thread.id, thread.id, joined);
+        const reply = yield* commands.run(thread.id, joined);
         if (reply !== undefined) {
           yield* post(thread.id, reply);
           return;
         }
-        // Telegram redelivers an update it did not get an answer to in time.
-        if (!(yield* state.firstSeen(`${thread.id}:${message.id}`))) return;
+        yield* converse(thread.id, joined, message.id);
+      }, Effect.scoped);
 
-        // The thread id names the forum topic too; `channelId` is only the group.
-        const chatId = thread.id;
-        // Schedules of this channel post here.
-        yield* state.setMeta("thread", thread.id);
-        yield* host.register(thread.id, undefined);
+      /**
+       * Answer what the user said in `place`: wait out a quick run of messages, check the budget,
+       * then start a turn, or fold the text into the turn already running there.
+       */
+      const converse = Effect.fn("Bot.converse")(function* (
+        place: string,
+        said: string,
+        messageId: string,
+      ) {
+        // Telegram redelivers an update it did not get an answer to in time.
+        if (!(yield* state.firstSeen(`${place}:${messageId}`))) return;
+        // Webhook calls go where the agent talked last.
+        yield* state.setMeta("place", place);
         // Several short messages in a row are one thought: wait until the typing stops, then answer once.
         // While a turn runs this is skipped, and the message is folded into it below.
-        let text = joined;
-        const burst = bursts.get(chatId);
+        let text = said;
+        const burst = bursts.get(place);
         if (burst) {
           burst.push(text);
           return;
         }
-        if (!(yield* state.turn(chatId))) {
+        if (!(yield* state.turn(place))) {
           const mine = [text];
-          bursts.set(chatId, mine);
+          bursts.set(place, mine);
           const began = Date.now();
           let seen = 0;
           yield* Effect.whileLoop({
@@ -310,30 +325,31 @@ export class Bot extends Context.Service<
               return Effect.sleep(Duration.millis(BURST_QUIET_MS));
             },
             step: () => {},
-          }).pipe(Effect.ensuring(Effect.sync(() => void bursts.delete(chatId))));
+          }).pipe(Effect.ensuring(Effect.sync(() => void bursts.delete(place))));
           text = mine.join("\n");
         }
         if (settings.budgetDaily > 0) {
           const spent = yield* usage.spentSince(Date.now() - 24 * 3_600_000);
           if (spent >= settings.budgetDaily) {
             yield* post(
-              thread.id,
+              place,
               `Daily budget reached (${spent.toFixed(2)} of ${settings.budgetDaily}). Raise it with /budget.`,
             );
             return;
           }
         }
-        yield* hold(chatId);
+        yield* hold(place);
         // Beginning a turn can wait seconds for the last messages to be summarized: show typing first.
-        yield* typing(thread.id);
+        yield* typing(place);
         const started = yield* agent.begin({
-          chatId,
-          threadId: thread.id,
+          chatId: place,
+          threadId: place,
           text,
-          requestId: `${thread.id}:${message.id}`,
+          where: yield* host.placeLabel(place),
+          requestId: `${place}:${messageId}`,
         });
         if (started === "folded") return;
-        yield* deliver(chatId, thread.id, true);
+        yield* deliver(place, place, true);
       }, Effect.scoped);
 
       const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
@@ -364,10 +380,11 @@ export class Bot extends Context.Service<
       const wake = Effect.gen(function* () {
         const now = yield* nowDate;
         const due = yield* schedules.claim(now);
-        const threadId = yield* state.meta("thread");
-        // Nothing has been said in this channel yet, so there is nowhere to post.
-        if (due.length === 0 || !threadId) return;
+        const last = yield* state.meta("place");
         for (const s of due) {
+          // A schedule talks where it was made; one made outside a turn, where the agent talked last.
+          const threadId = s.place || last;
+          if (!threadId) continue;
           const text = yield* textOf(s);
           if (text === undefined) continue;
           if (!(yield* schedules.allow(now, FIRES_PER_HOUR))) {
@@ -404,10 +421,18 @@ export class Bot extends Context.Service<
         }
       });
 
-      /** Start a turn from something that is not a Telegram message. Silent when nothing was said here yet. */
-      const fire = (text: string, requestId: string, source: "webhook" | "approval") =>
+      /**
+       * Start a turn from something that is not a Telegram message, in `place` or where the agent
+       * talked last. Silent when nobody has talked to it yet.
+       */
+      const fire = (
+        text: string,
+        requestId: string,
+        source: "webhook" | "approval",
+        place?: string,
+      ) =>
         Effect.gen(function* () {
-          const threadId = yield* state.meta("thread");
+          const threadId = place || (yield* state.meta("place"));
           if (!threadId) return false;
           if (!(yield* schedules.allow(yield* nowDate, FIRES_PER_HOUR))) return false;
           yield* Effect.scoped(
@@ -455,6 +480,7 @@ export class Bot extends Context.Service<
                 : `[approval] The user denied it. Do not try again or work around it. Executor said:\n${clipToolOutput(result, 2_000)}`,
               `approval:${id}`,
               "approval",
+              taken.place,
             );
           }).pipe(
             Effect.asVoid,
@@ -466,10 +492,12 @@ export class Bot extends Context.Service<
       const answer = (actionId: string, userId: string, threadId: string) =>
         Effect.gen(function* () {
           if (!settings.allowedUserIds.has(userId)) return;
-          const [verb, rawId] = actionId.split(":");
+          const [verb, agentId, rawId] = actionId.split(":");
           const approved = verb === "approve" || verb === "always";
           const always = verb === "always";
           if ((!approved && verb !== "deny") || rawId === undefined) return;
+          // The Worker sends a press to the agent its button names; a stray one is not ours.
+          if (agentId !== host.self.id) return;
           const pending = yield* approve(Number(rawId), approved, always);
           if (!pending) {
             yield* post(threadId, "That question expired or was already answered.");
@@ -500,13 +528,16 @@ export class Bot extends Context.Service<
               );
               return;
             }
-            yield* state.setMeta("thread", threadId);
-            yield* host.register(threadId, undefined);
-            const name = event.command.replace(/^\//, "").replace(/@.*$/, "");
+            const name = event.command.replace(/^\//, "").replace(/@.*$/, "").toLowerCase();
+            if (name === host.self.slug && !COMMAND_NAMES.has(name)) {
+              // `/<slug> …` talks to this agent for one message, wherever it is typed.
+              yield* invoke(threadId, event);
+              return;
+            }
             const reply =
               name === "start"
-                ? GREETING(settings.agentName)
-                : yield* commands.run(threadId, threadId, `/${name} ${event.text}`.trim());
+                ? GREETING(host.self.name)
+                : yield* commands.run(threadId, `/${name} ${event.text}`.trim());
             yield* post(threadId, reply ?? "That is not a command. Try /help.");
           }).pipe(
             Effect.catchCause((cause) =>
@@ -519,6 +550,32 @@ export class Bot extends Context.Service<
           ),
         );
       chat.onSlashCommand(onSlashCommand);
+
+      /** `/<slug> text`, perhaps as a reply: the text, and the message it answers, go to this agent. */
+      const invoke = (place: string, event: SlashCommandEvent) =>
+        Effect.gen(function* () {
+          const raw = event.raw as {
+            message_id?: number;
+            reply_to_message?: { text?: string; caption?: string; from?: { username?: string } };
+          };
+          const messageId = String(raw.message_id ?? Date.now());
+          yield* Effect.tryPromise({
+            try: () => telegram.addReaction(place, messageId, "👀"),
+            catch: (cause) => new TelegramError({ operation: "reaction", cause }),
+          }).pipe(Effect.ignore);
+          const replied = raw.reply_to_message;
+          const repliedText = (replied?.text ?? replied?.caption ?? "").trim();
+          const quoted =
+            repliedText === ""
+              ? ""
+              : `[replying to ${replied?.from?.username ?? "an earlier message"}: ${clipToolOutput(repliedText, 2_000)}]`;
+          const said = [quoted, event.text.trim()].filter((part) => part !== "").join("\n");
+          if (said === "") {
+            yield* post(place, `Say something after /${host.self.slug}, or use it as a reply.`);
+            return;
+          }
+          yield* converse(place, said, messageId);
+        });
 
       const onMessage = (thread: Thread, message: Message) =>
         run(
@@ -542,11 +599,11 @@ export class Bot extends Context.Service<
       chat.onNewMessage(onMessage);
 
       const testSchedule = Effect.fn("Bot.testSchedule")(function* (id: number) {
-        const threadId = yield* state.meta("thread");
-        if (!threadId) return false;
-        if (yield* state.turn(threadId)) return false;
         const schedule = yield* schedules.get(id);
         if (!schedule) return false;
+        const threadId = schedule.place || (yield* state.meta("place"));
+        if (!threadId) return false;
+        if (yield* state.turn(threadId)) return false;
         const skill =
           schedule.skill === undefined ? "" : `Read skill "${schedule.skill}" first.\n\n`;
         const runId = yield* runs.start(id);
