@@ -1,4 +1,10 @@
-import { css } from "../styled-system/css";
+import { css, cva } from "../styled-system/css";
+
+const motion = {
+  transitionProperty: "color, background-color, border-color, opacity, transform",
+  transitionDuration: "120ms",
+  transitionTimingFunction: "out",
+};
 
 const container = {
   width: "100%",
@@ -86,12 +92,13 @@ export const ui = {
     textAlign: "left",
     cursor: "pointer",
     "& + &": { marginTop: "2px" },
+    ...motion,
     _hover: { backgroundColor: "bgSubtle" },
-  }),
-  threadActive: css({
-    backgroundColor: "bgHover",
-    borderColor: "border",
-    borderLeftColor: "accent",
+    '&[aria-current="true"]': {
+      backgroundColor: "bgHover",
+      borderColor: "border",
+      borderLeftColor: "accent",
+    },
   }),
   threadTitle: css({
     display: "block",
@@ -203,6 +210,7 @@ export const ui = {
     backgroundColor: "transparent",
     color: "fgMuted",
     cursor: "pointer",
+    ...motion,
     _hover: { borderColor: "border", backgroundColor: "bgHover", color: "fg" },
   }),
   mobileOnly: css({ display: "inline-flex", "@media (min-width: 768px)": { display: "none" } }),
@@ -223,17 +231,20 @@ export const ui = {
   }),
   stopMark: css({ width: "8px", height: "8px", backgroundColor: "danger" }),
   headerActions: css({ display: "flex", alignItems: "center", gap: "6px" }),
-  textButton: css({
-    height: "30px",
-    paddingInline: "10px",
-    border: "1px solid transparent",
-    backgroundColor: "transparent",
-    color: "fgMuted",
-    fontSize: "xs",
-    cursor: "pointer",
-    _hover: { borderColor: "border", backgroundColor: "bgHover", color: "fg" },
+  textButton: cva({
+    base: {
+      height: "30px",
+      paddingInline: "10px",
+      border: "1px solid transparent",
+      backgroundColor: "transparent",
+      color: "fgMuted",
+      fontSize: "xs",
+      cursor: "pointer",
+      _hover: { borderColor: "border", backgroundColor: "bgHover", color: "fg" },
+      ...motion,
+    },
+    variants: { armed: { true: { borderColor: "danger", color: "danger" } } },
   }),
-  archiveArmed: css({ borderColor: "danger", color: "danger" }),
 
   messages: css({
     flex: "1",
@@ -259,9 +270,10 @@ export const ui = {
     letterSpacing: "caps",
     textTransform: "uppercase",
   }),
-  roleMark: css({ width: "8px", height: "8px", backgroundColor: "borderStrong", flexShrink: 0 }),
-  roleUser: css({ backgroundColor: "accent" }),
-  roleAgent: css({ backgroundColor: "ok" }),
+  roleMark: cva({
+    base: { width: "8px", height: "8px", flexShrink: 0 },
+    variants: { role: { user: { backgroundColor: "accent" }, agent: { backgroundColor: "ok" } } },
+  }),
   time: css({
     color: "fgFaint",
     fontFamily: "mono",
@@ -270,13 +282,12 @@ export const ui = {
     letterSpacing: "0",
     textTransform: "none",
   }),
-  body: css({
-    minWidth: 0,
-    paddingLeft: "10px",
-    borderLeft: "2px solid {colors.borderStrong}",
+  body: cva({
+    base: { minWidth: 0, paddingLeft: "10px", borderLeftWidth: "2px", borderLeftStyle: "solid" },
+    variants: {
+      role: { user: { borderLeftColor: "accent" }, agent: { borderLeftColor: "ok" } },
+    },
   }),
-  bodyUser: css({ borderLeftColor: "accent" }),
-  bodyAgent: css({ borderLeftColor: "ok" }),
   text: css({
     margin: 0,
     maxWidth: "110ch",
@@ -302,12 +313,15 @@ export const ui = {
     "& h3, & h4": { fontSize: "md" },
     "& ul, & ol": {
       margin: "8px 0",
+      listStyle: "square",
       paddingInlineStart: "20px",
       display: "flex",
       flexDirection: "column",
       gap: "3px",
     },
+    "& ol": { listStyle: "decimal" },
     "& li": { lineHeight: "1.55" },
+    "& li::marker": { color: "accent" },
     "& a": {
       color: "accent",
       textDecoration: "underline",
@@ -526,9 +540,14 @@ export const ui = {
     fontSize: "sm",
     textAlign: "left",
     cursor: "pointer",
-    _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
+    ...motion,
+    _hover: {
+      borderColor: "borderStrong",
+      backgroundColor: "bgHover",
+      "& > :last-child": { transform: "translateX(2px)" },
+    },
   }),
-  promptArrow: css({ color: "accent", fontSize: "lg", lineHeight: "1" }),
+  promptArrow: css({ color: "accent", fontSize: "lg", lineHeight: "1", ...motion }),
 
   composer: css({
     flexShrink: 0,
@@ -540,6 +559,7 @@ export const ui = {
   composerBox: css({
     border: "1px solid {colors.border}",
     backgroundColor: "bg",
+    ...motion,
     _focusWithin: { borderColor: "accent" },
   }),
   textarea: css({
@@ -551,7 +571,7 @@ export const ui = {
     border: 0,
     backgroundColor: "transparent",
     color: "fg",
-    fontSize: "md",
+    fontSize: { base: "lg", md: "md" },
     lineHeight: "1.5",
     outline: "none",
     resize: "none",
@@ -591,6 +611,7 @@ export const ui = {
     inset: 0,
     zIndex: 40,
     backgroundColor: "rgb(0 0 0 / 0.3)",
+    animation: "fadeIn 160ms {easings.out}",
   }),
   drawerViewport: css({
     position: "fixed",
@@ -605,8 +626,11 @@ export const ui = {
     display: "flex",
     flexDirection: "column",
     overflowY: "auto",
+    marginRight: "auto",
     borderRight: "1px solid {colors.borderStrong}",
     backgroundColor: "bg",
+    overscrollBehavior: "contain",
+    animation: "slideIn 220ms {easings.out}",
   }),
   drawerClose: css({
     position: "absolute",
@@ -631,6 +655,7 @@ export const ui = {
     inset: 0,
     zIndex: 50,
     backgroundColor: "rgb(0 0 0 / 0.35)",
+    animation: "fadeIn 160ms {easings.out}",
   }),
   dialogContent: css({
     position: "fixed",
@@ -645,6 +670,7 @@ export const ui = {
     border: "1px solid {colors.borderStrong}",
     backgroundColor: "bg",
     transform: "translate(-50%, -50%)",
+    animation: "popIn 160ms {easings.out}",
   }),
   dialogTitle: css({
     fontSize: "lg",
@@ -660,35 +686,46 @@ export const ui = {
     border: "1px solid {colors.border}",
     backgroundColor: "bg",
     color: "fg",
-    fontSize: "sm",
+    fontSize: { base: "lg", md: "sm" },
     _focusVisible: { borderColor: "accent", outline: "none" },
     _placeholder: { color: "fgFaint" },
   }),
 
-  button: css({
-    height: "36px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingInline: "14px",
-    border: "1px solid {colors.border}",
-    backgroundColor: "bg",
-    color: "fg",
-    fontSize: "sm",
-    fontWeight: 500,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
-    _disabled: { opacity: "0.5", cursor: "not-allowed" },
+  button: cva({
+    base: {
+      height: "36px",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      paddingInline: "14px",
+      border: "1px solid {colors.border}",
+      backgroundColor: "bg",
+      color: "fg",
+      fontSize: "sm",
+      fontWeight: 500,
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+      userSelect: "none",
+      ...motion,
+      _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
+      _active: { transform: "scale(0.97)" },
+      _disabled: { opacity: "0.5", cursor: "not-allowed", transform: "none" },
+    },
+    variants: {
+      variant: {
+        plain: {},
+        primary: {
+          borderColor: "accent",
+          backgroundColor: "accent",
+          color: "bg",
+          _hover: { opacity: "0.88", borderColor: "accent", backgroundColor: "accent" },
+        },
+        danger: { borderColor: "danger", color: "danger" },
+      },
+      size: { md: {}, sm: { height: "30px", paddingInline: "10px", fontSize: "xs" } },
+    },
+    defaultVariants: { variant: "plain", size: "md" },
   }),
-  buttonPrimary: css({
-    borderColor: "accent",
-    backgroundColor: "accent",
-    color: "bg",
-    _hover: { opacity: "0.88", borderColor: "accent", backgroundColor: "accent" },
-  }),
-  buttonDanger: css({ borderColor: "danger", color: "danger" }),
-  buttonSmall: css({ height: "30px", paddingInline: "10px", fontSize: "xs" }),
 
   skeleton: css({
     height: "16px",

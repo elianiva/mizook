@@ -38,14 +38,7 @@ const actionButton = (
   h.button(
     [
       h.Type("button"),
-      h.Class(
-        cx(
-          ui.button,
-          small ? ui.buttonSmall : undefined,
-          variant === "primary" ? ui.buttonPrimary : undefined,
-          variant === "danger" ? ui.buttonDanger : undefined,
-        ),
-      ),
+      h.Class(ui.button({ variant: variant ?? "plain", size: small ? "sm" : "md" })),
       ...attributes,
     ],
     [label],
@@ -92,7 +85,8 @@ const threadButton = (model: Model, h: H, thread: ThreadSummary): Html => {
     [
       h.Key(thread.id),
       h.Type("button"),
-      h.Class(cx(ui.thread, active ? ui.threadActive : undefined)),
+      h.Class(ui.thread),
+      h.Attribute("aria-current", active ? "true" : "false"),
       h.OnClick(Message.ClickedThread({ id: thread.id })),
     ],
     [
@@ -198,7 +192,7 @@ const messageView = (message: ChatMessage, h: H, agent: string): Html => {
       h.div(
         [h.Class(ui.meta)],
         [
-          h.span([h.Class(cx(ui.roleMark, user ? ui.roleUser : ui.roleAgent))], []),
+          h.span([h.Class(ui.roleMark({ role: user ? "user" : "agent" }))], []),
           h.span([], [user ? "You" : agent]),
           h.time(
             [h.Class(ui.time), h.Attribute("datetime", new Date(message.at).toISOString())],
@@ -207,7 +201,7 @@ const messageView = (message: ChatMessage, h: H, agent: string): Html => {
         ],
       ),
       h.div(
-        [h.Class(cx(ui.body, user ? ui.bodyUser : ui.bodyAgent))],
+        [h.Class(ui.body({ role: user ? "user" : "agent" }))],
         user
           ? [h.p([h.Class(ui.text)], [message.text])]
           : [h.div([h.Class(ui.markdown), h.InnerHTML(renderMarkdown(message.text))], [])],
@@ -374,7 +368,7 @@ const threadContent = (model: Model, h: H): Html =>
                 [h.Class(ui.errorBox), h.Role("alert")],
                 [
                   h.span([], [error]),
-                  nativeButton(h, "Retry", Message.ClickedRetry(), cx(ui.button, ui.buttonSmall)),
+                  nativeButton(h, "Retry", Message.ClickedRetry(), ui.button({ size: "sm" })),
                 ],
               ),
             ],
@@ -491,13 +485,8 @@ const header = (model: Model, h: H, config: PartsConfig<Message>): Html => {
             h.div(
               [h.Class(ui.headerActions)],
               [
-                nativeButton(h, "Rename", Message.ClickedRename(), ui.textButton),
-                nativeButton(
-                  h,
-                  "Archive",
-                  Message.ClickedArchive(),
-                  cx(ui.textButton, armed ? ui.archiveArmed : undefined),
-                ),
+                nativeButton(h, "Rename", Message.ClickedRename(), ui.textButton()),
+                nativeButton(h, "Archive", Message.ClickedArchive(), ui.textButton({ armed })),
               ],
             ),
           ]
@@ -551,12 +540,7 @@ const renameDialog = (model: Model, h: H, config: PartsConfig<Message>): Html =>
           h.div(
             [h.Class(ui.dialogActions)],
             [
-              nativeButton(
-                h,
-                "Cancel",
-                Message.ClickedCloseRename(),
-                cx(ui.button, ui.buttonSmall),
-              ),
+              nativeButton(h, "Cancel", Message.ClickedCloseRename(), ui.button({ size: "sm" })),
               actionButton(
                 h,
                 "Save",
@@ -597,7 +581,7 @@ export const view = (model: Model, h: H): Document => {
                         h,
                         "New chat",
                         Message.ClickedNewChat(),
-                        cx(ui.button, ui.buttonSmall),
+                        ui.button({ size: "sm" }),
                       ),
                     ],
                   ),

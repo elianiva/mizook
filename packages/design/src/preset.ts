@@ -8,7 +8,13 @@ const pair = (light: string, dark: string) => ({ value: { base: light, _dark: da
  */
 export const mizookPreset = definePreset({
   name: "mizook",
-  conditions: { extend: { dark: "@media (prefers-color-scheme: dark)" } },
+  conditions: {
+    extend: {
+      dark: "@media (prefers-color-scheme: dark)",
+      // A touch press must not leave a hover state behind.
+      hover: { "@media (hover: hover)": { "&:is(:hover, [data-hover])": "@slot" } },
+    },
+  },
   globalCss: {
     "*, *::before, *::after": { borderRadius: "0" },
     html: {
@@ -19,6 +25,8 @@ export const mizookPreset = definePreset({
       fontSize: "16px",
       WebkitFontSmoothing: "antialiased",
       textRendering: "optimizeLegibility",
+      WebkitTextSizeAdjust: "100%",
+      WebkitTapHighlightColor: "transparent",
     },
     body: { minHeight: "100vh", fontSize: "15px", lineHeight: "1.6" },
     "button, input, select, textarea": {
@@ -26,11 +34,26 @@ export const mizookPreset = definePreset({
       fontSize: "inherit",
       color: "inherit",
     },
+    "button, a, select, summary": { touchAction: "manipulation" },
+    "h1, h2, h3": { textWrap: "balance" },
+    p: { textWrap: "pretty" },
     "::selection": { backgroundColor: "accent", color: "bg" },
     ":focus-visible": { outline: "2px solid var(--colors-accent)", outlineOffset: "2px" },
+    "@media (prefers-reduced-motion: reduce)": {
+      "*, *::before, *::after": {
+        animationDuration: "1ms !important",
+        animationIterationCount: "1 !important",
+        transitionDuration: "1ms !important",
+      },
+    },
   },
   theme: {
     extend: {
+      keyframes: {
+        fadeIn: { from: { opacity: "0" } },
+        popIn: { from: { opacity: "0", scale: "0.96" } },
+        slideIn: { from: { translate: "-100% 0" } },
+      },
       tokens: {
         fonts: {
           sans: { value: "'Google Sans Variable', system-ui, sans-serif" },
@@ -49,6 +72,10 @@ export const mizookPreset = definePreset({
           tight: { value: "-0.02em" },
           tighter: { value: "-0.04em" },
           caps: { value: "0.06em" },
+        },
+        easings: {
+          // Fast start, soft landing: a press or an opening panel answers at once.
+          out: { value: "cubic-bezier(0.23, 1, 0.32, 1)" },
         },
       },
       semanticTokens: {

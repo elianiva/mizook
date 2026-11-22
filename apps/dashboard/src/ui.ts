@@ -7,6 +7,12 @@ const container = {
   paddingInline: { base: "16px", md: "28px" },
 };
 
+const motion = {
+  transitionProperty: "color, background-color, border-color, opacity, transform",
+  transitionDuration: "120ms",
+  transitionTimingFunction: "out",
+};
+
 const control = {
   height: "36px",
   paddingInline: "14px",
@@ -15,7 +21,7 @@ const control = {
   color: "fg",
   fontSize: "sm",
   fontWeight: "500",
-  transition: "border-color 120ms, background-color 120ms",
+  ...motion,
   _hover: { borderColor: "borderStrong" },
   _focusVisible: { borderColor: "accent", outline: "none" },
   _disabled: { opacity: "0.5", cursor: "not-allowed", backgroundColor: "bgSubtle" },
@@ -28,7 +34,50 @@ const buttonBase = {
   justifyContent: "center",
   cursor: "pointer",
   whiteSpace: "nowrap",
+  _active: { transform: "scale(0.97)" },
 };
+
+/** Text fields: 16px on phones, so iOS does not zoom in on focus. */
+const field = { ...control, fontSize: { base: "lg", md: "sm" } };
+
+const buttonSmall = {
+  ...buttonBase,
+  height: "30px",
+  paddingInline: "12px",
+  fontSize: "xs",
+  _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
+};
+
+const danger = { borderColor: "danger", color: "danger" };
+
+const th = {
+  textAlign: "left",
+  padding: "10px 16px",
+  position: "sticky",
+  top: "0",
+  zIndex: "1",
+  fontSize: "xs",
+  fontWeight: "600",
+  color: "fgMuted",
+  backgroundColor: "bgSubtle",
+  borderBottom: "1px solid {colors.border}",
+  whiteSpace: "nowrap",
+} as const;
+
+const td = { padding: "10px 16px", verticalAlign: "top", fontSize: "sm" } as const;
+const mono = { fontFamily: "mono", fontSize: "xs" } as const;
+const fit = { whiteSpace: "nowrap", color: "fgMuted" } as const;
+
+const textarea = {
+  ...field,
+  height: "auto",
+  minHeight: "96px",
+  padding: "10px 14px",
+  fontWeight: "400",
+  fontFamily: "mono",
+  resize: "vertical",
+  width: "100%",
+} as const;
 
 const chevron =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12' fill='none' stroke='%23b08f9d' stroke-width='1.6'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E\")";
@@ -61,8 +110,9 @@ export const ui = {
   tabs: css({
     ...container,
     display: "flex",
-    gap: "28px",
+    gap: "24px",
     overflowX: "auto",
+    scrollbarWidth: "none",
     marginBottom: "-1px",
   }),
   tab: css({
@@ -72,10 +122,11 @@ export const ui = {
     borderBottom: "2px solid transparent",
     color: "fgMuted",
     fontSize: "sm",
+    fontWeight: "500",
     whiteSpace: "nowrap",
-    transition: "color 120ms",
+    ...motion,
     _hover: { color: "fg" },
-    '&[aria-current="page"]': { color: "fg", borderBottomColor: "accent", fontWeight: "600" },
+    '&[aria-current="page"]': { color: "fg", borderBottomColor: "accent" },
   }),
   main: css({
     ...container,
@@ -141,17 +192,19 @@ export const ui = {
   }),
   muted: css({ color: "fgMuted" }),
   danger: css({ color: "danger" }),
-  mono: css({ fontFamily: "mono", fontSize: "xs" }),
+  mono: css(mono),
   bullets: css({
     margin: 0,
     paddingInlineStart: "18px",
+    listStyle: "square",
+    "& li::marker": { color: "accent" },
     display: "flex",
     flexDirection: "column",
     gap: "6px",
   }),
 
   select: css({
-    ...control,
+    ...field,
     appearance: "none",
     paddingInlineEnd: "26px",
     cursor: "pointer",
@@ -161,7 +214,7 @@ export const ui = {
     backgroundPosition: "right 9px center",
   }),
   input: css({
-    ...control,
+    ...field,
     minWidth: "260px",
     fontWeight: "400",
     _placeholder: { color: "fgFaint" },
@@ -176,7 +229,9 @@ export const ui = {
     color: "bg",
     borderColor: "accent",
     _hover: { opacity: "0.88", borderColor: "accent" },
+    _disabled: { opacity: "0.5", cursor: "not-allowed", backgroundColor: "accent" },
   }),
+  buttonDanger: css(buttonBase, danger, { _hover: { backgroundColor: "bgHover" } }),
   toolbar: css({ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }),
   segmented: css({ display: "inline-flex", border: "1px solid {colors.border}" }),
   segment: css({
@@ -187,6 +242,7 @@ export const ui = {
     fontSize: "sm",
     color: "fgMuted",
     fontWeight: "500",
+    ...motion,
     _hover: { color: "fg", backgroundColor: "bgHover" },
     _disabled: { opacity: "0.5", cursor: "not-allowed" },
     '&[aria-current="page"]': { backgroundColor: "accent", color: "bg" },
@@ -242,34 +298,24 @@ export const ui = {
     backgroundColor: "bg",
   }),
   table: css({ width: "100%", borderCollapse: "collapse", fontSize: "sm" }),
-  th: css({
-    textAlign: "left",
-    padding: "10px 16px",
-    position: "sticky",
-    top: "0",
-    zIndex: "1",
-    fontSize: "xs",
-    fontWeight: "600",
-    color: "fgMuted",
-    backgroundColor: "bgSubtle",
-    borderBottom: "1px solid {colors.border}",
-    whiteSpace: "nowrap",
-  }),
-  thNum: css({ textAlign: "right" }),
+  th: css(th),
+  thNum: css(th, { textAlign: "right" }),
   row: css({
     "& + &": { borderTop: "1px solid {colors.border}" },
     transition: "background-color 120ms",
     _hover: { backgroundColor: "bgSubtle" },
   }),
-  td: css({ padding: "10px 16px", verticalAlign: "top", fontSize: "sm" }),
-  tdNum: css({
+  td: css(td),
+  tdMono: css(td, mono),
+  tdFit: css(td, fit),
+  tdFitMono: css(td, fit, mono),
+  tdNum: css(td, {
     textAlign: "right",
     fontVariantNumeric: "tabular-nums",
     fontFamily: "mono",
     fontSize: "xs",
     whiteSpace: "nowrap",
   }),
-  tdFit: css({ whiteSpace: "nowrap", color: "fgMuted" }),
   text: css({
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
@@ -287,6 +333,7 @@ export const ui = {
     textDecoration: "underline",
     textDecorationColor: "borderStrong",
     textUnderlineOffset: "2px",
+    ...motion,
     _hover: { textDecorationColor: "accent" },
   }),
   badge: css({
@@ -404,15 +451,8 @@ export const ui = {
     fontSize: "xs",
   }),
   actions: css({ display: "flex", gap: "6px", marginTop: "10px" }),
-  buttonSmall: css({
-    ...buttonBase,
-    height: "30px",
-    paddingInline: "12px",
-    fontSize: "xs",
-    _hover: { borderColor: "borderStrong", backgroundColor: "bgHover" },
-  }),
-  buttonArmed: css({ borderColor: "danger", color: "danger" }),
-  buttonDanger: css({ borderColor: "danger", color: "danger" }),
+  buttonSmall: css(buttonSmall),
+  buttonSmallArmed: css(buttonSmall, danger),
   notice: css({
     border: "1px solid {colors.border}",
     backgroundColor: "bgSubtle",
@@ -487,7 +527,7 @@ export const ui = {
     whiteSpace: "nowrap",
   }),
   urlOff: css({ color: "fgFaint", borderColor: "border" }),
-  composerBody: css({ minHeight: "260px", fontSize: "sm" }),
+  composerBody: css(textarea, { minHeight: "160px" }),
   actionsRow: css({ display: "flex", gap: "6px", flexWrap: "wrap" }),
   clamp3: css({ lineClamp: "3", wordBreak: "break-word", lineHeight: "1.55" }),
   clamp4: css({
@@ -551,6 +591,7 @@ export const ui = {
   }),
   memSpan: css({
     display: "flex",
+    "& > :first-child": { whiteSpace: "nowrap", flexShrink: 0 },
     alignItems: "baseline",
     gap: "8px",
     paddingLeft: "10px",
@@ -655,16 +696,7 @@ export const ui = {
     "& + &": { borderTop: "1px solid {colors.border}" },
   }),
   fieldLabel: css({ display: "flex", flexDirection: "column", gap: "0", paddingTop: "4px" }),
-  textarea: css({
-    ...control,
-    height: "auto",
-    minHeight: "96px",
-    padding: "10px 14px",
-    fontWeight: "400",
-    fontFamily: "mono",
-    resize: "vertical",
-    width: "100%",
-  }),
+  textarea: css(textarea),
   back: css({ color: "fgMuted", fontSize: "sm", _hover: { color: "accent" } }),
   footer: css({ display: "flex", justifyContent: "center" }),
 };

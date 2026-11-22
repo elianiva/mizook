@@ -127,7 +127,7 @@ const actionButton = (model: Model, action: ActionKind, id: number, label: strin
   return h.button(
     [
       h.Type("button"),
-      h.Class(armed ? `${ui.buttonSmall} ${ui.buttonArmed}` : ui.buttonSmall),
+      h.Class(armed ? ui.buttonSmallArmed : ui.buttonSmall),
       h.OnClick(Message.ClickedAction({ action, id })),
     ],
     [armed ? `Confirm ${label.toLowerCase()}` : label],
@@ -138,7 +138,7 @@ const kindBadge = (kind: string, h: H): Html =>
   h.span([h.Class(ui.badge), h.Style({ color: badgeColor(kind) })], [kind]);
 
 const th = (label: string, h: H, numeric = false): Html =>
-  h.th([h.Class(numeric ? `${ui.th} ${ui.thNum}` : ui.th), h.Scope("col")], [label]);
+  h.th([h.Class(numeric ? ui.thNum : ui.th), h.Scope("col")], [label]);
 
 const tableView = (headers: ReadonlyArray<Html>, rows: ReadonlyArray<Html>, h: H): Html =>
   h.div(
@@ -155,12 +155,12 @@ const recentRow = (m: LogMessage, channel: Option.Option<string>, h: H): Html =>
     [h.Class(ui.row)],
     [
       h.td(
-        [h.Class(`${ui.td} ${ui.mono}`)],
+        [h.Class(ui.tdMono)],
         [h.a([h.Href(entryRouter({ entryId: m.i, channel })), h.Class(ui.link)], [String(m.i)])],
       ),
       h.td([h.Class(ui.td)], [kindBadge(m.kind, h)]),
       h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [m.cut ? `${m.text} …` : m.text])]),
-      h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [dateTime(m.date)]),
+      h.td([h.Class(ui.tdFitMono)], [dateTime(m.date)]),
     ],
   );
 
@@ -193,19 +193,19 @@ const channelsTable = (model: Model, h: H): Html =>
                 ),
               ],
             ),
-            h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [ago(row.lastActive)]),
-            h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(row.messages)]),
+            h.td([h.Class(ui.tdFit)], [ago(row.lastActive)]),
+            h.td([h.Class(ui.tdNum)], [count(row.messages)]),
             h.td(
-              [h.Class(`${ui.td} ${ui.tdNum}`)],
+              [h.Class(ui.tdNum)],
               [
                 row.budget > 0
                   ? `${usd(row.spend24h)} · ${percent(row.spend24h, row.budget)}%`
                   : usd(row.spend24h),
               ],
             ),
-            h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(row.spend7d)]),
+            h.td([h.Class(ui.tdNum)], [usd(row.spend7d)]),
             h.td(
-              [h.Class(`${ui.td} ${ui.tdNum}`)],
+              [h.Class(ui.tdNum)],
               [
                 row.pending + row.approvals === 0
                   ? "–"
@@ -499,12 +499,12 @@ const logRowView = (m: LogMessage, channel: Option.Option<string>, h: H): Html =
     [h.Class(ui.row)],
     [
       h.td(
-        [h.Class(`${ui.td} ${ui.mono}`)],
+        [h.Class(ui.tdMono)],
         [h.a([h.Href(entryRouter({ entryId: m.i, channel })), h.Class(ui.link)], [String(m.i)])],
       ),
       h.td([h.Class(ui.td)], [kindBadge(m.kind, h)]),
       h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [m.cut ? `${m.text} …` : m.text])]),
-      h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [dateTime(m.date)]),
+      h.td([h.Class(ui.tdFitMono)], [dateTime(m.date)]),
     ],
   );
 
@@ -845,15 +845,12 @@ const dailySection = (report: typeof UsageReport.Type, h: H): Html =>
           day.day,
           [h.Class(ui.row)],
           [
-            h.td([h.Class(`${ui.td} ${ui.mono}`)], [day.day]),
-            h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(day.calls)]),
-            h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(day.input)]),
-            h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(day.output)]),
-            h.td(
-              [h.Class(`${ui.td} ${ui.tdNum}`)],
-              [`${percent(day.cacheRead, day.input + day.cacheRead)}%`],
-            ),
-            h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(day.cost)]),
+            h.td([h.Class(ui.tdMono)], [day.day]),
+            h.td([h.Class(ui.tdNum)], [count(day.calls)]),
+            h.td([h.Class(ui.tdNum)], [count(day.input)]),
+            h.td([h.Class(ui.tdNum)], [count(day.output)]),
+            h.td([h.Class(ui.tdNum)], [`${percent(day.cacheRead, day.input + day.cacheRead)}%`]),
+            h.td([h.Class(ui.tdNum)], [usd(day.cost)]),
           ],
         ),
       ),
@@ -875,8 +872,8 @@ const toolsSection = (report: typeof UsageReport.Type, h: H): Html =>
               tool.tool,
               [h.Class(ui.row)],
               [
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [tool.tool]),
-                h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(tool.calls)]),
+                h.td([h.Class(ui.tdMono)], [tool.tool]),
+                h.td([h.Class(ui.tdNum)], [count(tool.calls)]),
               ],
             ),
           ),
@@ -943,15 +940,15 @@ const usageView = (model: Model, channel: string, days: number, h: H): Html =>
                     model_.model,
                     [h.Class(ui.row)],
                     [
-                      h.td([h.Class(`${ui.td} ${ui.mono}`)], [model_.model]),
-                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.calls)]),
-                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.input)]),
-                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(model_.output)]),
+                      h.td([h.Class(ui.tdMono)], [model_.model]),
+                      h.td([h.Class(ui.tdNum)], [count(model_.calls)]),
+                      h.td([h.Class(ui.tdNum)], [count(model_.input)]),
+                      h.td([h.Class(ui.tdNum)], [count(model_.output)]),
                       h.td(
-                        [h.Class(`${ui.td} ${ui.tdNum}`)],
+                        [h.Class(ui.tdNum)],
                         [`${percent(model_.cacheRead, model_.input + model_.cacheRead)}%`],
                       ),
-                      h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(model_.cost)]),
+                      h.td([h.Class(ui.tdNum)], [usd(model_.cost)]),
                     ],
                   ),
                 ),
@@ -973,8 +970,8 @@ const usageView = (model: Model, channel: string, days: number, h: H): Html =>
                         [h.Class(ui.row)],
                         [
                           h.td([h.Class(ui.td)], [kindBadge(kind.kind, h)]),
-                          h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(kind.calls)]),
-                          h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [usd(kind.cost)]),
+                          h.td([h.Class(ui.tdNum)], [count(kind.calls)]),
+                          h.td([h.Class(ui.tdNum)], [usd(kind.cost)]),
                         ],
                       ),
                     ),
@@ -1296,7 +1293,7 @@ const agentForm = (
                 h.button(
                   [
                     h.Type("button"),
-                    h.Class(`${ui.button} ${ui.buttonDanger}`),
+                    h.Class(ui.buttonDanger),
                     h.OnClick(
                       Message.ClickedAgentRemove({
                         kind: editor.kind,
@@ -1415,12 +1412,12 @@ const skillsBody = (model: Model, channel: string, h: H): Html => {
                   skill.name,
                   [h.Class(ui.row)],
                   [
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [skill.name]),
+                    h.td([h.Class(ui.tdMono)], [skill.name]),
                     h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [skill.description])]),
-                    h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [skill.pinned ? "yes" : "–"]),
-                    h.td([h.Class(`${ui.td} ${ui.tdNum}`)], [count(skill.useCount)]),
+                    h.td([h.Class(ui.tdFit)], [skill.pinned ? "yes" : "–"]),
+                    h.td([h.Class(ui.tdNum)], [count(skill.useCount)]),
                     h.td(
-                      [h.Class(`${ui.td} ${ui.tdFit}`)],
+                      [h.Class(ui.tdFit)],
                       [skill.usedAt === null ? "never" : ago(skill.usedAt)],
                     ),
                     h.td([h.Class(ui.td)], [agentEdit("skills", skill.name, h)]),
@@ -1479,7 +1476,7 @@ const intentsBody = (model: Model, channel: string, h: H): Html => {
                   String(intent.id),
                   [h.Class(ui.row)],
                   [
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${intent.id}`]),
+                    h.td([h.Class(ui.tdMono)], [`#${intent.id}`]),
                     h.td(
                       [h.Class(ui.td)],
                       [
@@ -1489,16 +1486,10 @@ const intentsBody = (model: Model, channel: string, h: H): Html => {
                         ),
                       ],
                     ),
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [intent.triggers.join(", ")]),
+                    h.td([h.Class(ui.tdMono)], [intent.triggers.join(", ")]),
                     h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [intent.description])]),
-                    h.td(
-                      [h.Class(`${ui.td} ${ui.tdNum}`)],
-                      [`${intent.fireCount}/${intent.maxFires}`],
-                    ),
-                    h.td(
-                      [h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)],
-                      [epochDateTime(intent.expires)],
-                    ),
+                    h.td([h.Class(ui.tdNum)], [`${intent.fireCount}/${intent.maxFires}`]),
+                    h.td([h.Class(ui.tdFitMono)], [epochDateTime(intent.expires)]),
                     h.td([h.Class(ui.td)], [agentEdit("intents", String(intent.id), h)]),
                   ],
                 ),
@@ -1539,7 +1530,7 @@ const policiesBody = (model: Model, channel: string, h: H): Html => {
                   String(policy.id),
                   [h.Class(ui.row)],
                   [
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${policy.id}`]),
+                    h.td([h.Class(ui.tdMono)], [`#${policy.id}`]),
                     h.td(
                       [h.Class(ui.td)],
                       [
@@ -1549,7 +1540,7 @@ const policiesBody = (model: Model, channel: string, h: H): Html => {
                         ),
                       ],
                     ),
-                    h.td([h.Class(`${ui.td} ${ui.mono}`)], [policy.match]),
+                    h.td([h.Class(ui.tdMono)], [policy.match]),
                     h.td([h.Class(ui.td)], [agentEdit("policies", String(policy.id), h)]),
                   ],
                 ),
@@ -1607,8 +1598,8 @@ const runsView = (model: Model, channel: string, h: H): Html =>
               String(run.id),
               [h.Class(ui.row)],
               [
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${run.id}`]),
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [`#${run.scheduleId}`]),
+                h.td([h.Class(ui.tdMono)], [`#${run.id}`]),
+                h.td([h.Class(ui.tdMono)], [`#${run.scheduleId}`]),
                 h.td(
                   [h.Class(ui.td)],
                   [
@@ -1618,8 +1609,8 @@ const runsView = (model: Model, channel: string, h: H): Html =>
                     ),
                   ],
                 ),
-                h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [epochDateTime(run.started)]),
-                h.td([h.Class(`${ui.td} ${ui.tdFit}`)], [duration(run)]),
+                h.td([h.Class(ui.tdFitMono)], [epochDateTime(run.started)]),
+                h.td([h.Class(ui.tdFit)], [duration(run)]),
                 h.td(
                   [h.Class(ui.td)],
                   [
@@ -1737,7 +1728,7 @@ const deleteButton = (model: Model, row: typeof ArtifactRow.Type, h: H): Html =>
   return h.button(
     [
       h.Type("button"),
-      h.Class(armed ? `${ui.buttonSmall} ${ui.buttonArmed}` : ui.buttonSmall),
+      h.Class(armed ? ui.buttonSmallArmed : ui.buttonSmall),
       h.OnClick(Message.ClickedArtifact({ name: row.name, action: "delete" })),
     ],
     [armed ? "Confirm delete" : "Delete"],
@@ -1906,7 +1897,7 @@ const composerView = (model: Model, h: H): Html => {
           ],
         ),
         h.textarea([
-          h.Class(`${ui.textarea} ${ui.composerBody}`),
+          h.Class(ui.composerBody),
           h.AriaLabel("Content"),
           h.Placeholder(kind === "html" ? "<h1>Paste HTML</h1>" : "# Paste Markdown"),
           h.Value(content),
@@ -1967,10 +1958,10 @@ const auditView = (model: Model, channel: string, h: H): Html =>
               `${row.at}:${row.action}:${row.target}`,
               [h.Class(ui.row)],
               [
-                h.td([h.Class(`${ui.td} ${ui.tdFit} ${ui.mono}`)], [epochDateTime(row.at)]),
+                h.td([h.Class(ui.tdFitMono)], [epochDateTime(row.at)]),
                 h.td([h.Class(ui.td)], [row.who]),
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [row.action]),
-                h.td([h.Class(`${ui.td} ${ui.mono}`)], [row.target === 0 ? "–" : `#${row.target}`]),
+                h.td([h.Class(ui.tdMono)], [row.action]),
+                h.td([h.Class(ui.tdMono)], [row.target === 0 ? "–" : `#${row.target}`]),
                 h.td(
                   [h.Class(ui.td)],
                   [

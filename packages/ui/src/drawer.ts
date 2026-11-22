@@ -17,6 +17,8 @@ export const State = Schema.Struct({
   /** Whether the app renders a title and a description part. They name the content. */
   titled: Schema.Boolean,
   described: Schema.Boolean,
+  /** The edge it opens from. */
+  side: Schema.Literals(["top", "right", "bottom", "left"]),
 });
 export type State = typeof State.Type;
 
@@ -25,12 +27,14 @@ export const init = (state: {
   open?: boolean;
   titled?: boolean;
   described?: boolean;
+  side?: State["side"];
 }): State => ({
   key: state.key,
   open: state.open ?? false,
   mounted: state.open ?? false,
   titled: state.titled ?? true,
   described: state.described ?? false,
+  side: state.side ?? "right",
 });
 
 const fold = (state: State, snapshot: Snapshot): State => {
@@ -58,7 +62,7 @@ export const component = defineComponent<State, Slot>({
   primitive: primitiveOf(drawer),
   state: State,
   key: (state) => state.key,
-  options: (state) => ({ open: state.open, side: "right" }),
+  options: (state) => ({ open: state.open, side: state.side }),
   controlled: ["open"],
   callbacks: { onOpenChange: "open" },
   completions: { onOpenChangeComplete: "mounted" },

@@ -249,7 +249,7 @@ export const init = (flags: Flags, url: Url) => {
     ui: {
       composer: Textarea.init({ key: "composer" }),
       agent: Select.init({ key: "agent", items: [], value: "" }),
-      drawer: Drawer.init({ key: "drawer", described: false }),
+      drawer: Drawer.init({ key: "drawer", described: false, side: "left" }),
       rename: Dialog.init({ key: "rename", described: false }),
       renameInput: Input.init({ key: "rename-input" }),
     },
