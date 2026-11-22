@@ -118,7 +118,8 @@ export class Commands extends Context.Service<
                   a.isDefault ? "default, answers every unbound place" : "",
                   where.length === 0 ? "" : `bound to ${where.join(", ")}`,
                 ].filter((part) => part !== "");
-                return `- /${a.slug} ${a.name}${roles.length === 0 ? "" : ` (${roles.join("; ")})`}`;
+                const role = a.role.trim().split("\n")[0] ?? "";
+                return `- /${a.slug} ${a.name}${role === "" ? "" : `: ${role.slice(0, 120)}`}${roles.length === 0 ? "" : ` (${roles.join("; ")})`}`;
               }),
             );
             return lines.join("\n");
@@ -141,21 +142,26 @@ export class Commands extends Context.Service<
             const [verb = "", ...rest] = arg.split(/\s+/);
             const name = rest.join(" ").trim();
             if (verb === "") {
-              const all = yield* skills.list;
-              return all.length === 0
-                ? "No skills yet."
-                : all
-                    .map((s) => `- ${s.name}: ${s.description}${s.pinned ? " (pinned)" : ""}`)
-                    .join("\n");
+              const mine = yield* skills.list;
+              const shared = yield* host.globalSkills.list;
+              const line = (s: (typeof mine)[number], scope: string) =>
+                `- ${s.name}${scope}: ${s.description}${s.pinned ? " (pinned)" : ""}`;
+              const all = [
+                ...mine.map((s) => line(s, "")),
+                ...shared.map((s) => line(s, " (global)")),
+              ];
+              return all.length === 0 ? "No skills yet." : all.join("\n");
             }
             if (name === "") return "Use /skills, /skills show <name>, or /skills delete <name>.";
-            const skill = yield* skills.get(name);
+            const own = yield* skills.get(name);
+            const skill = own ?? (yield* host.globalSkills.get(name));
+            const store = own ? skills : host.globalSkills;
             if (!skill) return `No skill "${name}".`;
             if (verb === "show") return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
             if (verb === "delete") {
               if (skill.pinned)
                 return `"${name}" is pinned by a schedule; cancel the schedule first.`;
-              return (yield* skills.remove(name))
+              return (yield* store.remove(name))
                 ? `Deleted skill "${name}".`
                 : `No skill "${name}".`;
             }

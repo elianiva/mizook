@@ -1,12 +1,12 @@
 /**
- * Point the Telegram bot at the deployed Worker, and publish its command menu.
+ * Point the Telegram bot at the deployed Worker. The Hub publishes the command menu itself, since
+ * it lists the agents.
  *
  *     pnpm webhook https://mizook-….workers.dev
  *
  * Reads BOT_TOKEN and MIZOOK_WEBHOOK_SECRET from `.env`. The secret is sent back by Telegram on
  * every update, and the Worker turns away anything without it.
  */
-import { COMMANDS } from "../src/command-list.ts";
 import { callTelegram } from "./telegram.ts";
 
 const [base] = process.argv.slice(2);
@@ -38,10 +38,6 @@ try {
     allowed_updates: ["message", "callback_query"],
   });
   console.log(`webhook set: ${url}`);
-
-  // The menu next to the text box is the same list `/help` prints.
-  await mustCall("setMyCommands", { commands: COMMANDS });
-  console.log(`menu set: ${COMMANDS.length} commands`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

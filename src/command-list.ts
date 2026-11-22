@@ -21,3 +21,26 @@ export const COMMANDS = [
   { command: "export", description: "Export this agent as a file" },
   { command: "help", description: "List the commands" },
 ] as const;
+
+/** Names an agent's slug may not take: they already mean something. */
+export const RESERVED_COMMANDS: ReadonlySet<string> = new Set([
+  ...COMMANDS.map((c) => c.command),
+  "start",
+]);
+
+/** What a slug may look like: a Telegram command name, so `/<slug>` talks to the agent. */
+export const AGENT_SLUG = /^[a-z][a-z0-9_]{1,31}$/;
+
+/** The bot menu: the commands, then one `/<slug>` per agent, described by its name and role. */
+export const menuWith = (
+  agents: ReadonlyArray<{ readonly slug: string; readonly name: string; readonly role: string }>,
+): Array<{ command: string; description: string }> => [
+  ...COMMANDS,
+  ...agents
+    .filter((a) => !RESERVED_COMMANDS.has(a.slug))
+    .map((a) => {
+      const role = a.role.trim().split("\n")[0] ?? "";
+      const said = role === "" ? `Ask ${a.name}` : `${a.name}: ${role}`;
+      return { command: a.slug, description: said.length > 256 ? `${said.slice(0, 255)}…` : said };
+    }),
+];

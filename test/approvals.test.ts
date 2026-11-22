@@ -21,9 +21,11 @@ test("an approval is shown once, in the place that asked, and answered once", as
       const approvals = yield* Approvals;
       const a = yield* approvals.add("exec_1", "Send mail?", "gmail.send", topic);
       const b = yield* approvals.add("exec_2", "Delete?", "", topic);
-      const c = yield* approvals.add("exec_3", "Pay?", "", dm);
+      const c = yield* approvals.add("", "Create agent /grok", "", dm, '{"op":"create"}');
       expect(a.match).toBe("gmail.send");
       expect(c.place).toBe(dm);
+      expect(c.action).toBe('{"op":"create"}');
+      expect(a.action).toBe("");
       expect((yield* approvals.unposted(topic)).map((x) => x.id)).toEqual([a.id, b.id]);
       expect((yield* approvals.unposted(dm)).map((x) => x.id)).toEqual([c.id]);
       yield* approvals.markPosted(a.id);

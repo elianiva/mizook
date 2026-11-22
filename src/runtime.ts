@@ -83,7 +83,13 @@ export const makeRuntime = (
       const { instructions, timezone } = yield* Settings;
       return Memory.layer({
         name: host.self.name,
-        instructions: [PERSONA, TOOL_GUIDE, instructions]
+        // The persona says how it talks, the role what it is for; the user's instructions go last.
+        instructions: [
+          host.self.persona.trim() || PERSONA,
+          TOOL_GUIDE,
+          host.self.role.trim() === "" ? "" : `# Your role\n\n${host.self.role.trim()}`,
+          instructions,
+        ]
           .filter((part) => part !== "")
           .join("\n\n"),
         formatDate: (date) => formatDate(date, timezone),

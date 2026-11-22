@@ -18,6 +18,7 @@ import { Context, Effect, Layer } from "effect";
 import { DurableError } from "./errors.ts";
 import { Models } from "./models.ts";
 import { Handlers } from "./handlers.ts";
+import { Host } from "./host.ts";
 import { State } from "./state.ts";
 import { toolSpecs } from "./tools.ts";
 
@@ -45,13 +46,17 @@ export class Durable extends Context.Service<
         const memory = yield* Memory;
         const handlers = yield* Handlers;
         const state = yield* State;
+        const host = yield* Host;
         const services = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(services);
         const turnInputs = new Map<ConversationId, string>();
 
         const text = (output: string) => ({ output: [{ type: "text" as const, text: output }] });
 
-        const tools = toolSpecs.map((spec) =>
+        // A role may limit the tools; the agent can always talk.
+        const allowed = host.self.tools && new Set([...host.self.tools, "send_to_user"]);
+        const offered = toolSpecs.filter((spec) => !allowed || allowed.has(spec.name));
+        const tools = offered.map((spec) =>
           defineTool({
             name: spec.name,
             description: spec.description,

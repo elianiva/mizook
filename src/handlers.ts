@@ -21,12 +21,14 @@ import { Blobs } from "./blobs.ts";
 import { Approvals } from "./approvals.ts";
 import { Executor, pausedExecution } from "./executor.ts";
 import { Host } from "./host.ts";
+import { describeAgentAction, encodeAgentAction, type AgentAction } from "./agent-manage.ts";
 import { ToolError } from "./errors.ts";
 import { State } from "./state.ts";
 import { Outbox } from "./outbox.ts";
 import { Web } from "./search.ts";
 import {
   AskAgentArgs,
+  AgentManageArgs,
   FileReadArgs,
   SendToUserArgs,
   ExecutorArgs,
@@ -47,6 +49,7 @@ import {
   WebFetchArgs,
   WebSearchArgs,
   ZoomArgs,
+  toolSpecs,
 } from "./tools.ts";
 
 /** What a tool does, by name. The arguments were already checked against the tool's schema. */
@@ -383,24 +386,39 @@ export class Handlers extends Context.Service<
           case "skill_manage":
             return Effect.gen(function* () {
               const a = yield* decode(SkillArgs, args);
+              const global = host.globalSkills;
+              /** The skill by name: yours first, then the shared one, unless a scope is given. */
+              const find = (name: string) =>
+                Effect.gen(function* () {
+                  if (a.scope !== "global") {
+                    const mine = yield* skills.get(name);
+                    if (mine) return { skill: mine, store: skills, scope: "agent" };
+                  }
+                  if (a.scope !== "agent") {
+                    const shared = yield* global.get(name);
+                    if (shared) return { skill: shared, store: global, scope: "global" };
+                  }
+                  return undefined;
+                });
               switch (a.action) {
                 case "list": {
-                  const all = yield* skills.list;
-                  return all.length === 0
-                    ? "No skills yet."
-                    : all
-                        .map(
-                          (skill) =>
-                            `- ${skill.name}: ${skill.description}${skill.pinned ? " (pinned)" : ""}`,
-                        )
-                        .join("\n");
+                  const mine = a.scope === "global" ? [] : yield* skills.list;
+                  const shared = a.scope === "agent" ? [] : yield* global.list;
+                  const lines = [
+                    ...mine.map((skill) => ({ skill, scope: "yours" })),
+                    ...shared.map((skill) => ({ skill, scope: "global" })),
+                  ].map(
+                    ({ skill, scope }) =>
+                      `- ${skill.name} (${scope}): ${skill.description}${skill.pinned ? " (pinned)" : ""}`,
+                  );
+                  return lines.length === 0 ? "No skills yet." : lines.join("\n");
                 }
                 case "read": {
                   if (!a.name) return yield* new ToolError({ reason: "read needs a name" });
-                  const skill = yield* skills.get(a.name);
-                  if (!skill) return yield* new ToolError({ reason: `no skill "${a.name}"` });
-                  yield* skills.touch(a.name);
-                  return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
+                  const found = yield* find(a.name);
+                  if (!found) return yield* new ToolError({ reason: `no skill "${a.name}"` });
+                  yield* found.store.touch(a.name);
+                  return `# ${found.skill.name}\n${found.skill.description}\n\n${found.skill.body}`;
                 }
                 case "save": {
                   if (!a.name || !a.description || !a.body) {
@@ -426,23 +444,76 @@ export class Handlers extends Context.Service<
                       reason: `body is longer than ${MAX_SKILL_BODY} characters`,
                     });
                   }
-                  const saved = yield* skills.save(name, description, body);
-                  return `Saved skill "${saved.name}".`;
+                  const store = a.scope === "global" ? global : skills;
+                  const saved = yield* store.save(name, description, body);
+                  return `Saved ${a.scope === "global" ? "global " : ""}skill "${saved.name}".`;
                 }
                 case "delete": {
                   if (!a.name) return yield* new ToolError({ reason: "delete needs a name" });
-                  const skill = yield* skills.get(a.name);
-                  if (!skill) return `No skill "${a.name}".`;
-                  if (skill.pinned) {
+                  const found = yield* find(a.name);
+                  if (!found) return `No skill "${a.name}".`;
+                  if (found.skill.pinned) {
                     return yield* new ToolError({
                       reason: `"${a.name}" is pinned by a schedule; cancel the schedule first`,
                     });
                   }
-                  return (yield* skills.remove(a.name))
-                    ? `Deleted skill "${a.name}".`
+                  return (yield* found.store.remove(a.name))
+                    ? `Deleted ${found.scope === "global" ? "global " : ""}skill "${a.name}".`
                     : `No skill "${a.name}".`;
                 }
               }
+            });
+          case "agent_manage":
+            return Effect.gen(function* () {
+              const a = yield* decode(AgentManageArgs, args);
+              if (a.action === "list") {
+                const all = yield* host.agents;
+                return all
+                  .map((agent) =>
+                    [
+                      `/${agent.slug} ${agent.name}${agent.isDefault ? " (default)" : ""}${agent.id === host.self.id ? " (you)" : ""}`,
+                      agent.role === "" ? "" : `  role: ${agent.role.slice(0, 400)}`,
+                      `  tools: ${agent.tools === undefined ? "all" : agent.tools.join(", ")}`,
+                    ]
+                      .filter((line) => line !== "")
+                      .join("\n"),
+                  )
+                  .join("\n");
+              }
+              const slug = a.slug?.trim().replace(/^\//, "").toLowerCase();
+              if (!slug) return yield* new ToolError({ reason: `${a.action} needs a slug` });
+              const known = new Set(toolSpecs.map((spec) => spec.name));
+              const tools =
+                a.tools === undefined
+                  ? undefined
+                  : a.tools.length === 1 && a.tools[0] === "all"
+                    ? null
+                    : a.tools;
+              const unknown = tools?.filter((name) => !known.has(name)) ?? [];
+              if (unknown.length > 0) {
+                return yield* new ToolError({ reason: `no tool ${unknown.join(", ")}` });
+              }
+              if (a.action === "create" && (yield* host.agents).some((x) => x.slug === slug)) {
+                return yield* new ToolError({ reason: `${slug} is taken` });
+              }
+              const action: AgentAction = {
+                op: a.action,
+                slug,
+                ...(a.new_slug !== undefined && { newSlug: a.new_slug.trim().toLowerCase() }),
+                ...(a.name !== undefined && { name: a.name }),
+                ...(a.role !== undefined && { role: a.role }),
+                ...(a.persona !== undefined && { persona: a.persona }),
+                ...(tools !== undefined && { tools }),
+                ...(a.model !== undefined && { model: a.model }),
+              };
+              yield* approvals.add(
+                "",
+                describeAgentAction(action),
+                "",
+                place ?? "",
+                encodeAgentAction(action),
+              );
+              return "Waiting for the user's approval. They have been shown Approve and Deny buttons.";
             });
           case "intent_manage":
             return Effect.gen(function* () {
@@ -514,9 +585,10 @@ export class Handlers extends Context.Service<
                 if (!SKILL_NAME.test(skill)) {
                   return yield* new ToolError({ reason: `"${skill}" is not a skill name` });
                 }
-                const found = yield* skills.get(skill);
-                if (!found) return yield* new ToolError({ reason: `no skill "${skill}"` });
-                yield* skills.pin(skill);
+                // A schedule needs its skill: keep it, yours first, then the shared one.
+                if (yield* skills.get(skill)) yield* skills.pin(skill);
+                else if (yield* host.globalSkills.get(skill)) yield* host.globalSkills.pin(skill);
+                else return yield* new ToolError({ reason: `no skill "${skill}"` });
               }
               const made = yield* schedules.create(
                 spec,

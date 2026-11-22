@@ -23,7 +23,11 @@ long for one message is logged as several in a row.
 **Profile** — the short "about you" and the standing rules every agent shares. It lives in the
 Hub, not in a chat's memory: identity, not history.
 
-**Skill** — a reusable procedure, saved by name. The index goes into a turn; the body is read only
+**Role** — what an agent is for: instructions after its persona, and optionally its own persona,
+model, and the only tools it gets. Agents create agents with `agent_manage`, after approval.
+
+**Skill** — a reusable procedure, saved by name. Agent skills are one agent's; global skills are in
+the Hub and every agent sees them. The index goes into a turn; the body is read only
 when a task needs it. A schedule can name one to read when it fires.
 
 **Intent** — an instruction that waits for a later message to mention its trigger words. It is

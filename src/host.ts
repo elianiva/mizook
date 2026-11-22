@@ -1,5 +1,6 @@
 import { Context, type Effect } from "effect";
 import type { StateError, ToolError } from "./errors.ts";
+import type { Skills } from "./skills.ts";
 import type { Spend } from "./usage.ts";
 
 /** An agent as the Hub knows it. */
@@ -9,6 +10,12 @@ export interface AgentInfo {
   /** What `/<slug>` invokes and `/agent <slug>` binds. */
   readonly slug: string;
   readonly name: string;
+  /** What this agent is for: a prompt that goes after the persona. Empty for a general agent. */
+  readonly role: string;
+  /** How it talks, in place of the shared persona. Empty: the shared one. */
+  readonly persona: string;
+  /** The tools it is offered, by name. Undefined: every tool. */
+  readonly tools: ReadonlyArray<string> | undefined;
   readonly doName: string;
   readonly isDefault: boolean;
   /** The Telegram places bound to this agent. The default agent also answers every unbound one. */
@@ -17,6 +24,18 @@ export interface AgentInfo {
   /** When an update was last routed to it, in epoch milliseconds; 0 for never. */
   readonly lastActive: number;
 }
+
+/** What makes an agent, as created or changed. `tools: null` in a change gives it every tool again. */
+export interface AgentSpec {
+  readonly slug: string;
+  readonly name: string;
+  readonly role: string;
+  readonly persona: string;
+  readonly tools?: ReadonlyArray<string> | null;
+}
+
+/** A change to the agents, or why it was refused. */
+export type AgentChange = { ok: true; agent: AgentInfo } | { ok: false; error: string };
 
 /** What the user is, across every agent: a short profile and the rules they want followed. */
 export interface Profile {
@@ -45,6 +64,15 @@ export class Host extends Context.Service<
     /** What the user calls a place, or a short form of its id. */
     placeLabel(place: string): Effect.Effect<string>;
     namePlace(place: string, name: string): Effect.Effect<void>;
+    createAgent(spec: AgentSpec): Effect.Effect<AgentChange>;
+    updateAgent(key: string, patch: Partial<AgentSpec>): Effect.Effect<AgentChange>;
+    deleteAgent(key: string): Effect.Effect<AgentChange>;
+    /** Change one setting of another agent, as its slash command would. */
+    setAgentSetting(doName: string, key: string, value: string): Effect.Effect<void>;
+    /** Make an agent read its config from the Hub again. */
+    reloadAgent(doName: string): Effect.Effect<void>;
+    /** The skills every agent shares, kept in the Hub. */
+    readonly globalSkills: Skills["Service"];
     /** Ask another agent a question, by its slug, read-only. */
     ask(agent: string, question: string): Effect.Effect<string, ToolError>;
     /** What every agent knows about the user. Empty when the Hub cannot answer. */

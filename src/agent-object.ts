@@ -5,7 +5,16 @@ import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
 import type { Env } from "./env.ts";
 import { StateError, ToolError } from "./errors.ts";
-import { EMPTY_PROFILE, Host, shortPlace, type AgentInfo, type Profile } from "./host.ts";
+import {
+  EMPTY_PROFILE,
+  Host,
+  shortPlace,
+  type AgentChange,
+  type AgentInfo,
+  type AgentSpec,
+  type Profile,
+} from "./host.ts";
+import type { Skill, Skills } from "./skills.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { hookToken } from "./hooks.ts";
 import { Usage, type Spend } from "./usage.ts";
@@ -21,6 +30,15 @@ type Hosted = Context.Service.Shape<typeof Host>;
 /** The Hub's methods, spelled out: its stub type loops back through `Env`. */
 export interface HubApi {
   agents(): Promise<AgentInfo[]>;
+  createAgent(spec: AgentSpec): Promise<AgentChange>;
+  updateAgent(key: string, patch: Partial<AgentSpec>): Promise<AgentChange>;
+  deleteAgent(key: string): Promise<AgentChange>;
+  skillList(): Promise<ReadonlyArray<Skill>>;
+  skillGet(name: string): Promise<Skill | undefined>;
+  skillSave(name: string, description: string, body: string): Promise<Skill>;
+  skillRemove(name: string): Promise<boolean>;
+  skillTouch(name: string): Promise<void>;
+  skillPin(name: string): Promise<void>;
   agent(key: string): Promise<AgentInfo | undefined>;
   route(
     place: string,
@@ -37,7 +55,30 @@ export interface HubApi {
 interface AgentApi {
   ask(question: string): Promise<string>;
   spend(): Promise<Spend>;
+  setting(who: string, key: string, value: string | undefined): Promise<string>;
+  reload(): Promise<void>;
 }
+
+/** The Hub's skills behind the same interface as an agent's own. */
+const globalSkills = (hub: () => HubApi): Skills["Service"] => {
+  const call = <A>(operation: string, f: () => Promise<A>) =>
+    Effect.tryPromise({ try: f, catch: (cause) => new StateError({ operation, cause }) });
+  return {
+    list: call("global skills", () => hub().skillList()),
+    get: (name) => call("global skill", () => hub().skillGet(name)),
+    save: (name, description, body) =>
+      call("save global skill", () => hub().skillSave(name, description, body)),
+    remove: (name) => call("remove global skill", () => hub().skillRemove(name)),
+    touch: (name) => call("touch global skill", () => hub().skillTouch(name)),
+    pin: (name) => call("pin global skill", () => hub().skillPin(name)),
+    setPinned: (name, pinned) =>
+      pinned ? call("pin global skill", () => hub().skillPin(name)) : Effect.void,
+    index: Effect.map(
+      call("global skills", () => hub().skillList()),
+      (all) => all.map(({ name, description }) => ({ name, description })),
+    ),
+  };
+};
 
 /**
  * One agent: its memory, pi-durable, schedules, skills and settings, in one Durable Object with one
@@ -60,6 +101,9 @@ export class AgentObject extends DurableObject<Env> {
           id,
           slug: id,
           name: env.AGENT_NAME || "Mizook",
+          role: "",
+          persona: "",
+          tools: undefined,
           doName: this.doName,
           isDefault: false,
           bound: [],
@@ -116,6 +160,18 @@ export class AgentObject extends DurableObject<Env> {
           Effect.orElseSucceed(() => shortPlace(place)),
         ),
       namePlace: (place, name) => Effect.promise(() => hub().setPlaceName(place, name)),
+      createAgent: (spec) => Effect.promise(() => hub().createAgent(spec)),
+      updateAgent: (key, patch) => Effect.promise(() => hub().updateAgent(key, patch)),
+      deleteAgent: (key) => Effect.promise(() => hub().deleteAgent(key)),
+      setAgentSetting: (doName, key, value) =>
+        Effect.promise(() =>
+          doName === self.doName
+            ? this.setting(`agent:${self.slug}`, key, value)
+            : peer(doName).setting(`agent:${self.slug}`, key, value),
+        ).pipe(Effect.asVoid),
+      reloadAgent: (doName) =>
+        doName === self.doName ? Effect.sync(reload) : Effect.promise(() => peer(doName).reload()),
+      globalSkills: globalSkills(hub),
       profile: Effect.tryPromise({ try: () => hub().profile(), catch: () => undefined }).pipe(
         Effect.orElseSucceed(() => EMPTY_PROFILE),
       ),
@@ -158,6 +214,18 @@ export class AgentObject extends DurableObject<Env> {
 
   private runtimeEffect<A, E>(effect: Effect.Effect<A, E, Backup>): Effect.Effect<A> {
     return Effect.promise(() => this.runtime.runPromise(effect as never) as Promise<A>);
+  }
+
+  /** Its config changed in the Hub: read it again. */
+  async reload(): Promise<void> {
+    this.reloadRuntime();
+  }
+
+  /** The Hub deleted this agent: drop everything it stored. */
+  async destroy(): Promise<void> {
+    await this.runtime.dispose();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
   }
 
   /** Called by another agent through `ask_agent`: read-only, nothing is logged here. */

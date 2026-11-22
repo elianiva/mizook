@@ -13,6 +13,7 @@ import {
 import { clipToolOutput } from "@mizook/memory";
 import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
+import { applyAgentAction } from "./agent-manage.ts";
 import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
@@ -468,6 +469,21 @@ export class Bot extends Context.Service<
           if (!taken) return undefined;
           if (always && taken.match !== "") yield* policies.add(taken.match, "allow");
           const resume = Effect.gen(function* () {
+            // An agent change of ours runs here; anything else is an Executor call to resume.
+            if (taken.action !== "") {
+              const result = approved
+                ? yield* applyAgentAction(host, taken.action)
+                : "Nothing was changed.";
+              yield* fire(
+                approved
+                  ? `[approval] The user approved. ${result}`
+                  : `[approval] The user denied it. Do not try again or work around it. ${result}`,
+                `approval:${id}`,
+                "approval",
+                taken.place,
+              );
+              return;
+            }
             const result = yield* executor
               .call("resume", {
                 executionId: taken.executionId,

@@ -46,15 +46,28 @@ const profileText = (profile: Profile): string =>
     .filter((part) => part !== "")
     .join("\n");
 
-/** The skill catalogue, one line each. The bodies load only when the agent reads one. */
+type IndexEntry = { readonly name: string; readonly description: string };
+
+/**
+ * The skill catalogue, one line each: the agent's own, then the global ones it does not shadow.
+ * The bodies load only when the agent reads one.
+ */
 const skillIndexText = (
-  skills: ReadonlyArray<{ readonly name: string; readonly description: string }>,
+  own: ReadonlyArray<IndexEntry>,
+  global: ReadonlyArray<IndexEntry>,
 ): string => {
+  const mine = new Set(own.map((skill) => skill.name));
+  const skills = [
+    ...own.map((skill) => ({ ...skill, label: skill.name })),
+    ...global
+      .filter((skill) => !mine.has(skill.name))
+      .map((skill) => ({ ...skill, label: `${skill.name} (global)` })),
+  ];
   if (skills.length === 0) return "";
   const shown = skills.slice(0, 40);
   return [
     "Skills you can read with skill_manage:",
-    ...shown.map((skill) => `- ${skill.name}: ${skill.description}`),
+    ...shown.map((skill) => `- ${skill.label}: ${skill.description}`),
     ...(skills.length > shown.length ? [`... and ${skills.length - shown.length} more`] : []),
   ].join("\n");
 };
@@ -208,7 +221,11 @@ export class Agent extends Context.Service<
         const turnContext = [
           `Now: ${yield* now}`,
           profileText(yield* host.profile),
-          skillIndexText(yield* skills.index),
+          skillIndexText(
+            yield* skills.index,
+            // The Hub being away costs the shared skills for one turn, not the turn.
+            yield* host.globalSkills.index.pipe(Effect.orElseSucceed(() => [])),
+          ),
           intentText(woke),
         ]
           .filter((part) => part !== "")

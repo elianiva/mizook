@@ -170,6 +170,12 @@ export const SkillArgs = Schema.Struct({
     Schema.Literals(["list", "read", "save", "delete"]),
     "list: names and descriptions. read: the full procedure. save: create or replace. delete: remove it.",
   ),
+  scope: Schema.optionalKey(
+    described(
+      Schema.Literals(["agent", "global"]),
+      "agent (default for save): only you see it. global: every agent sees it; use it for a procedure about the user rather than your role. read and delete look in yours first, then global, unless given.",
+    ),
+  ),
   name: Schema.optionalKey(
     described(
       Schema.String,
@@ -185,6 +191,40 @@ export const SkillArgs = Schema.Struct({
       "save: the procedure. Steps, inputs, output, what to check, and what needs approval. Up to 24,000 characters.",
     ),
   ),
+});
+
+export const AgentManageArgs = Schema.Struct({
+  action: described(
+    Schema.Literals(["list", "create", "update", "delete"]),
+    "list: every agent with its role and tools. create, update and delete ask the user to approve first.",
+  ),
+  slug: Schema.optionalKey(
+    described(
+      Schema.String,
+      "The agent's command name, such as grok: lowercase letters, digits and _, 2 to 32. Required for create, update and delete.",
+    ),
+  ),
+  new_slug: Schema.optionalKey(described(Schema.String, "update: rename the command.")),
+  name: Schema.optionalKey(described(Schema.String, "Display name, up to 64 characters.")),
+  role: Schema.optionalKey(
+    described(
+      Schema.String,
+      "What the agent is for and how it works, as instructions to it. Goes after its persona.",
+    ),
+  ),
+  persona: Schema.optionalKey(
+    described(
+      Schema.String,
+      "How it talks, replacing the shared persona. Leave out to keep the shared one; give an empty string to go back to it.",
+    ),
+  ),
+  tools: Schema.optionalKey(
+    described(
+      Schema.Array(Schema.String),
+      'The only tools it gets, by name. ["all"] gives every tool. send_to_user is always included.',
+    ),
+  ),
+  model: Schema.optionalKey(described(Schema.String, "Its model id, as /model takes.")),
 });
 
 export const IntentArgs = Schema.Struct({
@@ -379,6 +419,13 @@ export const toolSpecs: ReadonlyArray<ToolSpec> = [
     replay: "safe",
   },
   {
+    name: "agent_manage",
+    description:
+      "List the user's agents, or create, change or delete one. An agent is a separate assistant with its own memory, role and tools, which the user talks to with /<slug> or binds to a place with /agent <slug>. Changes need the user's approval.",
+    parameters: parametersOf(AgentManageArgs),
+    replay: "unsafe",
+  },
+  {
     name: "profile_manage",
     description:
       "Read or change what every agent knows about the user. Use it when you learn a stable fact about them, or a rule they want followed everywhere. Do not put conversation details here.",
@@ -508,13 +555,18 @@ webhook_link gives a URL that starts a turn with you when called; give it to ser
 
 ask_agent reads another agent's memory. Use it only when the user's question is about what that agent knows.
 
+agent_manage creates an agent for a role the user wants kept apart, such as a fact-checker or a
+language tutor: give it a slug, a role written as instructions to it, and only the tools the role
+needs. Creating, changing or deleting one waits for the user's approval; say what you asked for and
+end your turn. The answer arrives as a message starting [approval].
+
 # The user
 
 profile_manage is the one thing every agent shares: who the user is and the rules they want followed. Save a stable preference or rule there when you learn it, not conversation details. Keep the profile short.
 
 # Skills
 
-A skill is a procedure you can reuse. When you work out a repeatable multi-step task, save it with skill_manage: when to use it, the inputs, the steps that matter, the output, and what needs approval. Save the method, not the transcript. Read a skill before a task that matches its description. When a schedule says to read a skill, do that first.
+A skill is a procedure you can reuse. Your own skills are yours alone; global skills are shared by every agent. Save one as global when it is about the user or their setup rather than your role. When you work out a repeatable multi-step task, save it with skill_manage: when to use it, the inputs, the steps that matter, the output, and what needs approval. Save the method, not the transcript. Read a skill before a task that matches its description. When a schedule says to read a skill, do that first.
 
 # Standing intents
 
