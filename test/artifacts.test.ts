@@ -301,20 +301,17 @@ property(
   Arbitrary.all({
     bad: literalRule,
     good: Arbitrary.array(tokenRule, { maxLength: 4 }),
+    position: int(0, 4),
     inline: Arbitrary.schema(Schema.Boolean),
     body: plainWords,
-  }).pipe(
-    Arbitrary.filter(
-      ({ bad, good }) =>
-        bad.complaint !== "font-family" || !good.some((rule) => rule.startsWith("font-family")),
-    ),
-  ),
-  ({ bad, good, inline, body }) => {
+  }),
+  ({ bad, good, position, inline, body }) => {
     const page = (rules: ReadonlyArray<string>) =>
       inline
         ? `<p style="${rules.join(";")}">${body}</p>`
         : `<style>p{${rules.join(";")}}</style><p>${body}</p>`;
-    expect(checkContent(KIND_TYPES.html, page([...good, bad.css]))).toContain(bad.complaint);
+    const withBad = good.toSpliced(position, 0, bad.css);
+    expect(checkContent(KIND_TYPES.html, page(withBad))).toContain(bad.complaint);
     expect(checkContent(KIND_TYPES.html, page(good))).toBeUndefined();
     expect(checkContent(KIND_TYPES.html, `<p>${body}</p>`)).toBeUndefined();
   },

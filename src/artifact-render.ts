@@ -389,6 +389,8 @@ export const renderArtifact = (
 const STYLE_BLOCKS = /<style[^>]*>([\s\S]*?)<\/style>|\sstyle=("[^"]*"|'[^']*')/gi;
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i;
 const FONT_SIZE_LITERAL = /font-size\s*:\s*[\d.]+(?:px|rem)/i;
+const FONT_FAMILY_VALUE = /font-family\s*:([^;}"']*)/gi;
+const DESIGN_FONT = /^var\(--(?:font|mono)\)(?:\s*!important)?$/i;
 
 const htmlDesignTokenViolation = (source: string): string | undefined => {
   for (const m of source.matchAll(STYLE_BLOCKS)) {
@@ -399,10 +401,8 @@ const htmlDesignTokenViolation = (source: string): string | undefined => {
     if (FONT_SIZE_LITERAL.test(css)) {
       return "html pages use the size variables for font-size (var(--text-sm), var(--text-base), var(--text-lg), var(--text-xl), var(--text-2xl)), not px or rem values. Rewrite font-size with var().";
     }
-    if (
-      /font-family\s*:/i.test(css) &&
-      !/font-family\s*:\s*var\(--(?:font|mono)\)/i.test(m[1] ?? m[2] ?? "")
-    ) {
+    const fontFamilies = [...(m[1] ?? m[2] ?? "").matchAll(FONT_FAMILY_VALUE)];
+    if (fontFamilies.some(([, value = ""]) => !DESIGN_FONT.test(value.trim()))) {
       return "html pages use font-family: var(--font) or var(--mono) only.";
     }
   }
