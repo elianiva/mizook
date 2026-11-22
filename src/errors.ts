@@ -111,3 +111,9 @@ export class ActionError extends Data.TaggedError("ActionError")<{
     return this.reason;
   }
 }
+
+export class HookSecretMissing extends Data.TaggedError("HookSecretMissing")<{}> {
+  override get message() {
+    return "MIZOOK_WEBHOOK_SECRET is empty, so webhook links cannot be signed";
+  }
+}

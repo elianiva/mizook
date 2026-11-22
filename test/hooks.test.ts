@@ -86,3 +86,13 @@ property(
       expect(await hookTokenValid(secret, channel, forged)).toBe(false);
     }),
 );
+
+property(
+  "with an empty secret no link is signed and no token is accepted",
+  Arbitrary.all({ channel: wellFormed, token: wellFormed }),
+  ({ channel, token }) =>
+    Effect.promise(async () => {
+      await expect(hookToken("", channel)).rejects.toThrow("MIZOOK_WEBHOOK_SECRET is empty");
+      expect(await hookTokenValid("", channel, token)).toBe(false);
+    }),
+);

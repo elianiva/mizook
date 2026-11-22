@@ -1,3 +1,5 @@
+import { HookSecretMissing } from "./errors.ts";
+
 const encoder = new TextEncoder();
 
 const toBase64Url = (bytes: Uint8Array): string =>
@@ -7,6 +9,7 @@ const toBase64Url = (bytes: Uint8Array): string =>
     .replaceAll("=", "");
 
 export const hookToken = async (secret: string, channel: string): Promise<string> => {
+  if (secret === "") throw new HookSecretMissing();
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secret),
@@ -28,6 +31,7 @@ export const hookTokenValid = async (
   channel: string,
   token: string,
 ): Promise<boolean> => {
+  if (secret === "") return false;
   const [expectedDigest, givenDigest] = await Promise.all(
     [await hookToken(secret, channel), token].map((s) =>
       crypto.subtle.digest("SHA-256", encoder.encode(s)),
