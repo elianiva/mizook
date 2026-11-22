@@ -20,7 +20,8 @@ import { Models } from "./models.ts";
 import { Handlers } from "./handlers.ts";
 import { Host } from "./host.ts";
 import { State } from "./state.ts";
-import { toolSpecs } from "./tools.ts";
+import { runProgram } from "./codemode.ts";
+import { agentTools } from "./tools.ts";
 
 export class Durable extends Context.Service<
   Durable,
@@ -53,32 +54,58 @@ export class Durable extends Context.Service<
 
         const text = (output: string) => ({ output: [{ type: "text" as const, text: output }] });
 
-        // A role may limit the tools; the agent can always talk.
-        const allowed = host.self.tools && new Set([...host.self.tools, "send_to_user"]);
-        const offered = toolSpecs.filter((spec) => !allowed || allowed.has(spec.name));
-        const tools = offered.map((spec) =>
+        /** Where the turn that called a tool is talking. */
+        const placeOf = (conversationId: ConversationId) =>
+          Effect.map(
+            Effect.orElseSucceed(state.turns, () => []),
+            (turns) => turns.find((t) => t.conversationId === conversationId)?.threadId,
+          );
+
+        // pi-ai already checked the arguments against the schema.
+        const codeOf = (args: unknown) =>
+          typeof args === "object" &&
+          args !== null &&
+          "code" in args &&
+          typeof args.code === "string"
+            ? args.code
+            : "";
+
+        // The model calls two tools; a program reaches the rest, as many as the role allows.
+        const tools = [
           defineTool({
-            name: spec.name,
-            description: spec.description,
-            parameters: spec.parameters,
-            replay: spec.replay,
-            // The tool answers in the place of the turn that called it.
+            name: "send_to_user",
+            description: agentTools[0]!.description,
+            parameters: agentTools[0]!.parameters,
+            replay: "unsafe",
             execute: async (args, api) =>
               text(
                 await run(
-                  Effect.flatMap(
-                    Effect.orElseSucceed(state.turns, () => []),
-                    (turns) =>
-                      handlers.call(
-                        spec.name,
-                        args,
-                        turns.find((t) => t.conversationId === api.conversationId)?.threadId,
-                      ),
+                  Effect.flatMap(placeOf(api.conversationId), (place) =>
+                    handlers.call("send_to_user", args, place),
                   ),
                 ),
               ),
           }),
-        );
+          defineTool({
+            name: "execute",
+            description: agentTools[1]!.description,
+            parameters: agentTools[1]!.parameters,
+            // A program can send, publish or delete: a restart must not run it twice.
+            replay: "unsafe",
+            execute: async (args, api) =>
+              text(
+                await run(
+                  Effect.flatMap(placeOf(api.conversationId), (place) =>
+                    runProgram(
+                      host.self.tools,
+                      (name, input) => handlers.run(name, input, place),
+                      codeOf(args),
+                    ),
+                  ),
+                ),
+              ),
+          }),
+        ];
 
         const contentText = (content: Message["content"]): string =>
           typeof content === "string"

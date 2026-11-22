@@ -30,6 +30,7 @@ import { Skills } from "./skills.ts";
 import { SummarizerLive } from "./summarizer.ts";
 import { PERSONA } from "./persona.ts";
 import { TOOL_GUIDE } from "./tools.ts";
+import { catalogText } from "./codemode.ts";
 
 /**
  * Everything the Durable Object runs, as one layer over its own storage.
@@ -80,6 +81,7 @@ export const makeRuntime = (
         instructions: [
           host.self.persona.trim() || PERSONA,
           TOOL_GUIDE,
+          `# Tools\n\n${catalogText(host.self.tools)}`,
           host.self.role.trim() === "" ? "" : `# Your role\n\n${host.self.role.trim()}`,
           instructions,
         ]

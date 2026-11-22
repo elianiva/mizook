@@ -35,6 +35,9 @@ importers:
       '@mizook/memory':
         specifier: workspace:*
         version: link:packages/memory
+      '@opencode/codemode':
+        specifier: 2.3.2
+        version: 2.3.2
       alchemy:
         specifier: 2.0.0-beta.87
         version: 2.0.0-beta.87(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@voidzero-dev/vite-plus-core@8.3.8000(@types/node@26.6.6)(yaml@2.9.1))(effect@4.1.4)
@@ -757,6 +760,9 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2 || 2.0.0-beta.3
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2 || 2.0.0-beta.3
+
+  '@opencode/codemode@2.3.2':
+    resolution: {integrity: sha512-3TrCoC/4KgZS0u6/Lek8SOT+Ez13h0lSXoYjgpEE+j/+LoO746f0HbRhOBKt4QJGEcwVJ+9scmhtVrYGKC5x7Q==}
 
   '@oxc-project/runtime@0.159.0':
     resolution: {integrity: sha512-z+wJlHpqB2rsnQ5PbQlWKC7lYISlHrniQ3N5JF4LGaa+kOopx5u5DMT2P7pN12fsXFg1gVcoLdRXPRyIS61OKQ==}
@@ -1908,16 +1914,25 @@ packages:
     resolution: {integrity: sha512-wfzYR0qEXUm6zJA0+hEwQGkYphhPahuzD3yrJ1s/SGV/b8b5Zv7ZzV6xHUolDI5AcuqNE9Kxji8VI0knebfhGA==}
     cpu: [arm64]
     os: [darwin]
+    deprecated: |-
+      Deprecated in favor of official @effect/tsgo (https://github.com/Effect-TS/tsgo) which ships first-party tsrs support
+          (effect-tsgo tsrs).
 
   '@yielded/effect-tsrs-darwin-x64@0.2.3':
     resolution: {integrity: sha512-CP8tmyZx4eZcQn1K1AUMV5g2E6EB0EA6zKZ/otYqQ/Sh5RX/TKC2GX/x93UJiAaCCAuG1eAQ63ZQRx6ACKkfSw==}
     cpu: [x64]
     os: [darwin]
+    deprecated: |-
+      Deprecated in favor of official @effect/tsgo (https://github.com/Effect-TS/tsgo) which ships first-party tsrs support
+          (effect-tsgo tsrs).
 
   '@yielded/effect-tsrs-linux-arm64@0.2.3':
     resolution: {integrity: sha512-zXXYAymwF6DQMiEXygA/AVv6mWC2gpFET0UzkUIzn+QRwnEIq9RF05SNwMr6CpiAJxGQcsaB+p/U49DdsYIlDA==}
     cpu: [arm64]
     os: [linux]
+    deprecated: |-
+      Deprecated in favor of official @effect/tsgo (https://github.com/Effect-TS/tsgo) which ships first-party tsrs support
+          (effect-tsgo tsrs).
 
   '@yielded/effect-tsrs-linux-x64@0.2.3':
     resolution: {integrity: sha512-R/peZOwSG1pDX9VOqWEEVBslGYqA2kwemWo+ik81AHeuI3BdC2r8vu6DX8uUmZuw+HG6GUdfJjlZl+828DUkiA==}
@@ -1928,6 +1943,9 @@ packages:
     resolution: {integrity: sha512-ev+HHGlKelDaw9sMtQEkYJE2N1tg8dC/9EwTslVvt22XtD/VQhkXFjAlLTIxEO3xZzXiQsdFHWb8RX+CJLF8FQ==}
     cpu: [x64]
     os: [win32]
+    deprecated: |-
+      Deprecated in favor of official @effect/tsgo (https://github.com/Effect-TS/tsgo) which ships first-party tsrs support
+          (effect-tsgo tsrs).
 
   '@yielded/effect-tsrs@0.2.3':
     resolution: {integrity: sha512-UKEo439hWTpRuFJFjqHpNas3Z1ZVxYV6Mg/A1k3B1lH8PF11JGXKT8Ja+yAa73QDPuFxNFMCQErFUCOSw7wQwQ==}
@@ -2010,6 +2028,11 @@ packages:
   acorn-walk@8.3.5:
     resolution: {integrity: sha512-HEHNfbars9v4pgpW6SO1KSPkfoS0xVOM/9UzkJltjlsHZmJasxg8aXkuZa7SMf8vKGIBhpUsPluQSqhJFCqebw==}
     engines: {node: '>=0.4.0'}
+
+  acorn@8.15.0:
+    resolution: {integrity: sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==}
+    engines: {node: '>=0.4.0'}
+    hasBin: true
 
   acorn@8.19.0:
     resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
@@ -4164,6 +4187,11 @@ snapshots:
       '@emnapi/runtime': 2.0.0-beta.2
       '@tybys/wasm-util': 0.10.5
 
+  '@opencode/codemode@2.3.2':
+    dependencies:
+      acorn: 8.15.0
+      effect: 4.1.4
+
   '@oxc-project/runtime@0.159.0': {}
 
   '@oxc-project/types@0.148.0': {}
@@ -4980,6 +5008,8 @@ snapshots:
   acorn-walk@8.3.5:
     dependencies:
       acorn: 8.19.0
+
+  acorn@8.15.0: {}
 
   acorn@8.19.0: {}
 

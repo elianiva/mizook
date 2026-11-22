@@ -11,7 +11,7 @@ import { Host, type Profile } from "./host.ts";
 import { Intents, type Intent } from "./intents.ts";
 import { Models } from "./models.ts";
 import { Skills } from "./skills.ts";
-import { agentTools } from "./tools.ts";
+import { askTools } from "./tools.ts";
 import { Outbox } from "./outbox.ts";
 import { Usage } from "./usage.ts";
 import { State, type PendingTurn } from "./state.ts";
@@ -326,7 +326,6 @@ export class Agent extends Context.Service<
         return true;
       });
 
-      const askTools = agentTools.filter((tool) => tool.name === "zoom" || tool.name === "date");
       const ask = Effect.fn("Agent.ask")(function* (question: string) {
         const view = yield* memory.renderView;
         const turnContext = [`Now: ${yield* now}`, profileText(yield* host.profile)]

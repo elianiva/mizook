@@ -49,8 +49,8 @@ import {
   WebFetchArgs,
   WebSearchArgs,
   ZoomArgs,
-  toolSpecs,
 } from "./tools.ts";
+import { toolPaths } from "./codemode.ts";
 
 /** What a tool does, by name. The arguments were already checked against the tool's schema. */
 export class Handlers extends Context.Service<
@@ -58,6 +58,12 @@ export class Handlers extends Context.Service<
   {
     /** `place` is where the turn that called it is talking; undefined outside a turn. */
     call(name: string, args: unknown, place: string | undefined): Effect.Effect<string>;
+    /** The same, failing with what went wrong instead of answering with it. */
+    run(
+      name: string,
+      args: unknown,
+      place: string | undefined,
+    ): Effect.Effect<string, { readonly message: string }>;
   }
 >()("mizook/Handlers") {
   static readonly layer = Layer.effect(
@@ -301,14 +307,7 @@ export class Handlers extends Context.Service<
           case "executor":
             return Effect.gen(function* () {
               const a = yield* decode(ExecutorArgs, args);
-              const input = yield* Effect.try({
-                try: () => JSON.parse(a.input) as unknown,
-                catch: () => new ToolError({ reason: "input is not valid JSON" }),
-              });
-              if (typeof input !== "object" || input === null || Array.isArray(input)) {
-                return yield* new ToolError({ reason: "input must be a JSON object" });
-              }
-              const call = input as Record<string, unknown>;
+              const call = a.input;
               const target = targetOf(a.tool, call);
               const decision = yield* policies.decide(target);
               if (decision === "deny") {
@@ -536,7 +535,7 @@ export class Handlers extends Context.Service<
               }
               const slug = a.slug?.trim().replace(/^\//, "").toLowerCase();
               if (!slug) return yield* new ToolError({ reason: `${a.action} needs a slug` });
-              const known = new Set(toolSpecs.map((spec) => spec.name));
+              const known = new Set([...toolPaths, ...toolPaths.map((p) => p.split(".")[0])]);
               const tools =
                 a.tools === undefined
                   ? undefined
@@ -670,12 +669,13 @@ export class Handlers extends Context.Service<
               ),
             );
           default:
-            return Effect.succeed(`No tool ${name}.`);
+            return Effect.fail(new ToolError({ reason: `no tool ${name}` }));
         }
       };
 
       // A failure becomes text the agent reads and can act on; it never fails the turn.
       return Handlers.of({
+        run,
         call: (name, args, place) =>
           run(name, args, place).pipe(
             Effect.catch((error) => Effect.succeed(`Error: ${error.message}`)),

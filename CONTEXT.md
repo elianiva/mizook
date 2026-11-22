@@ -24,7 +24,12 @@ long for one message is logged as several in a row.
 Hub, not in a chat's memory: identity, not history.
 
 **Role** — what an agent is for: instructions after its persona, and optionally its own persona,
-model, and the only tools it gets. Agents create agents with `agent_manage`, after approval.
+model, and the only tools it gets, by path or namespace. Agents create agents with
+`tools.agents.manage`, after approval.
+
+**Program** — the JavaScript a turn runs with `execute`. It calls tools as
+`tools.<namespace>.<name>(input)`; each answers with text. The model calls nothing else but
+`send_to_user`.
 
 **Skill** — a reusable procedure, saved by name. Agent skills are one agent's; global skills are in
 the Hub and every agent sees them. The index goes into a turn; the body is read only
