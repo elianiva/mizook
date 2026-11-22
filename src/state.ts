@@ -182,7 +182,7 @@ export const readSettings = (sql: SqlDriver) =>
         `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
       );
       return sql.all<{ key: string; value: string }>(
-        `SELECT key, value FROM app_meta WHERE key LIKE 'setting:%'`,
+        `SELECT key, value FROM app_meta WHERE key GLOB 'setting:*'`,
       );
     },
     catch: (cause) => new StateError({ operation: "read settings", cause }),

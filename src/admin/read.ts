@@ -59,7 +59,7 @@ export const overview = async (sql: SqlDriver, now: number): Promise<Overview> =
   const lines = views ? (JSON.parse(views) as { chat: { lines: unknown[] } }).chat.lines.length : 0;
   const settings = await rowsOrEmpty<{ key: string; value: string }>(
     sql,
-    `SELECT key, value FROM app_meta WHERE key LIKE 'setting:%'`,
+    `SELECT key, value FROM app_meta WHERE key GLOB 'setting:*'`,
   );
   return {
     messages: await count(sql, "mem_messages"),

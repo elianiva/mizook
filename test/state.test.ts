@@ -18,7 +18,9 @@ const text = Arbitrary.schema(Schema.String).pipe(
 );
 
 const key = Arbitrary.all({
-  prefix: Arbitrary.schema(Schema.Literals(["setting:", "", "thread", "settings", "set"])),
+  prefix: Arbitrary.schema(
+    Schema.Literals(["setting:", "Setting:", "SETTING:", "", "thread", "settings", "set"]),
+  ),
   name: Arbitrary.schema(Schema.Literals(["instructions", "model", "", "a:b", "timezone"])),
 }).pipe(Arbitrary.map(({ prefix, name }) => prefix + name));
 

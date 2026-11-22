@@ -587,7 +587,7 @@ property(
     nodeCount: int(0, 30),
     meta: Arbitrary.array(
       Arbitrary.all({
-        prefix: oneOf(["setting:", "other:", "settings", "xsetting:", ""]),
+        prefix: oneOf(["setting:", "Setting:", "other:", "settings", "xsetting:", ""]),
         key: name,
         value: anyText,
       }),
