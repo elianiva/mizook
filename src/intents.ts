@@ -52,6 +52,9 @@ const parseTriggersOrNone = (json: string): string[] => {
   }
 };
 
+const allTriggersMentioned = (text: string, triggers: ReadonlyArray<string>) =>
+  triggers.length > 0 && triggers.every((trigger) => matchesTrigger(text, trigger));
+
 const toIntent = (row: typeof Row.Type): Intent => ({
   id: row.id,
   description: row.description,
@@ -233,7 +236,7 @@ export class Intents extends Context.Service<
                 if (intent.lastFired !== undefined && at - intent.lastFired < intent.cooldown) {
                   continue;
                 }
-                if (!intent.triggers.every((trigger) => matchesTrigger(text, trigger))) continue;
+                if (!allTriggersMentioned(text, intent.triggers)) continue;
                 const fireCount = intent.fireCount + 1;
                 const state: IntentState = fireCount >= intent.maxFires ? "done" : "armed";
                 yield* run("fire intent", () =>

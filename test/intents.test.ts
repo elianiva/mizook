@@ -280,3 +280,28 @@ property(
     ),
   { runs: 40 },
 );
+
+property(
+  "an intent with no readable trigger never fires, whatever the message",
+  Arbitrary.all({
+    stored: Arbitrary.schema(
+      Schema.Literals(["{oops", "", "null", "{}", "[]", "[1,2]", "[null]", '"launch"', "launch"]),
+    ),
+    text: Arbitrary.flatMap(Arbitrary.schema(Schema.Boolean), (plain) =>
+      plain ? Arbitrary.Constant("launch {oops null") : message,
+    ),
+  }),
+  ({ stored, text }) =>
+    withIntents((db) =>
+      Effect.gen(function* () {
+        const intents = yield* Intents;
+        const now = Date.now();
+        const options = { expiresAt: now + HOUR, cooldownMs: 0, maxFires: 1 };
+        const corrupted = yield* intents.create("Stored by hand.", ["placeholder"], options);
+        db.prepare("UPDATE app_intents SET triggers = ? WHERE id = ?").run(stored, corrupted.id);
+        yield* intents.create("Made with no triggers.", [], options);
+        expect(yield* intents.match(text, new Date(now))).toEqual([]);
+      }),
+    ),
+  { runs: 40 },
+);
