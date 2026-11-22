@@ -54,7 +54,7 @@ export class State extends Context.Service<
     readonly turns: Effect.Effect<ReadonlyArray<PendingTurn>, StateError>;
     putTurn(turn: PendingTurn): Effect.Effect<void, StateError>;
     deleteTurn(chatId: string): Effect.Effect<void, StateError>;
-    /** A small named value of the chat, such as the thread schedules post to. */
+    /** A small named value of the chat, such as the place the agent talked last. */
     meta(key: string): Effect.Effect<string | undefined, StateError>;
     setMeta(key: string, value: string): Effect.Effect<void, StateError>;
     deleteMeta(key: string): Effect.Effect<void, StateError>;

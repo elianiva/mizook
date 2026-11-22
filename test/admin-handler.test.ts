@@ -63,9 +63,31 @@ const agent = {
   lastActive: 1,
 };
 const channel = { doName: "agent:a1", threadId: "finance", name: "Finance", lastActive: 1 };
+/** Three automations: two act for this agent (one paused), one for another agent. */
+const automation = (id: number, agentId: string, active = true) => ({
+  id,
+  spec: { kind: "cron", expr: "0 9 * * *", timezone: "UTC" },
+  action: { kind: "turn", agent: agentId, place: "", prompt: `p${id}` },
+  nextAt: 1000 + id,
+  active,
+  lastHash: undefined,
+});
+const cancelled: number[] = [];
+const automations = {
+  getByName: () => ({
+    list: async (agentId?: string) =>
+      [automation(3, "a1"), automation(4, "a1", false), automation(9, "b2")].filter(
+        (a) => agentId === undefined || a.action.agent === agentId,
+      ),
+    get: async (id: number) => [automation(3, "a1"), automation(9, "b2")].find((a) => a.id === id),
+    cancel: async (id: number) => (cancelled.push(id), true),
+    runs: async () => [],
+  }),
+};
 const configured = (extra: Partial<Env> = {}): Partial<Env> => ({
   ACCESS_TEAM_DOMAIN: TEAM,
   ACCESS_AUD: AUD,
+  Automations: automations as never,
   Hub: { getByName: () => ({ agents: async () => [agent] }) } as never,
   AgentObject: {
     getByName: () => ({
@@ -147,8 +169,10 @@ test("a write needs the token, the csrf header and this origin, and acts once", 
   expect((await post(path, good)).status).toBe(200);
   expect(calls).toEqual([["me@example.com", "deny", 7]]);
   expect((await post(path, good)).status).toBe(409);
-  expect((await post("/admin/api/schedules/3/cancel?c=agent%3Aa1", good)).status).toBe(409);
-  expect(calls.at(-1)).toEqual(["me@example.com", "cancel_schedule", 3]);
+  // An automation that acts for another agent cannot be cancelled from this agent's page.
+  expect((await post("/admin/api/schedules/9/cancel?c=agent%3Aa1", good)).status).toBe(409);
+  expect((await post("/admin/api/schedules/3/cancel?c=agent%3Aa1", good)).status).toBe(200);
+  expect(cancelled).toEqual([3]);
   expect((await post("/admin/api/schedules/3/approve?c=agent%3Aa1", good)).status).toBe(404);
   expect((await post("/admin/api/approvals/7/deny?c=nope", good)).status).toBe(404);
   vi.unstubAllGlobals();
@@ -245,7 +269,6 @@ test("the summary has one line per agent", async () => {
           spend: { last24h: 0.5, last7d: 2 },
           turns: [{}],
           approvals: [{}, {}],
-          schedules: 3,
           settings: { budget: "1" },
         }),
       }),
@@ -262,7 +285,7 @@ test("the summary has one line per agent", async () => {
       spend7d: 2,
       pending: 1,
       approvals: 2,
-      schedules: 3,
+      schedules: 1,
       budget: 1,
     },
   ]);

@@ -7,7 +7,6 @@ import {
   messages,
   overview,
   policies,
-  runs,
   skills,
   usage,
 } from "../src/admin/read.ts";
@@ -106,7 +105,7 @@ test("tool calls are counted by the first word, inside the range only, and the a
   ]);
 });
 
-test("skills, intents, policies and runs read as the agent stores them", async () => {
+test("skills, intents and policies read as the agent stores them", async () => {
   const { db, sql } = setup();
   db.exec(`CREATE TABLE app_skills (
       name TEXT PRIMARY KEY, description TEXT, body TEXT, created INTEGER, updated INTEGER,
@@ -115,10 +114,7 @@ test("skills, intents, policies and runs read as the agent stores them", async (
       id INTEGER PRIMARY KEY, description TEXT, triggers TEXT, created INTEGER, expires INTEGER,
       cooldown INTEGER, max_fires INTEGER, fire_count INTEGER, last_fired INTEGER, state TEXT);
     CREATE TABLE app_policies (
-      id INTEGER PRIMARY KEY, match TEXT, decision TEXT, created INTEGER);
-    CREATE TABLE app_runs (
-      id INTEGER PRIMARY KEY, schedule_id INTEGER, started INTEGER, finished INTEGER,
-      status TEXT, output TEXT, error TEXT)`);
+      id INTEGER PRIMARY KEY, match TEXT, decision TEXT, created INTEGER)`);
   db.prepare(`INSERT INTO app_skills VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "weekly-review",
     "Review the week",
@@ -142,24 +138,6 @@ test("skills, intents, policies and runs read as the agent stores them", async (
     "armed",
   );
   db.prepare(`INSERT INTO app_policies VALUES (?, ?, ?, ?)`).run(3, "gmail.send", "ask", 1);
-  db.prepare(`INSERT INTO app_runs VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    1,
-    7,
-    100,
-    250,
-    "succeeded",
-    "ok",
-    null,
-  );
-  db.prepare(`INSERT INTO app_runs VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    2,
-    7,
-    300,
-    400,
-    "failed",
-    "",
-    "boom",
-  );
 
   expect(await skills(sql)).toEqual([
     {
@@ -186,29 +164,22 @@ test("skills, intents, policies and runs read as the agent stores them", async (
     },
   ]);
   expect(await policies(sql)).toEqual([{ id: 3, match: "gmail.send", decision: "ask" }]);
-  expect((await runs(sql, 10)).map((run) => [run.id, run.status, run.error])).toEqual([
-    [2, "failed", "boom"],
-    [1, "succeeded", null],
-  ]);
 });
 
-test("the overview has 14 zero-filled days of spend, oldest first, and the soonest schedule", async () => {
+test("the overview has 14 zero-filled days of spend, oldest first", async () => {
   const { db, sql } = setup();
-  db.exec(`CREATE TABLE app_usage (at INTEGER, kind TEXT, model TEXT, input INTEGER, output INTEGER, cache_read INTEGER, cost REAL);
-    CREATE TABLE app_schedules (id INTEGER PRIMARY KEY, spec TEXT, prompt TEXT, next_at INTEGER, active INTEGER)`);
+  db.exec(
+    `CREATE TABLE app_usage (at INTEGER, kind TEXT, model TEXT, input INTEGER, output INTEGER, cache_read INTEGER, cost REAL)`,
+  );
   const now = Date.UTC(2026, 0, 20, 12);
   const add = db.prepare(`INSERT INTO app_usage VALUES (?, 'turn', 'm', 1, 1, 1, ?)`);
   add.run(now, 0.5);
   add.run(now - 2 * 86_400_000, 0.25);
   add.run(now - 30 * 86_400_000, 9);
-  db.prepare(
-    `INSERT INTO app_schedules VALUES (1, '{}', 'p', ?, 1), (2, '{}', 'p', ?, 1), (3, '{}', 'p', ?, 0)`,
-  ).run(now + 5000, now + 9000, now + 1);
   const o = await overview(sql, now);
   expect(o.daily).toHaveLength(14);
   expect(o.daily.at(-1)).toEqual({ day: "2026-01-20", cost: 0.5 });
   expect(o.daily.at(-2)?.cost).toBe(0);
   expect(o.daily.at(-3)).toEqual({ day: "2026-01-18", cost: 0.25 });
   expect(o.daily[0]?.day).toBe("2026-01-07");
-  expect(o.nextSchedule).toBe(now + 5000);
 });

@@ -9,6 +9,7 @@ import { handleAdmin } from "./admin/handler.ts";
 
 export { AgentObject } from "./agent-object.ts";
 export { Hub } from "./hub.ts";
+export { AutomationsObject } from "./automations-object.ts";
 
 /** Constant-time comparison of two secrets of any length. */
 const sameSecret = async (a: string, b: string): Promise<boolean> => {
@@ -127,18 +128,18 @@ export default {
       });
     }
 
-    // Webhooks: the token is an HMAC of the agent's Durable Object name, so a link works for one agent only.
-    const hooked = /^\/hook\/([^/]+)\/([\w-]{16,64})$/.exec(pathname);
+    // Webhook triggers: the token is an HMAC of the automation's number, so a link fires one only.
+    const hooked = /^\/hook\/(\d+)\/([\w-]{16,64})$/.exec(pathname);
     if (hooked && request.method === "POST") {
-      const agent = decodeURIComponent(hooked[1]!);
-      if (!(await hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, agent, hooked[2]!))) {
+      const id = Number(hooked[1]);
+      if (!(await hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, `auto:${id}`, hooked[2]!))) {
         return new Response("Not found", { status: 404 });
       }
       const body = (await request.text()).slice(0, 100_000);
-      const stub = env.AgentObject.getByName(agent) as unknown as {
-        hook(body: string): Promise<boolean>;
+      const automations = env.Automations.getByName("automations") as unknown as {
+        hook(id: number, body: string): Promise<boolean>;
       };
-      return new Response((await stub.hook(body)) ? "ok" : "ignored", { status: 202 });
+      return new Response((await automations.hook(id, body)) ? "ok" : "ignored", { status: 202 });
     }
 
     if (pathname === "/") return new Response("mizook");

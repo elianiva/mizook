@@ -40,7 +40,7 @@ export class TelegramError extends Data.TaggedError("TelegramError")<{
   }
 }
 
-/** A schedule the agent asked for cannot be made. The reason goes back to the agent. */
+/** An automation the agent asked for cannot be made. The reason goes back to the agent. */
 export class ScheduleError extends Data.TaggedError("ScheduleError")<{
   readonly reason: string;
 }> {
@@ -113,5 +113,14 @@ export class AccessDenied extends Data.TaggedError("AccessDenied")<{
 }> {
   override get message() {
     return `access denied: ${this.reason}`;
+  }
+}
+
+/** An automation's action could not be carried out: its agent is gone, busy, or its URL failed. */
+export class ActionError extends Data.TaggedError("ActionError")<{
+  readonly reason: string;
+}> {
+  override get message() {
+    return this.reason;
   }
 }

@@ -11,7 +11,7 @@ import {
   type Thread,
 } from "chat";
 import { clipToolOutput } from "@mizook/memory";
-import { Context, DateTime, Duration, Effect, Layer, Redacted, Schedule } from "effect";
+import { Context, Duration, Effect, Layer, Redacted, Schedule } from "effect";
 import { Agent, type AgentError } from "./agent.ts";
 import { applyAgentAction } from "./agent-manage.ts";
 import { chunk } from "./chunk.ts";
@@ -21,22 +21,16 @@ import { Outbox } from "./outbox.ts";
 import { Approvals } from "./approvals.ts";
 import { MEDIA_LABEL, Media } from "./media.ts";
 import { Policies } from "./policies.ts";
-import { Runs } from "./runs.ts";
 import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
 import { COMMANDS } from "./command-list.ts";
 import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
-import { Schedules, type Schedule as Scheduled } from "./schedules.ts";
 import { State } from "./state.ts";
-import { Web } from "./search.ts";
-import { sha256 } from "./web.ts";
 
 /** How long an interrupted turn waits for the next alarm before something picks it up. */
 export const RECOVER_AFTER_MS = 30_000;
-/** Most turns schedules may start in an hour: a bad watch must not flood the chat or the budget. */
-const FIRES_PER_HOUR = 20;
 /** How long the user must stop typing before a run of messages is answered, and the longest a run may wait. */
 const BURST_QUIET_MS = 1_500;
 const BURST_MAX_MS = 8_000;
@@ -56,8 +50,17 @@ export class Bot extends Context.Service<
     ): Effect.Effect<Response, TelegramError>;
     /** Deliver the replies of turns a restart interrupted. Returns how many turns are still pending. */
     readonly recover: Effect.Effect<number, AgentError | TelegramError>;
-    /** A webhook call: start a turn with its body where the agent talked last. False when it has nowhere to talk or is over its hourly limit. */
-    hook(body: string): Effect.Effect<boolean, AgentError | StateError | TelegramError>;
+    /**
+     * A turn an automation starts in `place`, or where the agent talked last when empty. Gives
+     * the reply; fails when the agent has nowhere to talk.
+     */
+    turn(
+      place: string,
+      text: string,
+      requestId: string,
+    ): Effect.Effect<string, AgentError | StateError | TelegramError>;
+    /** Post a fixed text to `place`, or where the agent talked last, with no model call. */
+    postTo(place: string, text: string): Effect.Effect<void, StateError | TelegramError>;
     /**
      * Take an approval off the list. Undefined when it was already answered; otherwise the work of
      * answering it (resume Executor, tell the chat), for the caller to run when it chooses.
@@ -67,11 +70,7 @@ export class Bot extends Context.Service<
       approved: boolean,
       always?: boolean,
     ): Effect.Effect<{ readonly resume: Effect.Effect<void> } | undefined, StateError>;
-    /** Start a turn for each schedule that is due. */
-    readonly wake: Effect.Effect<void, AgentError | StateError>;
-    /** Run one schedule now, as a test. False when it has nowhere to post or that place is busy. */
-    testSchedule(id: number): Effect.Effect<boolean, AgentError | StateError>;
-    /** When the Durable Object's alarm should ring next: a pending turn's recovery or the next schedule. */
+    /** When the Durable Object's alarm should ring next: a pending turn's recovery. */
     readonly nextWake: Effect.Effect<number | undefined, AgentError | StateError>;
   }
 >()("mizook/Bot") {
@@ -81,18 +80,15 @@ export class Bot extends Context.Service<
       const settings = yield* Settings;
       const agent = yield* Agent;
       const state = yield* State;
-      const schedules = yield* Schedules;
       const commands = yield* Commands;
       const outbox = yield* Outbox;
       const approvals = yield* Approvals;
       const policies = yield* Policies;
-      const runs = yield* Runs;
       const executor = yield* Executor;
       const media = yield* Media;
       const blobs = yield* Blobs;
       const usage = yield* Usage;
       const host = yield* Host;
-      const web = yield* Web;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
 
@@ -353,90 +349,29 @@ export class Bot extends Context.Service<
         yield* deliver(place, place, true);
       }, Effect.scoped);
 
-      const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
-
-      /** The message a due schedule starts a turn with, or nothing when it stays silent. */
-      const textOf = (s: Scheduled) =>
+      /** Where a turn that no message started talks: the place given, or where the agent talked last. */
+      const placeFor = (place: string) =>
         Effect.gen(function* () {
-          const skill = s.skill === undefined ? "" : `Read skill "${s.skill}" first.\n\n`;
-          if (s.spec.kind !== "watch") return `[scheduled #${s.id}] ${skill}${s.prompt}`;
-          const page = yield* web.fetch(s.spec.url).pipe(
-            Effect.map((p) => p.text),
-            Effect.catch((error) =>
-              Effect.logWarning(`watch #${s.id} failed: ${error.message}`).pipe(
-                Effect.as(undefined),
-              ),
-            ),
-          );
-          if (page === undefined) return undefined;
-          const changed = yield* schedules.watchChanged(
-            s.id,
-            yield* Effect.promise(() => sha256(page)),
-          );
-          return changed
-            ? `[watch #${s.id} changed] ${skill}${s.prompt}\n\n${s.spec.url} now reads:\n${clipToolOutput(page)}`
-            : undefined;
+          const target = place || (yield* state.meta("place"));
+          if (!target) {
+            return yield* new TelegramError({
+              operation: "place",
+              cause: "nobody has talked to this agent yet",
+            });
+          }
+          return target;
         });
 
-      const wake = Effect.gen(function* () {
-        const now = yield* nowDate;
-        const due = yield* schedules.claim(now);
-        const last = yield* state.meta("place");
-        for (const s of due) {
-          // A schedule talks where it was made; one made outside a turn, where the agent talked last.
-          const threadId = s.place || last;
-          if (!threadId) continue;
-          const text = yield* textOf(s);
-          if (text === undefined) continue;
-          if (!(yield* schedules.allow(now, FIRES_PER_HOUR))) {
-            yield* Effect.logWarning(
-              `schedule #${s.id} skipped: over ${FIRES_PER_HOUR} fires an hour`,
-            );
-            continue;
-          }
-          const runId = yield* runs.start(s.id);
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              yield* hold(threadId);
-              const started = yield* agent.begin({
-                chatId: threadId,
-                threadId,
-                text,
-                requestId: `sched:${s.id}:${s.nextAt}`,
-                source: "scheduled",
-              });
-              if (started === "folded") {
-                yield* runs.finish(runId, "skipped");
-                return;
-              }
-              const reply = yield* deliver(threadId, threadId);
-              yield* runs.finish(runId, "succeeded", reply);
-            }),
-          ).pipe(
-            Effect.catchCause((cause) =>
-              runs
-                .finish(runId, "failed", "", String(cause).slice(0, 1_000))
-                .pipe(Effect.andThen(Effect.logError(`schedule #${s.id} failed`, cause))),
-            ),
-          );
-        }
-      });
-
-      /**
-       * Start a turn from something that is not a Telegram message, in `place` or where the agent
-       * talked last. Silent when nobody has talked to it yet.
-       */
+      /** Start a turn from something that is not a Telegram message, and give its reply. */
       const fire = (
         text: string,
         requestId: string,
-        source: "webhook" | "approval",
-        place?: string,
+        source: "scheduled" | "approval",
+        place: string,
       ) =>
         Effect.gen(function* () {
-          const threadId = place || (yield* state.meta("place"));
-          if (!threadId) return false;
-          if (!(yield* schedules.allow(yield* nowDate, FIRES_PER_HOUR))) return false;
-          yield* Effect.scoped(
+          const threadId = yield* placeFor(place);
+          return yield* Effect.scoped(
             Effect.gen(function* () {
               yield* hold(threadId);
               const started = yield* agent.begin({
@@ -446,22 +381,16 @@ export class Bot extends Context.Service<
                 requestId,
                 source,
               });
-              if (started === "started") yield* deliver(threadId, threadId);
+              // A turn already running there takes the text between its tool calls.
+              if (started === "folded") return "(folded into the turn already running there)";
+              return yield* deliver(threadId, threadId);
             }),
           );
-          return true;
         });
 
-      const hook = (body: string) =>
-        fire(`[webhook] ${clipToolOutput(body, 8_000)}`, `hook:${crypto.randomUUID()}`, "webhook");
-
-      const nextWake = Effect.gen(function* () {
-        const pending =
-          (yield* agent.pending).length > 0 ? Date.now() + RECOVER_AFTER_MS : undefined;
-        const scheduled = yield* schedules.nextAt;
-        const times = [pending, scheduled].filter((t): t is number => t !== undefined);
-        return times.length === 0 ? undefined : Math.min(...times);
-      });
+      const nextWake = Effect.map(agent.pending, (pending) =>
+        pending.length > 0 ? Date.now() + RECOVER_AFTER_MS : undefined,
+      );
 
       const approve = (id: number, approved: boolean, always = false) =>
         Effect.gen(function* () {
@@ -614,51 +543,11 @@ export class Bot extends Context.Service<
       // Plain messages in a group topic: not a DM, not a mention, and the thread is not subscribed.
       chat.onNewMessage(onMessage);
 
-      const testSchedule = Effect.fn("Bot.testSchedule")(function* (id: number) {
-        const schedule = yield* schedules.get(id);
-        if (!schedule) return false;
-        const threadId = schedule.place || (yield* state.meta("place"));
-        if (!threadId) return false;
-        if (yield* state.turn(threadId)) return false;
-        const skill =
-          schedule.skill === undefined ? "" : `Read skill "${schedule.skill}" first.\n\n`;
-        const runId = yield* runs.start(id);
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            yield* hold(threadId);
-            const started = yield* agent.begin({
-              chatId: threadId,
-              threadId,
-              text: `[test #${id}] ${skill}${schedule.prompt}`,
-              requestId: `test:${id}:${Date.now()}`,
-              source: "test",
-            });
-            if (started === "folded") {
-              yield* runs.finish(runId, "skipped");
-              return false;
-            }
-            const reply = yield* deliver(threadId, threadId);
-            yield* runs.finish(runId, "succeeded", reply);
-            return true;
-          }),
-        ).pipe(
-          Effect.catchCause((cause) =>
-            runs
-              .finish(runId, "failed", "", String(cause).slice(0, 1_000))
-              .pipe(
-                Effect.andThen(Effect.logError(`test of schedule #${id} failed`, cause)),
-                Effect.as(false),
-              ),
-          ),
-        );
-      });
-
       return Bot.of({
         approve,
-        wake,
-        testSchedule,
-        hook,
         nextWake,
+        turn: (place, text, requestId) => fire(text, requestId, "scheduled", place),
+        postTo: (place, text) => Effect.flatMap(placeFor(place), (target) => post(target, text)),
         webhook: (request, waitUntil) =>
           Effect.tryPromise({
             try: () => chat.webhooks.telegram(request, { waitUntil }),

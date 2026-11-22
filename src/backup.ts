@@ -3,11 +3,9 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
 import { Settings } from "./config.ts";
-import type { BlobError, ScheduleError, StateError, ToolError } from "./errors.ts";
+import type { BlobError, StateError, ToolError } from "./errors.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
-import { Schedules } from "./schedules.ts";
-import { Spec } from "./schedule.ts";
 import { Skills } from "./skills.ts";
 import { Host } from "./host.ts";
 import { State } from "./state.ts";
@@ -19,16 +17,6 @@ const KEEP_BACKUPS = 14;
 const DAY = 24 * 3_600_000;
 const LINK_LIFETIME = 3_600_000;
 
-const SchedulesFile = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      spec: Spec,
-      prompt: Schema.String,
-      skill: Schema.optionalKey(Schema.String),
-      active: Schema.optionalKey(Schema.Boolean),
-    }),
-  ),
-);
 const SettingsFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const DataFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const ArtifactsFile = Schema.fromJsonString(
@@ -78,7 +66,7 @@ const token = () => {
 
 /**
  * A channel as files: the memory in the design's layout (`main/`, `tree/`, `view.json`), and
- * beside it `schedules.json`, `settings.json`, `artifacts.json` and `artifacts/<name>`. It is both
+ * beside it `settings.json`, `artifacts.json` and `artifacts/<name>`. It is both
  * the export you take away and the nightly backup, and `restoreTar` reads it back.
  */
 export class Backup extends Context.Service<
@@ -91,7 +79,7 @@ export class Backup extends Context.Service<
     backupIfDue(now: number): Effect.Effect<boolean, BackupError>;
     readonly nextBackupAt: Effect.Effect<number | undefined, StateError>;
     /** Load an archive into this channel, which must have no messages yet. */
-    restoreTar(bytes: Uint8Array): Effect.Effect<void, BackupError | ToolError | ScheduleError>;
+    restoreTar(bytes: Uint8Array): Effect.Effect<void, BackupError | ToolError>;
   }
 >()("mizook/Backup") {
   static readonly layer = Layer.effect(
@@ -99,7 +87,6 @@ export class Backup extends Context.Service<
     Effect.gen(function* () {
       const store = yield* Store;
       const state = yield* State;
-      const schedules = yield* Schedules;
       const skills = yield* Skills;
       const intents = yield* Intents;
       const policies = yield* Policies;
@@ -112,14 +99,6 @@ export class Backup extends Context.Service<
 
       const tar = Effect.gen(function* () {
         const files: Record<string, string | Uint8Array> = { ...toFiles(yield* store.snapshot) };
-        files["schedules.json"] = yield* Schema.encodeEffect(SchedulesFile)(
-          (yield* schedules.all).map(({ spec, prompt, skill, active }) => ({
-            spec,
-            prompt,
-            ...(skill === undefined ? {} : { skill }),
-            active,
-          })),
-        ).pipe(Effect.orDie);
         files["skills.json"] = yield* Schema.encodeEffect(SkillsFile)(
           (yield* skills.list).map(({ name, description, body, pinned }) => ({
             name,
@@ -224,17 +203,6 @@ export class Backup extends Context.Service<
               const own = yield* Schema.decodeEffect(SettingsFile)(settings).pipe(Effect.orDie);
               for (const [key, value] of Object.entries(own))
                 yield* state.setMeta(`setting:${key}`, value);
-            }
-            const list = text("schedules.json");
-            if (list) {
-              const all = yield* Schema.decodeEffect(SchedulesFile)(list).pipe(Effect.orDie);
-              // A reminder whose time has passed cannot be made again: skip it.
-              for (const { spec, prompt, skill, active } of all) {
-                const made = yield* schedules
-                  .create(spec, prompt, new Date(), skill)
-                  .pipe(Effect.orElseSucceed(() => undefined));
-                if (made && active === false) yield* schedules.pause(made.id).pipe(Effect.ignore);
-              }
             }
             const skillsText = text("skills.json");
             if (skillsText) {

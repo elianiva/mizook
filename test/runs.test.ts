@@ -12,7 +12,7 @@ const go = <A, E>(effect: Effect.Effect<A, E, Runs>) => {
   return Effect.runPromise(Effect.provide(effect, Runs.layer(sql)));
 };
 
-test("runs are recorded, finished and listed newest first, by schedule", async () => {
+test("runs are recorded, finished and listed newest first, by automation", async () => {
   await go(
     Effect.gen(function* () {
       const runs = yield* Runs;
@@ -29,7 +29,7 @@ test("runs are recorded, finished and listed newest first, by schedule", async (
       expect(all[1]?.output).toBe("posted the brief");
       expect(all[1]?.finished).toBeTypeOf("number");
 
-      expect((yield* runs.list({ limit: 10, scheduleId: 1 })).map((run) => run.id)).toEqual([
+      expect((yield* runs.list({ limit: 10, automationId: 1 })).map((run) => run.id)).toEqual([
         first,
       ]);
     }),

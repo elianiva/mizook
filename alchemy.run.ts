@@ -4,6 +4,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type { AgentObject } from "./src/agent-object.ts";
+import type { AutomationsObject } from "./src/automations-object.ts";
 import type { Hub } from "./src/hub.ts";
 
 /** A plain variable the bot reads at runtime. Left empty it is ignored, and the bot uses its own default. */
@@ -57,6 +58,10 @@ export default Alchemy.Stack(
         AgentObject: Cloudflare.DurableObject<AgentObject>("AgentObject"),
         // The registry: agents, bindings, place names, and the shared profile.
         Hub: Cloudflare.DurableObject<Hub>("Hub"),
+        // Every automation, for every agent: triggers, the alarm that fires them, and their runs.
+        Automations: Cloudflare.DurableObject<AutomationsObject>("Automations", {
+          className: "AutomationsObject",
+        }),
         // Artifacts, exports and backups.
         Files: files,
         // Voice notes, images and documents the user sends.

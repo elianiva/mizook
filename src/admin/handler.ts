@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import type { Env } from "../env.ts";
 import type { AgentInfo, Profile } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
+import type { AutomationsObject } from "../automations-object.ts";
 import { makeVerifier, type Verifier } from "./access.ts";
 
 interface ChannelRpc {
@@ -66,12 +67,52 @@ const json = (body: unknown, status = 200) =>
 const SHELL_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
+/** The automations Durable Object, as the dashboard reads it. */
+const automationsOf = (env: Env) =>
+  env.Automations.getByName("automations") as unknown as AutomationsObject;
+
+/**
+ * An agent's automations and their runs, in the shapes the dashboard's schedule pages read. The
+ * per-agent pages are rebuilt with the web UI; until then each automation is a schedule row.
+ */
+const agentAutomations = async (env: Env, agent: AgentInfo, page: "schedules" | "runs") => {
+  const mine = await automationsOf(env).list(agent.id);
+  if (page === "schedules")
+    return mine
+      .filter((a) => a.active)
+      .map((a) => ({
+        id: a.id,
+        spec: JSON.stringify(a.spec),
+        prompt:
+          a.action.kind === "turn"
+            ? a.action.prompt
+            : a.action.kind === "post"
+              ? a.action.text
+              : `${a.action.method} ${a.action.url}`,
+        nextAt: a.spec.kind === "webhook" ? 0 : a.nextAt,
+      }));
+  const ids = new Set(mine.map((a) => a.id));
+  return (await automationsOf(env).runs(50))
+    .filter((r) => ids.has(r.automationId))
+    .slice(0, 25)
+    .map((r) => ({
+      id: r.id,
+      scheduleId: r.automationId,
+      status: r.status,
+      started: r.started,
+      finished: r.finished ?? null,
+      output: r.output,
+      error: r.error ?? null,
+    }));
+};
+
 const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const hub = env.Hub.getByName("hub") as unknown as {
     agents(): Promise<AgentInfo[]>;
     profile(): Promise<Profile>;
   };
-  const channels = (await hub.agents()).map(asChannel);
+  const agents = await hub.agents();
+  const channels = agents.map(asChannel);
   if (name === "channels") return json(channels);
   if (name === "profile") return json(await hub.profile());
   if (name === "summary") {
@@ -84,7 +125,6 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
           spend: { last24h: number; last7d: number };
           turns: unknown[];
           approvals: unknown[];
-          schedules: number;
           settings: Record<string, string>;
         };
         return {
@@ -96,7 +136,9 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
           spend7d: o.spend.last7d,
           pending: o.turns.length,
           approvals: o.approvals.length,
-          schedules: o.schedules,
+          schedules: (await automationsOf(env).list(c.doName.replace(/^agent:/, ""))).filter(
+            (a) => a.active,
+          ).length,
           budget: Number(o.settings["budget"]) || 0,
         };
       }),
@@ -107,8 +149,22 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const wanted = url.searchParams.get("c") ?? "";
   const channel = channels.find((c) => c.doName === wanted);
   if (!channel) return json({ error: "no such channel" }, 404);
+  const agent = agents.find((a) => a.doName === channel.doName)!;
+  if (name === "schedules" || name === "runs")
+    return json(await agentAutomations(env, agent, name));
   const rpc = env.AgentObject.getByName(channel.doName) as unknown as ChannelRpc;
   const data = await rpc.dashboard(name, Object.fromEntries(url.searchParams));
+  if (name === "overview" && data !== undefined) {
+    // An agent's automations live in their own Durable Object, not in its SQLite.
+    const active = (await automationsOf(env).list(agent.id)).filter(
+      (a) => a.active && a.spec.kind !== "webhook",
+    );
+    return json({
+      ...(data as object),
+      schedules: active.length,
+      nextSchedule: active.length === 0 ? null : Math.min(...active.map((a) => a.nextAt)),
+    });
+  }
   return data === undefined ? json({ error: "not found" }, 404) : json(data);
 };
 
@@ -214,6 +270,17 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
     );
   const action = match && ACTIONS[(match[2] ?? match[4])!];
   if (!match || !action) return json({ error: "not found" }, 404);
+  if (action === "cancel_schedule") {
+    // Automations are not the agent's: only one that acts for it may be cancelled from its page.
+    const id = Number(match[3]);
+    const found = await automationsOf(env).get(id);
+    const ownId = channel.doName.replace(/^agent:/, "");
+    if (!found || found.action.kind === "webhook" || found.action.agent !== ownId)
+      return json({ error: "already gone" }, 409);
+    return (await automationsOf(env).cancel(id))
+      ? json({ ok: true })
+      : json({ error: "already gone" }, 409);
+  }
   return (await rpc.act(who, action, Number(match[1] ?? match[3])))
     ? json({ ok: true })
     : json({ error: "already gone" }, 409);

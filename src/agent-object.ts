@@ -12,13 +12,13 @@ import {
   type AgentChange,
   type AgentInfo,
   type AgentSpec,
+  type AutomationsApi,
   type Profile,
 } from "./host.ts";
 import type { Skill, Skills } from "./skills.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
-import { hookToken } from "./hooks.ts";
+import type { AutomationsObject } from "./automations-object.ts";
 import { Usage, type Spend } from "./usage.ts";
-import { Schedules } from "./schedules.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Commands } from "./commands.ts";
 import { State } from "./state.ts";
@@ -59,6 +59,35 @@ interface AgentApi {
   reload(): Promise<void>;
 }
 
+/** The automations Durable Object, as an agent sees it. */
+const automationsApi = (stub: () => DurableObjectStub<AutomationsObject>): AutomationsApi => {
+  const rpc = () => stub() as unknown as AutomationsObject;
+  return {
+    create: (spec, action) =>
+      Effect.promise(() => rpc().create(spec, action)).pipe(
+        Effect.flatMap((change) =>
+          change.ok
+            ? Effect.succeed(change.automation)
+            : Effect.fail(new ToolError({ reason: change.error })),
+        ),
+      ),
+    list: (agent) => Effect.promise(() => rpc().list(agent)),
+    cancel: (id) => Effect.promise(() => rpc().cancel(id)),
+    pause: (id) => Effect.promise(() => rpc().pause(id)),
+    resume: (id) =>
+      Effect.promise(() => rpc().resume(id)).pipe(
+        Effect.flatMap((r) =>
+          r.error === undefined
+            ? Effect.succeed(r.ok)
+            : Effect.fail(new ToolError({ reason: r.error })),
+        ),
+      ),
+    test: (id) => Effect.promise(() => rpc().test(id)),
+    hookUrl: (id) => Effect.promise(() => rpc().hookUrl(id)),
+    runs: (limit, automationId) => Effect.promise(() => rpc().runs(limit, automationId)),
+  };
+};
+
 /** The Hub's skills behind the same interface as an agent's own. */
 const globalSkills = (hub: () => HubApi): Skills["Service"] => {
   const call = <A>(operation: string, f: () => Promise<A>) =>
@@ -81,7 +110,7 @@ const globalSkills = (hub: () => HubApi): Skills["Service"] => {
 };
 
 /**
- * One agent: its memory, pi-durable, schedules, skills and settings, in one Durable Object with one
+ * One agent: its memory, pi-durable, skills and settings, in one Durable Object with one
  * SQLite, named `agent:<id>`. It answers in every Telegram place bound to it, and in any place
  * where someone invokes it with `/<slug>`.
  */
@@ -148,10 +177,6 @@ export class AgentObject extends DurableObject<Env> {
     return {
       self,
       reload: Effect.sync(reload),
-      hookUrl: Effect.promise(async () => {
-        const token = await hookToken(this.env.MIZOOK_WEBHOOK_SECRET, self.doName);
-        return `${this.env.PUBLIC_URL ?? ""}/hook/${encodeURIComponent(self.doName)}/${token}`;
-      }),
       agents: Effect.promise(() => hub().agents()),
       bind: (place, slug) => Effect.promise(() => hub().bind(place, slug)),
       placeLabel: (place) =>
@@ -180,7 +205,7 @@ export class AgentObject extends DurableObject<Env> {
           try: () => hub().setProfile(about, rules === undefined ? undefined : [...rules]),
           catch: (cause) => new StateError({ operation: "profile", cause }),
         }),
-      testSchedule: (id) => Effect.sync(() => this.scheduleTest(id)),
+      automations: automationsApi(() => this.env.Automations.getByName("automations")),
       ask: (agent, question) =>
         Effect.gen(function* () {
           const all = yield* Effect.promise(() => hub().agents());
@@ -233,17 +258,17 @@ export class AgentObject extends DurableObject<Env> {
     return this.runtime.runPromise(Agent.use((agent) => agent.ask(question)));
   }
 
-  /** A webhook call, already checked by the Worker. */
-  async hook(body: string): Promise<boolean> {
-    return this.runtime.runPromise(Bot.use((bot) => bot.hook(body)));
+  /** A turn an automation starts. Gives the reply once it is delivered. */
+  async runTurn(place: string, text: string, requestId: string): Promise<string> {
+    const reply = this.runtime.runPromise(Bot.use((bot) => bot.turn(place, text, requestId)));
+    // While the turn runs this process may be evicted: the alarm brings it back to finish it.
+    await this.rearm();
+    return reply;
   }
 
-  /** Start a test run in the background; the result posts to the chat like a scheduled turn. */
-  scheduleTest(id: number): boolean {
-    this.ctx.waitUntil(
-      this.runtime.runPromise(Bot.use((bot) => bot.testSchedule(id))).catch(() => undefined),
-    );
-    return true;
+  /** A fixed message an automation posts, with no model call. */
+  async postTo(place: string, text: string): Promise<void> {
+    await this.runtime.runPromise(Bot.use((bot) => bot.postTo(place, text)));
   }
 
   /** What this channel has spent, for `/cost`. */
@@ -275,16 +300,12 @@ export class AgentObject extends DurableObject<Env> {
         return read.memoryView(sql);
       case "usage":
         return read.usage(sql, Math.min(Math.max(Number(params.days) || 30, 1), 365), now);
-      case "schedules":
-        return read.schedules(sql);
       case "skills":
         return read.skills(sql);
       case "intents":
         return read.intents(sql);
       case "policies":
         return read.policies(sql);
-      case "runs":
-        return read.runs(sql, Math.min(Number(params.limit) || 25, 50));
       case "audit":
         return read.audit(sql);
       case "artifacts":
@@ -337,10 +358,6 @@ export class AgentObject extends DurableObject<Env> {
           const pending = yield* bot.approve(id, action === "approve");
           if (!pending) return { ok: false, after: undefined };
           return { ok: true, after: pending.resume };
-        }
-        if (action === "cancel_schedule") {
-          const schedules = yield* Schedules;
-          return { ok: yield* schedules.cancel(id), after: undefined };
         }
         return { ok: false, after: undefined };
       }),
@@ -440,7 +457,7 @@ export class AgentObject extends DurableObject<Env> {
     return response;
   }
 
-  /** The one alarm serves recovery of interrupted turns, schedules and the nightly backup. */
+  /** The one alarm serves recovery of interrupted turns and the nightly backup. */
   override async alarm(): Promise<void> {
     const attempt = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
       this.runtime.runPromise(effect as never).catch((error) => {
@@ -449,10 +466,6 @@ export class AgentObject extends DurableObject<Env> {
     await attempt(
       "recovery",
       Bot.use((bot) => bot.recover),
-    );
-    await attempt(
-      "schedules",
-      Bot.use((bot) => bot.wake),
     );
     await attempt(
       "backup",

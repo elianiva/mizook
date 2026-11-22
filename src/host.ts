@@ -1,5 +1,8 @@
 import { Context, type Effect } from "effect";
+import type { Automation } from "./automations.ts";
 import type { StateError, ToolError } from "./errors.ts";
+import type { Run } from "./runs.ts";
+import type { Action, Spec } from "./schedule.ts";
 import type { Skills } from "./skills.ts";
 import type { Spend } from "./usage.ts";
 
@@ -37,6 +40,21 @@ export interface AgentSpec {
 /** A change to the agents, or why it was refused. */
 export type AgentChange = { ok: true; agent: AgentInfo } | { ok: false; error: string };
 
+/** The automations every agent shares, in their own Durable Object. A refusal is a ToolError. */
+export interface AutomationsApi {
+  create(spec: Spec, action: Action): Effect.Effect<Automation, ToolError>;
+  /** Every automation; with an agent id, only those that act for it. */
+  list(agent?: string): Effect.Effect<ReadonlyArray<Automation>>;
+  cancel(id: number): Effect.Effect<boolean>;
+  pause(id: number): Effect.Effect<boolean>;
+  resume(id: number): Effect.Effect<boolean, ToolError>;
+  /** Fire one now, in the background. False when there is none. */
+  test(id: number): Effect.Effect<boolean>;
+  /** The link that fires a webhook trigger. */
+  hookUrl(id: number): Effect.Effect<string>;
+  runs(limit: number, automationId?: number): Effect.Effect<ReadonlyArray<Run>>;
+}
+
 /** What the user is, across every agent: a short profile and the rules they want followed. */
 export interface Profile {
   readonly about: string;
@@ -54,8 +72,6 @@ export class Host extends Context.Service<
   {
     /** This agent. */
     readonly self: AgentInfo;
-    /** The link other services call to start a turn with this agent. */
-    readonly hookUrl: Effect.Effect<string>;
     /** Rebuild this agent's runtime, so new settings take effect. */
     readonly reload: Effect.Effect<void>;
     readonly agents: Effect.Effect<ReadonlyArray<AgentInfo>>;
@@ -82,8 +98,7 @@ export class Host extends Context.Service<
       about: string | undefined,
       rules: ReadonlyArray<string> | undefined,
     ): Effect.Effect<Profile, StateError>;
-    /** Start one schedule now, in the background. The result goes to the chat. */
-    testSchedule(id: number): Effect.Effect<boolean>;
+    readonly automations: AutomationsApi;
     /** What every agent spent. */
     readonly spendAll: Effect.Effect<
       ReadonlyArray<{ readonly name: string; readonly spend: Spend }>

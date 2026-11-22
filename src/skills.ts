@@ -55,7 +55,7 @@ export class Skills extends Context.Service<
     remove(name: string): Effect.Effect<boolean, StateError>;
     /** Count a read, so a later curator can see what is used. */
     touch(name: string): Effect.Effect<void, StateError>;
-    /** Keep a skill a schedule depends on. */
+    /** Keep a skill an automation depends on. */
     pin(name: string): Effect.Effect<void, StateError>;
     /** Set whether a skill stays at hand, from the dashboard or a schedule. */
     setPinned(name: string, pinned: boolean): Effect.Effect<void, StateError>;

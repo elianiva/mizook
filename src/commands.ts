@@ -6,8 +6,7 @@ import { formatDate } from "./format.ts";
 import { Host } from "./host.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
-import { Runs } from "./runs.ts";
-import { Schedules } from "./schedules.ts";
+import { describeAutomation } from "./runner.ts";
 import { Skills } from "./skills.ts";
 import { State } from "./state.ts";
 import type { StateError } from "./errors.ts";
@@ -31,10 +30,8 @@ export class Commands extends Context.Service<
     Effect.gen(function* () {
       const settings = yield* Settings;
       const state = yield* State;
-      const schedules = yield* Schedules;
       const intents = yield* Intents;
       const policies = yield* Policies;
-      const runs = yield* Runs;
       const skills = yield* Skills;
       const usage = yield* Usage;
       const host = yield* Host;
@@ -160,7 +157,7 @@ export class Commands extends Context.Service<
             if (verb === "show") return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
             if (verb === "delete") {
               if (skill.pinned)
-                return `"${name}" is pinned by a schedule; cancel the schedule first.`;
+                return `"${name}" is pinned by an automation; cancel the automation first.`;
               return (yield* store.remove(name))
                 ? `Deleted skill "${name}".`
                 : `No skill "${name}".`;
@@ -207,29 +204,58 @@ export class Commands extends Context.Service<
           case "runs": {
             const id = arg === "" ? undefined : Number(arg);
             if (id !== undefined && (!Number.isInteger(id) || id < 1)) {
-              return "Use /runs or /runs <schedule id>.";
+              return "Use /runs or /runs <automation id>.";
             }
-            const all = yield* runs.list({
-              limit: 10,
-              ...(id === undefined ? {} : { scheduleId: id }),
-            });
+            const all = yield* host.automations.runs(10, id);
             return all.length === 0
               ? "No runs yet."
               : all
                   .map((r) => {
                     const detail = r.error ?? r.output;
-                    return `#${r.id} schedule ${r.scheduleId} ${r.status} ${formatDate(new Date(r.started), settings.timezone)}${detail === "" ? "" : `: ${detail.slice(0, 160)}`}`;
+                    return `#${r.id} automation ${r.automationId} ${r.status} ${formatDate(new Date(r.started), settings.timezone)}${detail === "" ? "" : `: ${detail.slice(0, 160)}`}`;
                   })
                   .join("\n");
           }
-          case "schedules": {
-            const all = yield* schedules.all;
+          case "automations": {
+            const [verb = "", rawId = ""] = arg.split(/\s+/);
+            const id = Number(rawId);
+            if (verb !== "") {
+              if (!Number.isInteger(id) || id < 1) return `Use /automations ${verb} <id>.`;
+              switch (verb) {
+                case "cancel":
+                  return (yield* host.automations.cancel(id))
+                    ? `Deleted #${id}.`
+                    : `No automation #${id}.`;
+                case "pause":
+                  return (yield* host.automations.pause(id))
+                    ? `Paused #${id}.`
+                    : `No active automation #${id}.`;
+                case "resume":
+                  return yield* host.automations.resume(id).pipe(
+                    Effect.map((done) => (done ? `Resumed #${id}.` : `No automation #${id}.`)),
+                    Effect.catch((error) =>
+                      Effect.succeed(`Could not resume #${id}: ${error.message}.`),
+                    ),
+                  );
+                case "test":
+                  return (yield* host.automations.test(id))
+                    ? `Test #${id} started.`
+                    : `No automation #${id}.`;
+                default:
+                  return "Use /automations, or /automations cancel|pause|resume|test <id>.";
+              }
+            }
+            const agents = yield* host.agents;
+            const all = yield* host.automations.list();
             return all.length === 0
-              ? "No schedules."
+              ? "No automations."
               : all
-                  .map(
-                    (s) =>
-                      `#${s.id} ${s.spec.kind}${s.skill ? ` [skill ${s.skill}]` : ""} ${s.active ? `next ${formatDate(new Date(s.nextAt), settings.timezone)}` : "inactive"}: ${s.prompt}`,
+                  .map((a) =>
+                    describeAutomation(
+                      a,
+                      (at) => formatDate(new Date(at), settings.timezone),
+                      (agentId) => `/${agents.find((x) => x.id === agentId)?.slug ?? agentId}`,
+                    ),
                   )
                   .join("\n");
           }

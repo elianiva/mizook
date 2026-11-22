@@ -81,18 +81,10 @@ export const overview = async (sql: SqlDriver, now: number): Promise<Overview> =
         `SELECT id, summary, posted FROM app_approvals ORDER BY id`,
       )
     ).map((a) => ({ id: a.id, summary: a.summary, posted: a.posted === 1 })),
-    schedules:
-      (
-        await rows<{ n: number }>(sql, `SELECT COUNT(*) AS n FROM app_schedules WHERE active = 1`)
-      )[0]?.n ?? 0,
+    // The Worker fills these from the automations.
+    schedules: 0,
     daily: await dailySpend(sql, now),
-    nextSchedule:
-      (
-        await rows<{ at: number | null }>(
-          sql,
-          `SELECT MIN(next_at) AS at FROM app_schedules WHERE active = 1`,
-        )
-      )[0]?.at ?? null,
+    nextSchedule: null,
   };
 };
 
@@ -254,21 +246,6 @@ export const usage = async (sql: SqlDriver, days: number, now: number): Promise<
   };
 };
 
-export interface ScheduleRow {
-  readonly id: number;
-  readonly spec: string;
-  readonly prompt: string;
-  readonly nextAt: number;
-}
-
-export const schedules = async (sql: SqlDriver): Promise<ScheduleRow[]> =>
-  (
-    await rows<{ id: number; spec: string; prompt: string; next_at: number }>(
-      sql,
-      `SELECT id, spec, prompt, next_at FROM app_schedules WHERE active = 1 ORDER BY next_at, id`,
-    )
-  ).map((s) => ({ id: s.id, spec: s.spec, prompt: s.prompt, nextAt: s.next_at }));
-
 export interface SkillRow {
   readonly name: string;
   readonly description: string;
@@ -364,43 +341,6 @@ export interface PolicyRow {
 
 export const policies = async (sql: SqlDriver): Promise<PolicyRow[]> =>
   rows<PolicyRow>(sql, `SELECT id, match, decision FROM app_policies ORDER BY id`);
-
-export interface RunRow {
-  readonly id: number;
-  readonly scheduleId: number;
-  readonly status: string;
-  readonly started: number;
-  readonly finished: number | null;
-  readonly output: string;
-  readonly error: string | null;
-}
-
-/** The newest runs, for the dashboard. Capped so one busy schedule cannot fill the page. */
-export const runs = async (sql: SqlDriver, limit = 25): Promise<RunRow[]> =>
-  (
-    await rows<{
-      id: number;
-      schedule_id: number;
-      status: string;
-      started: number;
-      finished: number | null;
-      output: string;
-      error: string | null;
-    }>(
-      sql,
-      `SELECT id, schedule_id, status, started, finished, output, error
-       FROM app_runs ORDER BY id DESC LIMIT ?`,
-      Math.min(Math.max(limit, 1), 100),
-    )
-  ).map((run) => ({
-    id: run.id,
-    scheduleId: run.schedule_id,
-    status: run.status,
-    started: run.started,
-    finished: run.finished,
-    output: run.output,
-    error: run.error,
-  }));
 
 export interface AuditRow {
   readonly at: number;

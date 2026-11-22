@@ -2,12 +2,12 @@
 
 ## Glossary
 
-**Agent** — an identity with its own memory, settings, skills, intents and schedules. One Durable
+**Agent** — an identity with its own memory, settings, skills and intents. One Durable
 Object, `agent:<id>`; the id is random and stable, and the slug (`/grok`) can change. The Hub lists
 the agents. A fresh install has one, `mizook`, the default.
 
 **Place** — where a message was said: a Chat SDK thread id, `telegram:<chat>` or
-`telegram:<chat>:<topic>`. Turns, replies, approvals, `/stop` and schedules are keyed by place, so
+`telegram:<chat>:<topic>`. Turns, replies, approvals and `/stop` are keyed by place, so
 one agent can answer in several places at once.
 
 **Binding** — a Hub row from a place to an agent. A place with no binding talks to the default
@@ -28,10 +28,10 @@ model, and the only tools it gets. Agents create agents with `agent_manage`, aft
 
 **Skill** — a reusable procedure, saved by name. Agent skills are one agent's; global skills are in
 the Hub and every agent sees them. The index goes into a turn; the body is read only
-when a task needs it. A schedule can name one to read when it fires.
+when a task needs it. An automation can name one to read when it fires.
 
 **Intent** — an instruction that waits for a later message to mention its trigger words. It is
-prospective memory, not a timer: a schedule handles clock time.
+prospective memory, not a timer: an automation handles clock time.
 
 **Node** — `node(l, i)` covers the 2^l messages from `i·2^l`. A one-line summary of them, at most
 512 bytes, built once. Named `id+n`.
@@ -51,7 +51,11 @@ view. A message sent while a turn runs is folded into it between tool calls.
 **Pending turn** — a turn started and not yet delivered. Kept in SQLite so that after a restart
 the reply is still posted.
 
-**Run** — one firing of a schedule, with its status and the reply or error. Kept so a routine can
+**Automation** — a trigger (`once`, `cron`, `watch`, `webhook`) and an action (a turn of an
+agent in a place, a fixed post, or an outside call). All of them live in the `Automations`
+Durable Object, so one can act for any agent.
+
+**Run** — one firing of an automation, with its status and the reply or error. Kept so a routine can
 be inspected, paused, resumed and tested.
 
 ## One process owns the chat

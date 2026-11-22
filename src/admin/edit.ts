@@ -79,7 +79,8 @@ const skill = (input: SkillInput) =>
     if (action === "delete") {
       const found = yield* skills.get(name);
       if (!found) return bad(`No skill "${name}".`);
-      if (found.pinned) return bad(`"${name}" is pinned by a schedule; cancel the schedule first.`);
+      if (found.pinned)
+        return bad(`"${name}" is pinned by an automation; cancel the automation first.`);
       return (yield* skills.remove(name))
         ? { ok: true as const, said: `Deleted skill "${name}".` }
         : bad(`No skill "${name}".`);
@@ -92,7 +93,7 @@ const skill = (input: SkillInput) =>
     }
     const existing = yield* skills.get(name);
     if (existing?.pinned === true && input.pinned === false) {
-      return bad(`"${name}" is pinned by a schedule; cancel the schedule first.`);
+      return bad(`"${name}" is pinned by an automation; cancel the automation first.`);
     }
     if (description === "") return bad("Describe when to use the skill.");
     if (description.length > MAX_SKILL_DESCRIPTION) {

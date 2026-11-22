@@ -15,7 +15,6 @@ import { Host } from "./host.ts";
 import { Media } from "./media.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
-import { Runs } from "./runs.ts";
 import { Usage } from "./usage.ts";
 import { readSettings, State } from "./state.ts";
 import { Executor } from "./executor.ts";
@@ -27,7 +26,6 @@ import { Commands } from "./commands.ts";
 import { Backup } from "./backup.ts";
 import { Blobs } from "./blobs.ts";
 import { Web } from "./search.ts";
-import { Schedules } from "./schedules.ts";
 import { Skills } from "./skills.ts";
 import { SummarizerLive } from "./summarizer.ts";
 import { PERSONA } from "./persona.ts";
@@ -45,11 +43,6 @@ export const makeRuntime = (
   env: Env,
   host: Context.Service.Shape<typeof Host>,
 ) => {
-  /** Move the alarm earlier, never later. */
-  const arm = async (at: number) => {
-    const current = await storage.getAlarm();
-    if (current === null || at < current) await storage.setAlarm(at);
-  };
   const database = new DurableObjectSqliteDatabase(storage);
   const sql: SqlDriver = {
     all: <T>(query: string, ...params: unknown[]) =>
@@ -122,7 +115,6 @@ export const makeRuntime = (
     ),
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
-    Layer.provideMerge(Layer.merge(Schedules.layer(sql, arm), Runs.layer(sql))),
     Layer.provideMerge(Layer.merge(Intents.layer(sql), Policies.layer(sql))),
     Layer.provideMerge(Skills.layer(sql)),
     Layer.provideMerge(State.layer(sql)),

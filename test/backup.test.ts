@@ -10,7 +10,6 @@ import { Host } from "../src/host.ts";
 import { fakeHost } from "./fake-host.ts";
 import { Intents } from "../src/intents.ts";
 import { Policies } from "../src/policies.ts";
-import { Schedules } from "../src/schedules.ts";
 import { Skills } from "../src/skills.ts";
 import { State } from "../src/state.ts";
 
@@ -36,7 +35,6 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
   };
   return Backup.layer.pipe(
     Layer.provideMerge(Artifacts.layer(sql)),
-    Layer.provideMerge(Schedules.layer(sql)),
     Layer.provideMerge(Skills.layer(sql)),
     Layer.provideMerge(Intents.layer(sql)),
     Layer.provideMerge(Policies.layer(sql)),
@@ -49,7 +47,7 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
   );
 };
 
-test("an archive restores a channel into an empty one: log, nodes, view, schedules, settings, artifacts", async () => {
+test("an archive restores a channel into an empty one: log, nodes, view, settings, artifacts", async () => {
   const shared = Layer.build(Blobs.memory).pipe(Effect.map((c) => Layer.succeedContext(c)));
   await Effect.runPromise(
     Effect.scoped(
@@ -59,7 +57,6 @@ test("an archive restores a channel into an empty one: log, nodes, view, schedul
         const exported = yield* Effect.gen(function* () {
           const store = yield* Store;
           const state = yield* State;
-          const schedules = yield* Schedules;
           const skills = yield* Skills;
           const intents = yield* Intents;
           const policies = yield* Policies;
@@ -86,11 +83,6 @@ test("an archive restores a channel into an empty one: log, nodes, view, schedul
           });
           yield* state.setMeta("thread", "telegram:-1:5");
           yield* state.setMeta("setting:model", "deepseek-flash");
-          yield* schedules.create(
-            { kind: "cron", expr: "0 9 * * *", timezone: "UTC" },
-            "brief",
-            new Date(),
-          );
           yield* skills.save("weekly-review", "Review the week", "1. Read seven days.");
           yield* skills.pin("weekly-review");
           yield* intents.create("Check the rollback owner", ["launch"], {
@@ -112,7 +104,6 @@ test("an archive restores a channel into an empty one: log, nodes, view, schedul
           yield* (yield* Backup).restoreTar(exported.tar);
           expect(yield* store.snapshot).toEqual(exported.snapshot);
           expect((yield* state.settings).model).toBe("deepseek-flash");
-          expect((yield* (yield* Schedules).list).map((s) => s.prompt)).toEqual(["brief"]);
           const restoredSkills = yield* (yield* Skills).list;
           expect(restoredSkills.map((s) => s.name)).toEqual(["weekly-review"]);
           expect(restoredSkills[0]?.pinned).toBe(true);

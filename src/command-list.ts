@@ -16,8 +16,8 @@ export const COMMANDS = [
   { command: "skills", description: "List, show or delete the agent's skills" },
   { command: "intents", description: "List or cancel standing intents" },
   { command: "policies", description: "List, add or remove approval rules" },
-  { command: "schedules", description: "List this agent's schedules" },
-  { command: "runs", description: "Show the last runs of a schedule" },
+  { command: "automations", description: "List, pause, resume, test or cancel automations" },
+  { command: "runs", description: "Show the last runs of automations" },
   { command: "export", description: "Export this agent as a file" },
   { command: "help", description: "List the commands" },
 ] as const;

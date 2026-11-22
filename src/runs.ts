@@ -6,7 +6,7 @@ export type RunStatus = "running" | "succeeded" | "failed" | "skipped";
 
 export interface Run {
   readonly id: number;
-  readonly scheduleId: number;
+  readonly automationId: number;
   readonly started: number;
   readonly finished: number | undefined;
   readonly status: RunStatus;
@@ -16,7 +16,7 @@ export interface Run {
 
 const Row = Schema.Struct({
   id: Schema.Finite,
-  schedule_id: Schema.Finite,
+  automation_id: Schema.Finite,
   started: Schema.Finite,
   finished: Schema.NullOr(Schema.Finite),
   status: Schema.Literals(["running", "succeeded", "failed", "skipped"]),
@@ -27,7 +27,7 @@ const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const toRun = (row: typeof Row.Type): Run => ({
   id: row.id,
-  scheduleId: row.schedule_id,
+  automationId: row.automation_id,
   started: row.started,
   finished: row.finished ?? undefined,
   status: row.status,
@@ -35,13 +35,13 @@ const toRun = (row: typeof Row.Type): Run => ({
   error: row.error ?? undefined,
 });
 
-const SELECT = `SELECT id, schedule_id, started, finished, status, output, error FROM app_runs`;
+const SELECT = `SELECT id, automation_id, started, finished, status, output, error FROM app_runs`;
 
-/** A schedule's runs: enough to tell a working routine from one that keeps failing. */
+/** An automation's runs: enough to tell a working routine from one that keeps failing. */
 export class Runs extends Context.Service<
   Runs,
   {
-    start(scheduleId: number): Effect.Effect<number, StateError>;
+    start(automationId: number): Effect.Effect<number, StateError>;
     finish(
       id: number,
       status: Exclude<RunStatus, "running">,
@@ -50,7 +50,7 @@ export class Runs extends Context.Service<
     ): Effect.Effect<void, StateError>;
     list(options: {
       readonly limit: number;
-      readonly scheduleId?: number;
+      readonly automationId?: number;
     }): Effect.Effect<ReadonlyArray<Run>, StateError>;
   }
 >()("mizook/Runs") {
@@ -67,7 +67,7 @@ export class Runs extends Context.Service<
         yield* run("migrate runs", async () => {
           await sql.all(
             `CREATE TABLE IF NOT EXISTS app_runs (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id INTEGER NOT NULL,
+               id INTEGER PRIMARY KEY AUTOINCREMENT, automation_id INTEGER NOT NULL,
                started INTEGER NOT NULL, finished INTEGER, status TEXT NOT NULL,
                output TEXT NOT NULL DEFAULT '', error TEXT)`,
           );
@@ -85,12 +85,12 @@ export class Runs extends Context.Service<
           );
 
         return Runs.of({
-          start: (scheduleId) =>
+          start: (automationId) =>
             query(
               "start run",
-              `INSERT INTO app_runs (schedule_id, started, status) VALUES (?, ?, 'running')
-               RETURNING id, schedule_id, started, finished, status, output, error`,
-              scheduleId,
+              `INSERT INTO app_runs (automation_id, started, status) VALUES (?, ?, 'running')
+               RETURNING id, automation_id, started, finished, status, output, error`,
+              automationId,
               Date.now(),
             ).pipe(Effect.map((rows) => rows[0]!.id)),
           finish: (id, status, output, error) =>
@@ -104,13 +104,13 @@ export class Runs extends Context.Service<
                 id,
               ),
             ).pipe(Effect.asVoid),
-          list: ({ limit, scheduleId }) =>
+          list: ({ limit, automationId }) =>
             query(
               "list runs",
-              scheduleId === undefined
+              automationId === undefined
                 ? `${SELECT} ORDER BY id DESC LIMIT ?`
-                : `${SELECT} WHERE schedule_id = ? ORDER BY id DESC LIMIT ?`,
-              ...(scheduleId === undefined ? [limit] : [scheduleId, limit]),
+                : `${SELECT} WHERE automation_id = ? ORDER BY id DESC LIMIT ?`,
+              ...(automationId === undefined ? [limit] : [automationId, limit]),
             ),
         });
       }),

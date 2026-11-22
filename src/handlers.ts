@@ -1,5 +1,5 @@
 import { clipToolOutput, Memory } from "@mizook/memory";
-import { Context, DateTime, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Browser } from "./browser.ts";
 import { Settings } from "./config.ts";
 import { ScheduleError } from "./errors.ts";
@@ -12,7 +12,8 @@ import {
 } from "./intents.ts";
 import { MEDIA_LABEL, Media } from "./media.ts";
 import { Policies } from "./policies.ts";
-import { Schedules, type Schedule } from "./schedules.ts";
+import type { Automation } from "./automations.ts";
+import { describeAutomation } from "./runner.ts";
 import type { Spec } from "./schedule.ts";
 import { MAX_SKILL_BODY, MAX_SKILL_DESCRIPTION, SKILL_NAME, Skills } from "./skills.ts";
 import { KIND_TYPES } from "./artifact-render.ts";
@@ -23,7 +24,6 @@ import { Executor, pausedExecution } from "./executor.ts";
 import { Host } from "./host.ts";
 import { describeAgentAction, encodeAgentAction, type AgentAction } from "./agent-manage.ts";
 import { ToolError } from "./errors.ts";
-import { State } from "./state.ts";
 import { Outbox } from "./outbox.ts";
 import { Web } from "./search.ts";
 import {
@@ -42,8 +42,8 @@ import {
   IntentArgs,
   PolicyArgs,
   ProfileArgs,
-  ScheduleCancelArgs,
-  ScheduleCreateArgs,
+  AutomationCreateArgs,
+  AutomationIdArgs,
   SearchArgs,
   SkillArgs,
   WebFetchArgs,
@@ -64,7 +64,6 @@ export class Handlers extends Context.Service<
     Handlers,
     Effect.gen(function* () {
       const memory = yield* Memory;
-      const schedules = yield* Schedules;
       const intents = yield* Intents;
       const policies = yield* Policies;
       const skills = yield* Skills;
@@ -77,24 +76,12 @@ export class Handlers extends Context.Service<
       const approvals = yield* Approvals;
       const blobs = yield* Blobs;
       const artifacts = yield* Artifacts;
-      const state = yield* State;
       const channel = Effect.succeed(host.self.doName);
       const { timezone } = yield* Settings;
 
-      const describe = (s: Schedule) => {
-        const { spec } = s;
-        const what =
-          spec.kind === "once"
-            ? `once at ${spec.at}`
-            : spec.kind === "cron"
-              ? `cron "${spec.expr}" (${spec.timezone})`
-              : `watch ${spec.url} every ${spec.everyMinutes} min`;
-        return `#${s.id} ${what}${s.skill ? ` [skill ${s.skill}]` : ""}; next ${formatDate(new Date(s.nextAt), timezone)}; ${s.prompt}`;
-      };
-
-      const specOf = (a: typeof ScheduleCreateArgs.Type): Effect.Effect<Spec, ScheduleError> => {
+      const specOf = (a: typeof AutomationCreateArgs.Type): Effect.Effect<Spec, ScheduleError> => {
         const missing = (what: string) => Effect.fail(new ScheduleError({ reason: what }));
-        switch (a.kind) {
+        switch (a.trigger) {
           case "once":
             return a.at ? Effect.succeed({ kind: "once", at: a.at }) : missing("once needs `at`");
           case "cron":
@@ -105,8 +92,77 @@ export class Handlers extends Context.Service<
             return a.url && a.every_minutes
               ? Effect.succeed({ kind: "watch", url: a.url, everyMinutes: a.every_minutes })
               : missing("watch needs `url` and `every_minutes`");
+          case "webhook":
+            return Effect.succeed({ kind: "webhook" });
         }
       };
+
+      /** The agent an action names by slug, as its id; you by default. */
+      const agentId = (slug: string | undefined) =>
+        Effect.gen(function* () {
+          const wanted = slug?.trim().replace(/^\//, "").toLowerCase();
+          if (!wanted || wanted === host.self.slug) return host.self.id;
+          const found = (yield* host.agents).find((x) => x.slug === wanted);
+          if (!found) return yield* new ToolError({ reason: `no agent "${slug}"` });
+          return found.id;
+        });
+
+      /** An automation in one line, with its webhook link when it has one. */
+      const describe = (a: Automation) =>
+        Effect.gen(function* () {
+          const agents = yield* host.agents;
+          const line = describeAutomation(
+            a,
+            (at) => formatDate(new Date(at), timezone),
+            (id) => `/${agents.find((x) => x.id === id)?.slug ?? id}`,
+          );
+          return a.spec.kind === "webhook"
+            ? `${line}\n  link: ${yield* host.automations.hookUrl(a.id)}`
+            : line;
+        });
+
+      const actionOf = (a: typeof AutomationCreateArgs.Type, place: string | undefined) =>
+        Effect.gen(function* () {
+          const where = a.place === "last" ? "" : (a.place ?? place ?? "");
+          switch (a.action ?? "turn") {
+            case "turn": {
+              const prompt = a.prompt?.trim();
+              if (!prompt) return yield* new ToolError({ reason: "a turn needs a prompt" });
+              const skill = a.skill?.trim();
+              if (skill) {
+                if (!SKILL_NAME.test(skill)) {
+                  return yield* new ToolError({ reason: `"${skill}" is not a skill name` });
+                }
+                // An automation needs its skill: keep it, yours first, then the shared one.
+                if (yield* skills.get(skill)) yield* skills.pin(skill);
+                else if (yield* host.globalSkills.get(skill)) yield* host.globalSkills.pin(skill);
+                else return yield* new ToolError({ reason: `no skill "${skill}"` });
+              }
+              return {
+                kind: "turn" as const,
+                agent: yield* agentId(a.agent),
+                place: where,
+                prompt,
+                ...(skill ? { skill } : {}),
+              };
+            }
+            case "post": {
+              const text = a.text?.trim();
+              if (!text) return yield* new ToolError({ reason: "a post needs text" });
+              return { kind: "post" as const, agent: yield* agentId(a.agent), place: where, text };
+            }
+            case "webhook": {
+              if (!a.call_url)
+                return yield* new ToolError({ reason: "a webhook action needs call_url" });
+              return {
+                kind: "webhook" as const,
+                url: a.call_url,
+                method: a.method ?? "POST",
+                ...(a.body === undefined ? {} : { body: a.body }),
+              };
+            }
+          }
+        });
 
       const decode = <S extends Schema.Decoder<unknown>>(schema: S, args: unknown) =>
         Schema.decodeUnknownEffect(schema)(args);
@@ -176,8 +232,6 @@ export class Handlers extends Context.Service<
                 ? `Binary file: ${blob.contentType}, ${blob.body.length} bytes. I cannot read its content.`
                 : `${MEDIA_LABEL[extracted.kind]}:\n${clipToolOutput(extracted.text, 16_000)}`;
             });
-          case "webhook_link":
-            return host.hookUrl;
           case "ask_agent":
             return Effect.flatMap(decode(AskAgentArgs, args), (a) => host.ask(a.agent, a.question));
           case "profile_manage":
@@ -454,7 +508,7 @@ export class Handlers extends Context.Service<
                   if (!found) return `No skill "${a.name}".`;
                   if (found.skill.pinned) {
                     return yield* new ToolError({
-                      reason: `"${a.name}" is pinned by a schedule; cancel the schedule first`,
+                      reason: `"${a.name}" is pinned by an automation; cancel the automation first`,
                     });
                   }
                   return (yield* found.store.remove(a.name))
@@ -575,71 +629,46 @@ export class Handlers extends Context.Service<
                 }
               }
             });
-          case "schedule_create":
+          case "automation_create":
             return Effect.gen(function* () {
-              const a = yield* decode(ScheduleCreateArgs, args);
+              const a = yield* decode(AutomationCreateArgs, args);
               const spec = yield* specOf(a);
-              const now = new Date(DateTime.toEpochMillis(yield* DateTime.now));
-              const skill = a.skill?.trim();
-              if (skill !== undefined && skill !== "") {
-                if (!SKILL_NAME.test(skill)) {
-                  return yield* new ToolError({ reason: `"${skill}" is not a skill name` });
-                }
-                // A schedule needs its skill: keep it, yours first, then the shared one.
-                if (yield* skills.get(skill)) yield* skills.pin(skill);
-                else if (yield* host.globalSkills.get(skill)) yield* host.globalSkills.pin(skill);
-                else return yield* new ToolError({ reason: `no skill "${skill}"` });
-              }
-              const made = yield* schedules.create(
-                spec,
-                a.prompt,
-                now,
-                skill === "" ? undefined : skill,
-                place,
-              );
-              return `Scheduled. ${describe(made)}`;
+              const action = yield* actionOf(a, place);
+              const made = yield* host.automations.create(spec, action);
+              return `Automation made. ${yield* describe(made)}`;
             });
-          case "schedule_list":
-            return Effect.map(schedules.list, (all) =>
-              all.length === 0 ? "No schedules." : all.map(describe).join("\n"),
-            );
-          case "schedule_cancel":
-            return Effect.flatMap(decode(ScheduleCancelArgs, args), ({ id }) =>
-              Effect.map(schedules.cancel(id), (done) =>
-                done ? `Cancelled #${id}.` : `No active schedule #${id}.`,
-              ),
-            );
-          case "schedule_pause":
-            return Effect.flatMap(decode(ScheduleCancelArgs, args), ({ id }) =>
-              Effect.map(schedules.pause(id), (done) =>
-                done ? `Paused #${id}.` : `No active schedule #${id}.`,
-              ),
-            );
-          case "schedule_resume":
-            return Effect.flatMap(decode(ScheduleCancelArgs, args), ({ id }) =>
-              Effect.gen(function* () {
-                const now = new Date(DateTime.toEpochMillis(yield* DateTime.now));
-                const done = yield* schedules.resume(id, now);
-                return done ? `Resumed #${id}.` : `No schedule #${id}.`;
-              }),
-            );
-          case "schedule_test":
+          case "automation_list":
             return Effect.gen(function* () {
-              const a = yield* decode(ScheduleCancelArgs, args);
-              const found = yield* schedules.get(a.id);
-              if (!found) return yield* new ToolError({ reason: `no schedule #${a.id}` });
-              const target = found.place || (yield* state.meta("place"));
-              if (!target) {
-                return yield* new ToolError({ reason: "nobody has talked to this agent yet" });
-              }
-              if (yield* state.turn(target)) {
-                return yield* new ToolError({ reason: "a turn is already running there" });
-              }
-              const started = yield* host.testSchedule(a.id);
-              return started
-                ? `Test #${a.id} started; the result goes to the chat.`
-                : `Could not start #${a.id}.`;
+              const all = yield* host.automations.list(host.self.id);
+              if (all.length === 0) return "No automations.";
+              return (yield* Effect.forEach(all, describe)).join("\n");
             });
+          case "automation_cancel":
+            return Effect.flatMap(decode(AutomationIdArgs, args), ({ id }) =>
+              Effect.map(host.automations.cancel(id), (done) =>
+                done ? `Deleted #${id}.` : `No automation #${id}.`,
+              ),
+            );
+          case "automation_pause":
+            return Effect.flatMap(decode(AutomationIdArgs, args), ({ id }) =>
+              Effect.map(host.automations.pause(id), (done) =>
+                done ? `Paused #${id}.` : `No active automation #${id}.`,
+              ),
+            );
+          case "automation_resume":
+            return Effect.flatMap(decode(AutomationIdArgs, args), ({ id }) =>
+              Effect.map(host.automations.resume(id), (done) =>
+                done ? `Resumed #${id}.` : `No automation #${id}.`,
+              ),
+            );
+          case "automation_test":
+            return Effect.flatMap(decode(AutomationIdArgs, args), ({ id }) =>
+              Effect.map(host.automations.test(id), (started) =>
+                started
+                  ? `Test #${id} started; the result goes where it talks.`
+                  : `No automation #${id}.`,
+              ),
+            );
           default:
             return Effect.succeed(`No tool ${name}.`);
         }

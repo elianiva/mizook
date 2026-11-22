@@ -5,7 +5,10 @@ import { ScheduleError } from "./errors.ts";
 /** The shortest gap between two polls of a watch. */
 export const MIN_WATCH_MINUTES = 5;
 
-/** When something should wake the chat. Stored as JSON, so the schema is also the row format. */
+/**
+ * When an automation fires: a time, a cron, a watched URL that changed, or a call to its webhook
+ * link. Stored as JSON, so the schema is also the row format.
+ */
 export const Spec = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("once"), at: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("cron"), expr: Schema.String, timezone: Schema.String }),
@@ -14,10 +17,45 @@ export const Spec = Schema.Union([
     url: Schema.String,
     everyMinutes: Schema.Finite,
   }),
+  Schema.Struct({ kind: Schema.Literal("webhook") }),
 ]);
 export type Spec = typeof Spec.Type;
 
 export const SpecJson = Schema.fromJsonString(Spec);
+
+/**
+ * What an automation does when it fires: a turn of an agent in a place, a fixed message posted to
+ * a place with no model call, or a call to an outside URL. `agent` is the agent's id; an empty
+ * `place` is wherever that agent talked last.
+ */
+export const Action = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("turn"),
+    agent: Schema.String,
+    place: Schema.String,
+    prompt: Schema.String,
+    skill: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("post"),
+    agent: Schema.String,
+    place: Schema.String,
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("webhook"),
+    url: Schema.String,
+    method: Schema.Literals(["GET", "POST", "PUT"]),
+    /** Sent as the body; `{{payload}}` becomes what the trigger brought, JSON-escaped. */
+    body: Schema.optionalKey(Schema.String),
+  }),
+]);
+export type Action = typeof Action.Type;
+
+export const ActionJson = Schema.fromJsonString(Action);
+
+/** A trigger that only a webhook call fires is never due by the clock. */
+export const NEVER = 8_640_000_000_000_000;
 
 const fail = (reason: string) => Effect.fail(new ScheduleError({ reason }));
 
@@ -50,6 +88,8 @@ export const nextFire = (
       }
       return Effect.succeed(new Date(after.getTime() + spec.everyMinutes * 60_000));
     }
+    case "webhook":
+      return Effect.succeed(new Date(NEVER));
   }
 };
 
