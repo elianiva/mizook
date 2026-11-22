@@ -19,7 +19,7 @@ const isRateLimitedOrServerError = (status: number): boolean =>
 const retryDelayMs = (attempt: number, reply: TelegramReply | undefined): number => {
   const rateLimitWaitSeconds = reply?.parameters?.retry_after;
   if (rateLimitWaitSeconds !== undefined) {
-    return Math.min(rateLimitWaitSeconds * 1000, LONGEST_RATE_LIMIT_WAIT_MS);
+    return Math.min(Math.round(rateLimitWaitSeconds * 1000), LONGEST_RATE_LIMIT_WAIT_MS);
   }
   return Math.min(FIRST_RETRY_DELAY_MS * 2 ** (attempt - 1), LONGEST_EXPONENTIAL_DELAY_MS);
 };

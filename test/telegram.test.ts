@@ -14,7 +14,11 @@ const word = Arbitrary.schema(
 
 const outcome = Arbitrary.all({
   kind: Arbitrary.schema(Schema.Literals(["network", "rateLimit", "server", "permanent", "ok"])),
-  retryAfterSeconds: int(0, 40),
+  retryAfterCentiseconds: Arbitrary.flatMap(Arbitrary.schema(Schema.Boolean), (fractional) =>
+    fractional
+      ? Arbitrary.schema(Schema.Literals([201, 203, 402, 403, 406, 407, 803, 1617]))
+      : int(0, 4_000),
+  ),
   serverStatus: int(500, 599),
   permanentStatus: Arbitrary.schema(Schema.Literals([200, 400, 401, 403, 404, 428, 430, 499])),
   description: Arbitrary.all([word, Arbitrary.schema(Schema.Boolean)]).pipe(
@@ -40,7 +44,7 @@ const reply = (o: Outcome): { status: number; body: TelegramReply } => {
         body: {
           ok: false,
           description: "Too Many Requests",
-          parameters: { retry_after: o.retryAfterSeconds },
+          parameters: { retry_after: o.retryAfterCentiseconds / 100 },
         },
       };
     case "server":
@@ -75,7 +79,7 @@ const expectedRun = (outcomes: ReadonlyArray<Outcome>, attempts: number) => {
     if (attempt < attempts) {
       sleeps.push(
         o.kind === "rateLimit"
-          ? Math.min(o.retryAfterSeconds * 1_000, 30_000)
+          ? Math.min(o.retryAfterCentiseconds * 10, 30_000)
           : Math.min(1_000 * 2 ** (attempt - 1), 10_000),
       );
     }
