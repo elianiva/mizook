@@ -4,6 +4,7 @@ import { AsyncData } from "foldkit";
 
 import { channelsQuery } from "./api.ts";
 import type { Model } from "./model.ts";
+import { PaletteState } from "./palette-machine.ts";
 import {
   agentRouter,
   artifactsRouter,
@@ -126,7 +127,10 @@ export const matches = (
   model: Model,
   current: Option.Option<string>,
 ): ReadonlyArray<Destination> => {
-  const query = model.palette.query.trim().toLowerCase();
+  const query = PaletteState.match(model.palette, {
+    Closed: () => "",
+    Open: ({ query }) => query.trim().toLowerCase(),
+  });
   const all = destinations(model, current);
   if (query === "") return all;
   return all

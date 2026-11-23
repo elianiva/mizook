@@ -65,6 +65,7 @@ import { channelsQuery } from "./api.ts";
 import type { GlyphName } from "@mizook/design/icons";
 import { icon } from "./icon.ts";
 import { type Destination, matches, sections } from "./palette.ts";
+import { PaletteState } from "./palette-machine.ts";
 
 const channelsRead = channelsQuery.read;
 import { ui } from "./ui.ts";
@@ -2076,10 +2077,19 @@ const jumpButton = (model: Model, h: H): Html =>
   );
 
 /** The ⌘K menu: every section, then every agent, filtered as you type. */
-const paletteView = (model: Model, h: H): Html => {
-  if (!model.palette.open) return h.empty;
+const paletteView = (model: Model, h: H): Html =>
+  PaletteState.match(model.palette, {
+    Closed: () => h.empty,
+    Open: (open) => openPaletteView(model, h, open),
+  });
+
+const openPaletteView = (
+  model: Model,
+  h: H,
+  open: Extract<PaletteState, { readonly _tag: "Open" }>,
+): Html => {
   const found = matches(model, currentChannel(model));
-  const index = Math.min(model.palette.index, Math.max(found.length - 1, 0));
+  const index = Math.min(open.index, Math.max(found.length - 1, 0));
   const optionId = (at: number) => `palette-option-${at}`;
   let at = -1;
   return h.div(
@@ -2104,7 +2114,7 @@ const paletteView = (model: Model, h: H): Html => {
                 ...(found.length === 0 ? [] : [h.AriaActiveDescendant(optionId(index))]),
                 h.Placeholder("Jump to a section or agent"),
                 h.Autocomplete("off"),
-                h.Value(model.palette.query),
+                h.Value(open.query),
                 h.OnInput((value) => Message.TypedPaletteQuery({ value })),
                 h.OnKeyDownPreventDefault((key) =>
                   key === "ArrowDown"

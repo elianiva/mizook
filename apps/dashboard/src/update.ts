@@ -1,6 +1,7 @@
 import { Array, Duration, Effect, Option, Record, Schema, Stream, pipe } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
 import * as Dom from "foldkit/dom";
+import { Machine } from "foldkit/experimental";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
 import { type Url, toString as urlToString } from "foldkit/url";
@@ -37,6 +38,7 @@ import {
 import { Message } from "./message.ts";
 import { Model } from "./model.ts";
 import { GO_KEYS, matches, sections } from "./palette.ts";
+import { PaletteState, paletteMachine } from "./palette-machine.ts";
 import {
   AppRoute,
   daysOf,
@@ -48,8 +50,6 @@ import {
 } from "./route.ts";
 
 const OVERVIEW_REFRESH = Duration.seconds(10);
-
-const CLOSED_PALETTE = { open: false, query: "", index: 0 };
 
 /** Focuses an element once the next frame has drawn it. */
 const FocusAfterPaint = Command.define("FocusAfterPaint", {
@@ -66,7 +66,7 @@ const FocusAfterPaint = Command.define("FocusAfterPaint", {
 });
 
 const goTo = (model: Model, href: string): UpdateReturn => ({
-  model: { ...model, palette: CLOSED_PALETTE },
+  model,
   commands: [NavigateInternal({ url: href })],
 });
 
@@ -479,11 +479,18 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     composer: { name: "", kind: "markdown", content: "" },
     armed: Option.none(),
     notice: Option.none(),
-    palette: CLOSED_PALETTE,
+    palette: paletteMachine.initial,
     apple: typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform),
   });
   return Update.combine(model, [loadChannels, loadRoute]);
 };
+
+const foldPalette = Machine.fold({
+  machine: paletteMachine,
+  read: (model: Model) => Option.some(model.palette),
+  write: (model, palette) => modifyFields(model, { palette: () => palette }),
+  context: (model) => ({ resultCount: matches(model, currentChannel(model)).length }),
+});
 
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
@@ -702,30 +709,29 @@ export const update = (model: Model, message: Message) =>
     FailedAction: ({ reason }) =>
       loadRoute(modifyFields(model, { notice: () => Option.some(reason) })),
 
-    PressedPalette: () =>
-      model.palette.open
-        ? { model: { ...model, palette: CLOSED_PALETTE } }
-        : {
-            model: { ...model, palette: { ...CLOSED_PALETTE, open: true } },
-            commands: [FocusAfterPaint({ selector: "#palette-input" })],
-          },
-    ClosedPalette: () => ({ model: { ...model, palette: CLOSED_PALETTE } }),
-    TypedPaletteQuery: ({ value }) => ({
-      model: { ...model, palette: { open: true, query: value, index: 0 } },
-    }),
-    MovedPaletteSelection: ({ by }) => {
-      const count = matches(model, currentChannel(model)).length;
-      if (count === 0) return { model };
-      const index = (((model.palette.index + by) % count) + count) % count;
-      return { model: { ...model, palette: { ...model.palette, index } } };
+    PressedPalette: () => {
+      const next = foldPalette(model, message);
+      return PaletteState.guards.Open(next.model.palette)
+        ? {
+            ...next,
+            commands: [...(next.commands ?? []), FocusAfterPaint({ selector: "#palette-input" })],
+          }
+        : next;
     },
+    ClosedPalette: () => foldPalette(model, message),
+    TypedPaletteQuery: () => foldPalette(model, message),
+    MovedPaletteSelection: () => foldPalette(model, message),
     ChosePalette: ({ index }) => {
       const chosen = matches(model, currentChannel(model))[index];
-      return chosen === undefined ? { model } : goTo(model, chosen.href);
+      return chosen === undefined
+        ? { model }
+        : goTo(foldPalette(model, message).model, chosen.href);
     },
     PressedGo: ({ id }) => {
       const section = sections(model).find((entry) => entry.id === id);
-      return section === undefined ? { model } : goTo(model, section.href);
+      return section === undefined
+        ? { model }
+        : goTo(foldPalette(model, message).model, section.href);
     },
     PressedSearch: () => ({ model, commands: [FocusAfterPaint({ selector: "#log-search" })] }),
     CompletedFocus: () => ({ model }),
@@ -747,7 +753,7 @@ export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
     { isPaletteOpen: Schema.Boolean, isOnLog: Schema.Boolean },
     {
       modelToDependencies: (model) => ({
-        isPaletteOpen: model.palette.open,
+        isPaletteOpen: PaletteState.guards.Open(model.palette),
         isOnLog: model.route._tag === "Log",
       }),
       dependenciesToStream: ({ isPaletteOpen, isOnLog }) =>
