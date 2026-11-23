@@ -1,8 +1,8 @@
 import { AsyncData, Command, Subscription, Update } from "foldkit";
-import { scrollIntoViewAfterPaint } from "foldkit/dom";
+import { focus, scrollIntoViewAfterPaint, streamFromKeyBindings } from "foldkit/dom";
 import { load, pushUrl, UrlRequest } from "foldkit/navigation";
 import { toString as urlToString, type Url } from "foldkit/url";
-import { Effect, Equal, Option, Predicate, Schedule, Schema, Stream } from "effect";
+import { Duration, Effect, Equal, Option, Predicate, Schedule, Schema, Stream } from "effect";
 import {
   Dialog,
   Drawer,
@@ -186,6 +186,50 @@ const ScrollToBottom = Command.define("ScrollToBottom", {
   ),
 });
 
+const COMPOSER = 'textarea[aria-label="Message"]';
+
+/**
+ * Puts the caret in the composer. A touch screen would raise its keyboard for
+ * focus the user did not ask for, so `always` is for the moments they did:
+ * they just sent, picked a prompt, or pressed the shortcut.
+ */
+const FocusComposer = Command.define("FocusComposer", {
+  args: { always: Schema.Boolean },
+  messages: [Message.CompletedFocus],
+  execute: ({ always }) =>
+    Effect.suspend(() =>
+      always || window.matchMedia("(hover: hover) and (pointer: fine)").matches
+        ? focus(COMPOSER)
+        : Effect.void,
+    ).pipe(
+      Effect.as(Message.CompletedFocus()),
+      Effect.orElseSucceed(() => Message.CompletedFocus()),
+    ),
+});
+
+const COPIED_FOR = Duration.millis(1600);
+const TOAST_FOR = Duration.seconds(3);
+const ARMED_FOR = Duration.seconds(4);
+
+const ExpireCopied = Command.define("ExpireCopied", {
+  args: { id: Schema.Finite, count: Schema.Finite },
+  messages: [Message.ExpiredCopied],
+  execute: ({ id, count }) =>
+    Effect.sleep(COPIED_FOR).pipe(Effect.as(Message.ExpiredCopied({ id, count }))),
+});
+
+const ExpireToast = Command.define("ExpireToast", {
+  args: { text: Schema.String },
+  messages: [Message.ExpiredToast],
+  execute: ({ text }) => Effect.sleep(TOAST_FOR).pipe(Effect.as(Message.ExpiredToast({ text }))),
+});
+
+const ExpireArmed = Command.define("ExpireArmed", {
+  args: { key: Schema.String },
+  messages: [Message.ExpiredArmed],
+  execute: ({ key }) => Effect.sleep(ARMED_FOR).pipe(Effect.as(Message.ExpiredArmed({ key }))),
+});
+
 const CopyText = Command.define("CopyText", {
   args: { id: Schema.Finite, text: Schema.String },
   messages: [Message.Copied, Message.FailedSend],
@@ -364,12 +408,14 @@ export const init = (flags: Flags, url: Url) => {
     turn: turnMachine.initial,
     notice: Option.none(),
     offline: typeof navigator !== "undefined" && !navigator.onLine,
+    touch: typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
     saved: false,
     armedArchive: Confirmation.Resting(),
     renameThreadId: Option.none(),
     copied: Option.none(),
+    toast: Option.none(),
   });
-  return { model, commands: [] };
+  return { model, commands: [FocusComposer({ always: false })] };
 };
 
 type UpdateReturn = Update.Return<Model, Message, UiRegistry | ChatSync>;
@@ -381,6 +427,12 @@ const withNotice = (model: Model, notice: string): Model => ({
   ...model,
   notice: Option.some(notice),
   armedArchive: Confirmation.Resting(),
+});
+
+/** A confirmation that is not an error: it shows for a moment and leaves by itself. */
+const withToast = (model: Model, text: string) => ({
+  model: { ...model, toast: Option.some(text) },
+  commands: [ExpireToast({ text })],
 });
 
 export const update = (model: Model, message: Message): UpdateReturn =>
@@ -465,20 +517,23 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const cleared = clearComposer({ ...model, turn, notice: Option.none() });
       return {
         model: { ...model, ui: cleared.ui, turn, notice: Option.none() },
-        commands: [...cleared.commands, ScrollToBottom()],
+        commands: [...cleared.commands, ScrollToBottom(), FocusComposer({ always: true })],
       };
     },
     FailedSend: ({ reason }) => ({
       model: { ...model, turn: stepTurn(model, message), notice: Option.some(reason) },
     }),
 
-    Stopped: ({ ok }) => ({
-      model: {
-        ...model,
-        turn: stepTurn(model, message),
-        notice: Option.some(ok ? "Stopped." : "Nothing was running."),
-      },
-    }),
+    Stopped: ({ ok }) => {
+      const toast = withToast(
+        { ...model, turn: stepTurn(model, message), notice: Option.none() },
+        ok ? "Stopped." : "Nothing was running.",
+      );
+      return {
+        model: toast.model,
+        commands: [...toast.commands, FocusComposer({ always: false })],
+      };
+    },
     FailedStop: ({ reason }) => ({
       model: { ...model, turn: stepTurn(model, message), notice: Option.some(reason) },
     }),
@@ -506,15 +561,24 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const active = activeThread(model);
       const wasActive = Option.contains(active, id);
       const route = AppRoute.Home();
-      return {
-        model: {
+      const toast = withToast(
+        {
           ...model,
           route: wasActive ? route : model.route,
           thread: wasActive ? AsyncData.Idle() : model.thread,
           armedArchive: Confirmation.Resting(),
-          notice: Option.some("Chat archived."),
+          notice: Option.none(),
         },
-        commands: wasActive ? [NavigateInternal({ url: routeHref(route) })] : [],
+        "Chat archived.",
+      );
+      return {
+        model: toast.model,
+        commands: [
+          ...toast.commands,
+          ...(wasActive
+            ? [NavigateInternal({ url: routeHref(route) }), FocusComposer({ always: false })]
+            : []),
+        ],
       };
     },
     FailedArchive: ({ reason }) => ({ model: withNotice(model, reason) }),
@@ -536,6 +600,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           NavigateInternal({ url: routeHref(route) }),
           ...drawer.commands,
           ScrollToBottom(),
+          FocusComposer({ always: false }),
         ],
       };
     },
@@ -567,6 +632,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           NavigateInternal({ url: routeHref(route) }),
           ...cleared.commands,
           ...drawer.commands,
+          FocusComposer({ always: false }),
         ],
       };
     },
@@ -579,7 +645,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       if (Option.isSome(active))
         return {
           model: { ...model, turn: stepTurn(model, message), notice: Option.none() },
-          commands: [SendMessage({ threadId: active.value, text, requestId })],
+          commands: [
+            SendMessage({ threadId: active.value, text, requestId }),
+            FocusComposer({ always: true }),
+          ],
         };
       if (!Predicate.isTagged(model.route, "Home"))
         return { model: withNotice(model, "That page is not a chat.") };
@@ -599,6 +668,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         commands: [
           NavigateInternal({ url: routeHref(route) }),
           SendMessage({ threadId, text, requestId, agent }),
+          FocusComposer({ always: true }),
         ],
       };
     },
@@ -658,11 +728,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           commands: [ArchiveThread({ id: active.value })],
         };
       return {
-        model: {
-          ...model,
-          armedArchive: Confirmation.Armed({ key: active.value }),
-          notice: Option.some("Press Archive again to confirm."),
-        },
+        // The menu stays open and its item asks "sure?"; the question lapses by itself.
+        model: { ...model, armedArchive: Confirmation.Armed({ key: active.value }) },
+        commands: [ExpireArmed({ key: active.value })],
       };
     },
 
@@ -679,7 +747,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const filled = uiChange(model, "textarea", "composer", { value: text });
       return {
         model: { ...model, ui: filled.ui, notice: Option.none() },
-        commands: filled.commands,
+        commands: [...filled.commands, FocusComposer({ always: true })],
       };
     },
 
@@ -693,7 +761,32 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedCopy: ({ id, text }) => ({ model, commands: [CopyText({ id, text })] }),
 
-    Copied: ({ id }) => ({ model: { ...model, copied: Option.some(id) } }),
+    Copied: ({ id }) => {
+      // Pressing Copy again restarts the timer: only the newest press may end the state.
+      const count = Option.match(model.copied, {
+        onNone: () => 1,
+        onSome: (copied) => (copied.id === id ? copied.count + 1 : 1),
+      });
+      return {
+        model: { ...model, copied: Option.some({ id, count }) },
+        commands: [ExpireCopied({ id, count })],
+      };
+    },
+    ExpiredCopied: ({ id, count }) => ({
+      model: Option.exists(model.copied, (copied) => copied.id === id && copied.count === count)
+        ? { ...model, copied: Option.none() }
+        : model,
+    }),
+    ExpiredToast: ({ text }) => ({
+      model: Option.contains(model.toast, text) ? { ...model, toast: Option.none() } : model,
+    }),
+    ExpiredArmed: ({ key }) => ({
+      model: isArmed(model.armedArchive, key)
+        ? { ...model, armedArchive: Confirmation.Resting() }
+        : model,
+    }),
+    PressedSlash: () => ({ model, commands: [FocusComposer({ always: true })] }),
+    CompletedFocus: () => ({ model }),
 
     ClickedDismissNotice: () => ({
       model: { ...model, notice: Option.none(), armedArchive: Confirmation.Resting() },
@@ -731,6 +824,11 @@ export const subscriptions = Subscription.make<Model, Message, ChatSync>()((entr
           ),
         ),
     },
+  ),
+  keys: Subscription.persistentEntry(
+    streamFromKeyBindings<Message>({
+      bindings: [{ keys: "/", preventDefault: true, mapEvent: () => Message.PressedSlash() }],
+    }),
   ),
   swipe: Subscription.persistentEntry(
     swipes({ maxWidth: 767 }).pipe(

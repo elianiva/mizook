@@ -121,11 +121,13 @@ export const mizookPreset = definePreset({
             whiteSpace: "nowrap",
             cursor: "pointer",
             userSelect: "none",
-            transitionProperty: "color, background-color, border-color",
             transitionDuration: "120ms",
             transitionTimingFunction: "out",
             "& svg": { flexShrink: 0 },
-            _disabled: { opacity: "0.4", cursor: "not-allowed" },
+            transitionProperty: "color, background-color, border-color, scale",
+            // A press answers at once: the button gives a little under the finger.
+            _active: { scale: "0.97" },
+            _disabled: { opacity: "0.4", cursor: "not-allowed", _active: { scale: "1" } },
           },
           variants: {
             tone: {

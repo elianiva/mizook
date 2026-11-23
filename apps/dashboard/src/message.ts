@@ -88,6 +88,9 @@ export const Message = defineMessageUnion({
   PressedGo: { id: Schema.String },
   PressedSearch: {},
   CompletedFocus: {},
+  ExpiredNotice: { text: Schema.String },
+  ExpiredArmed: { key: Schema.String },
+  PressedEscape: {},
 });
 
 export type Message = typeof Message.Type;

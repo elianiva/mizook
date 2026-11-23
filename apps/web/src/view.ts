@@ -531,7 +531,7 @@ const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
               agentRoleLabel(state.thread),
               state.messages[index - 1]?.role === message.role,
               index === latest,
-              Option.contains(model.copied, message.id),
+              Option.exists(model.copied, (copied) => copied.id === message.id),
             ),
           ),
           ...(state.running
@@ -706,15 +706,19 @@ const composerBox = (model: Model, h: H, config: PartsConfig<Message>, running: 
         h.Placeholder(`Message ${agent}`),
         h.AriaLabel("Message"),
         h.Rows(1),
-        h.OnKeyDownPreventDefault((key, modifiers) =>
-          key === "Enter" &&
-          !modifiers.shiftKey &&
-          !modifiers.ctrlKey &&
-          !modifiers.metaKey &&
-          !modifiers.altKey
-            ? Option.some(Message.ClickedSend())
-            : Option.none(),
-        ),
+        ...(model.touch
+          ? []
+          : [
+              h.OnKeyDownPreventDefault((key, modifiers) =>
+                key === "Enter" &&
+                !modifiers.shiftKey &&
+                !modifiers.ctrlKey &&
+                !modifiers.metaKey &&
+                !modifiers.altKey
+                  ? Option.some(Message.ClickedSend())
+                  : Option.none(),
+              ),
+            ]),
       ]),
       // One slot: Send while idle, Stop while a turn runs.
       running
@@ -736,6 +740,16 @@ const composerBox = (model: Model, h: H, config: PartsConfig<Message>, running: 
   );
 };
 
+const toastView = (model: Model, h: H): Html =>
+  Option.match(model.toast, {
+    onNone: () => null,
+    onSome: (text) =>
+      h.div(
+        [h.Key(`toast-${text}`), h.Class(ui.toast), h.Role("status")],
+        [icon(h, "check", 16), text],
+      ),
+  });
+
 const composer = (model: Model, h: H, config: PartsConfig<Message>): Html => {
   const state = AsyncData.getData(model.thread);
   const running = Option.match(state, { onNone: () => false, onSome: (value) => value.running });
@@ -750,6 +764,7 @@ const composer = (model: Model, h: H, config: PartsConfig<Message>): Html => {
         [h.Class(ui.composerInner)],
         [
           noticeView(model, h),
+          toastView(model, h),
           ...approvals.map((approval) => approvalView(h, approval)),
           composerBox(model, h, config, running),
         ],
@@ -760,13 +775,20 @@ const composer = (model: Model, h: H, config: PartsConfig<Message>): Html => {
 
 const THREAD_MENU = "thread-menu";
 
-const menuItem = (h: H, glyph: GlyphName, label: string, message: Message, danger = false) =>
+/** `keepOpen` leaves the menu showing, for an item that asks again before it acts. */
+const menuItem = (
+  h: H,
+  glyph: GlyphName,
+  label: string,
+  message: Message,
+  danger = false,
+  keepOpen = false,
+) =>
   h.button(
     [
       h.Type("button"),
       h.Class(ui.menuItem({ danger })),
-      h.Popovertarget(THREAD_MENU),
-      h.Popovertargetaction("hide"),
+      ...(keepOpen ? [] : [h.Popovertarget(THREAD_MENU), h.Popovertargetaction("hide")]),
       h.OnClick(message),
     ],
     [icon(h, glyph, 18), label],
@@ -820,6 +842,7 @@ const header = (model: Model, h: H, config: PartsConfig<Message>): Html => {
                   armed ? "Archive, sure?" : "Archive",
                   Message.ClickedArchive(),
                   true,
+                  !armed,
                 ),
               ],
             ),

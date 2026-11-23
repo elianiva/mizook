@@ -21,10 +21,14 @@ export const Model = Schema.Struct({
   turn: TurnState,
   notice: Schema.Option(Schema.String),
   offline: Schema.Boolean,
+  /** A touch screen: Enter adds a line, and only the Send button sends. */
+  touch: Schema.Boolean,
   saved: Schema.Boolean,
   armedArchive: Confirmation,
   renameThreadId: Schema.Option(Schema.String),
-  copied: Schema.Option(Schema.Finite),
+  // `count` tells one press of Copy from the next, so a second press restarts the reset timer.
+  copied: Schema.Option(Schema.Struct({ id: Schema.Finite, count: Schema.Finite })),
+  toast: Schema.Option(Schema.String),
 });
 
 export type Model = typeof Model.Type;

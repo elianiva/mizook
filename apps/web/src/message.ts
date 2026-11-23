@@ -12,6 +12,7 @@ export const Message = defineMessageUnion({
   ChangedUrl: { url: Url },
   CompletedNavigation: {},
   CompletedScroll: {},
+  CompletedFocus: {},
 
   Synced: { view: SyncView },
   RefreshTick: {},
@@ -55,6 +56,10 @@ export const Message = defineMessageUnion({
   ClickedLatest: {},
   ClickedCopy: { id: Schema.Finite, text: Schema.String },
   Copied: { id: Schema.Finite },
+  ExpiredCopied: { id: Schema.Finite, count: Schema.Finite },
+  ExpiredToast: { text: Schema.String },
+  ExpiredArmed: { key: Schema.String },
+  PressedSlash: {},
   GotUiMessage: { message: UiMessage },
 });
 

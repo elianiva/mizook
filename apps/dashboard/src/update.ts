@@ -53,6 +53,20 @@ import {
 } from "./route.ts";
 
 const OVERVIEW_REFRESH = Duration.seconds(10);
+const NOTICE_FOR = Duration.seconds(6);
+const ARMED_FOR = Duration.seconds(4);
+
+const ExpireNotice = Command.define("ExpireNotice", {
+  args: { text: Schema.String },
+  messages: [Message.ExpiredNotice],
+  execute: ({ text }) => Effect.sleep(NOTICE_FOR).pipe(Effect.as(Message.ExpiredNotice({ text }))),
+});
+
+const ExpireArmed = Command.define("ExpireArmed", {
+  args: { key: Schema.String },
+  messages: [Message.ExpiredArmed],
+  execute: ({ key }) => Effect.sleep(ARMED_FOR).pipe(Effect.as(Message.ExpiredArmed({ key }))),
+});
 
 /** Focuses an element once the next frame has drawn it. */
 const FocusAfterPaint = Command.define("FocusAfterPaint", {
@@ -497,7 +511,23 @@ const foldPalette = Machine.fold({
   context: (model) => ({ resultCount: matches(model, currentChannel(model)).length }),
 });
 
-export const update = (model: Model, message: Message) =>
+/**
+ * A notice and an armed button are both short-lived: whichever step sets one,
+ * it lapses on its own, so no stale "Done." or "Sure?" waits for the next visit.
+ */
+export const update = (model: Model, message: Message): UpdateReturn => {
+  const result = step(model, message);
+  const commands = [...(result.commands ?? [])];
+  const notice = result.model.notice;
+  if (Option.isSome(notice) && !Option.contains(model.notice, notice.value))
+    commands.push(ExpireNotice({ text: notice.value }));
+  const armed = result.model.armed;
+  if (Confirmation.guards.Armed(armed) && !isArmed(model.armed, armed.key))
+    commands.push(ExpireArmed({ key: armed.key }));
+  return { ...result, commands };
+};
+
+const step = (model: Model, message: Message): UpdateReturn =>
   Message.match<UpdateReturn>(message, {
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
@@ -753,6 +783,19 @@ export const update = (model: Model, message: Message) =>
     },
     PressedSearch: () => ({ model, commands: [FocusAfterPaint({ selector: "#log-search" })] }),
     CompletedFocus: () => ({ model }),
+    ExpiredNotice: ({ text }) => ({
+      model: Option.contains(model.notice, text)
+        ? modifyFields(model, { notice: () => Option.none() })
+        : model,
+    }),
+    ExpiredArmed: ({ key }) => ({
+      model: isArmed(model.armed, key)
+        ? modifyFields(model, { armed: () => Confirmation.Resting() })
+        : model,
+    }),
+    PressedEscape: () => ({
+      model: modifyFields(model, { armed: () => Confirmation.Resting() }),
+    }),
 
     TickedOverviewRefresh: () =>
       Option.match(currentChannel(model), {
@@ -773,13 +816,14 @@ export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
     ),
   ),
   keys: entryOf(
-    { isPaletteOpen: Schema.Boolean, isOnLog: Schema.Boolean },
+    { isPaletteOpen: Schema.Boolean, isOnLog: Schema.Boolean, isArmed: Schema.Boolean },
     {
       modelToDependencies: (model) => ({
         isPaletteOpen: PaletteState.guards.Open(model.palette),
         isOnLog: Predicate.isTagged(model.route, "Log"),
+        isArmed: Confirmation.guards.Armed(model.armed),
       }),
-      dependenciesToStream: ({ isPaletteOpen, isOnLog }) =>
+      dependenciesToStream: ({ isPaletteOpen, isOnLog, isArmed }) =>
         Dom.streamFromKeyBindings<Message>({
           bindings: [
             { keys: "Mod+K", whileTyping: "Allow", mapEvent: () => Message.PressedPalette() },
@@ -788,6 +832,12 @@ export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
               isEnabled: isPaletteOpen,
               whileTyping: "Allow",
               mapEvent: () => Message.ClosedPalette(),
+            },
+            {
+              keys: "Escape",
+              isEnabled: isArmed && !isPaletteOpen,
+              whileTyping: "Allow",
+              mapEvent: () => Message.PressedEscape(),
             },
             { keys: "/", isEnabled: isOnLog, mapEvent: () => Message.PressedSearch() },
             ...Object.entries(GO_KEYS).map(([id, key]) => ({
