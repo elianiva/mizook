@@ -1,5 +1,5 @@
 import { Store, sqliteStore, type SqlDriver } from "@mizook/memory";
-import { Arbitrary, ConfigProvider, Effect, Layer, Schema } from "effect";
+import { Arbitrary, ConfigProvider, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
 import { Artifacts } from "../src/artifacts.ts";
@@ -228,7 +228,7 @@ property(
               Object.fromEntries(a.data.map(({ key, value }) => [key, JSON.stringify(value)])),
             );
           }
-          expect((yield* Effect.exit(backup.restoreTar(exported.tar)))._tag).toBe("Failure");
+          expect(Exit.isFailure(yield* Effect.exit(backup.restoreTar(exported.tar)))).toBe(true);
         }).pipe(Effect.provide(target));
       }),
     );

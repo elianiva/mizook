@@ -20,6 +20,7 @@ import { clock, dayGroup, previewText, timeAgo } from "./format.ts";
 import { icon } from "./icon.ts";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
+import { TurnState } from "./turn-machine.ts";
 import { AppRoute, routeThread } from "./route.ts";
 import { ui } from "./ui.ts";
 import { type Block, type Segment, segmentsOf } from "./generative.ts";
@@ -722,13 +723,13 @@ const composerBox = (model: Model, h: H, config: PartsConfig<Message>, running: 
               h.Class(button({ tone: "danger", size: "icon" })),
               h.AriaLabel("Stop"),
               h.Title("Stop"),
-              h.Disabled(model.stopping),
+              h.Disabled(TurnState.guards.Stopping(model.turn)),
               h.OnClick(Message.ClickedStop()),
             ],
             [icon(h, "stop", 16)],
           )
         : iconButton(h, "send", "Send", Message.ClickedSend(), "primary", [
-            h.Disabled(empty || model.sending),
+            h.Disabled(empty || TurnState.guards.Sending(model.turn)),
           ]),
     ],
   );

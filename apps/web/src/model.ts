@@ -4,6 +4,7 @@ import { AsyncData } from "foldkit";
 import { ChatState } from "@mizook/chat-sync";
 import { Bootstrap, ThreadState } from "./api.ts";
 import { kit } from "./kit.ts";
+import { TurnState } from "./turn-machine.ts";
 import { AppRoute } from "./route.ts";
 
 const BootstrapData = AsyncData.Schema(Bootstrap, Schema.String);
@@ -16,8 +17,7 @@ export const Model = Schema.Struct({
   thread: ThreadData.schema,
   chat: Schema.Option(ChatState),
   ui: kit.Model,
-  sending: Schema.Boolean,
-  stopping: Schema.Boolean,
+  turn: TurnState,
   notice: Schema.Option(Schema.String),
   offline: Schema.Boolean,
   saved: Schema.Boolean,

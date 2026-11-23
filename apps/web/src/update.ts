@@ -21,6 +21,7 @@ import { ChatSync } from "./sync.ts";
 import { kit } from "./kit.ts";
 import { Message } from "./message.ts";
 import { Model } from "./model.ts";
+import { TurnState, turnMachine } from "./turn-machine.ts";
 import { AppRoute, routeHref, routeThread, urlToAppRoute } from "./route.ts";
 
 export const Flags = Schema.Struct({ anchorId: Schema.String });
@@ -358,8 +359,7 @@ export const init = (flags: Flags, url: Url) => {
       rename: Dialog.init({ key: "rename", described: false }),
       renameInput: Input.init({ key: "rename-input" }),
     },
-    sending: false,
-    stopping: false,
+    turn: turnMachine.initial,
     notice: Option.none(),
     offline: typeof navigator !== "undefined" && !navigator.onLine,
     saved: false,
@@ -371,6 +371,9 @@ export const init = (flags: Flags, url: Url) => {
 };
 
 type UpdateReturn = Update.Return<Model, Message, UiRegistry | ChatSync>;
+
+const stepTurn = (model: Model, message: Message): TurnState =>
+  turnMachine.transition(model.turn, message).model;
 
 const withNotice = (model: Model, notice: string): Model => ({
   ...model,
@@ -456,25 +459,26 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     SentMessage: ({ threadId }) => {
       const current = AsyncData.getData(model.thread);
       if (Option.isSome(current) && current.value.thread.id !== threadId) return { model };
-      const cleared = clearComposer({ ...model, sending: false, notice: Option.none() });
+      const turn = stepTurn(model, message);
+      const cleared = clearComposer({ ...model, turn, notice: Option.none() });
       return {
-        model: { ...model, ui: cleared.ui, sending: false, notice: Option.none() },
+        model: { ...model, ui: cleared.ui, turn, notice: Option.none() },
         commands: [...cleared.commands, ScrollToBottom()],
       };
     },
     FailedSend: ({ reason }) => ({
-      model: { ...model, sending: false, notice: Option.some(reason) },
+      model: { ...model, turn: stepTurn(model, message), notice: Option.some(reason) },
     }),
 
     Stopped: ({ ok }) => ({
       model: {
         ...model,
-        stopping: false,
+        turn: stepTurn(model, message),
         notice: Option.some(ok ? "Stopped." : "Nothing was running."),
       },
     }),
     FailedStop: ({ reason }) => ({
-      model: { ...model, stopping: false, notice: Option.some(reason) },
+      model: { ...model, turn: stepTurn(model, message), notice: Option.some(reason) },
     }),
 
     Approved: ({ ok }) => ({
@@ -539,8 +543,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         ...model,
         route,
         thread: AsyncData.Idle(),
-        sending: false,
-        stopping: false,
+        turn: stepTurn(model, message),
         notice: Option.none(),
         armedArchive: Option.none(),
         renameThreadId: Option.none(),
@@ -559,12 +562,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedSend: () => {
       const text = model.ui.composer.value.trim();
-      if (text === "" || model.sending) return { model };
+      if (text === "" || !TurnState.guards.Idle(model.turn)) return { model };
       const requestId = crypto.randomUUID();
       const active = activeThread(model);
       if (Option.isSome(active))
         return {
-          model: { ...model, sending: true, notice: Option.none() },
+          model: { ...model, turn: stepTurn(model, message), notice: Option.none() },
           commands: [SendMessage({ threadId: active.value, text, requestId })],
         };
       if (!Predicate.isTagged(model.route, "Home"))
@@ -578,7 +581,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           ...model,
           route,
           thread: AsyncData.Idle(),
-          sending: true,
+          turn: stepTurn(model, message),
           notice: Option.none(),
           armedArchive: Option.none(),
         },
@@ -595,9 +598,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         onNone: () => false,
         onSome: (state) => state.running,
       });
-      if (Option.isNone(active) || !running) return { model };
+      if (Option.isNone(active) || !running || !TurnState.guards.Idle(model.turn)) return { model };
       return {
-        model: { ...model, stopping: true, notice: Option.none() },
+        model: { ...model, turn: stepTurn(model, message), notice: Option.none() },
         commands: [StopThread({ threadId: active.value })],
       };
     },

@@ -1,6 +1,7 @@
 import { Arbitrary, Effect, Schema } from "effect";
 import { expect } from "vite-plus/test";
 import { hookToken, hookTokenValid } from "../src/hooks.ts";
+import { HookSecretMissing } from "../src/errors.ts";
 import { property } from "./property.ts";
 
 const wellFormedOf = (schema: Schema.String) =>
@@ -92,8 +93,8 @@ property(
   Arbitrary.all({ channel: wellFormed, token: wellFormed }),
   ({ channel, token }) =>
     Effect.promise(async () => {
-      expect((await Effect.runPromise(Effect.flip(hookToken("", channel))))._tag).toBe(
-        "HookSecretMissing",
+      expect(await Effect.runPromise(Effect.flip(hookToken("", channel)))).toBeInstanceOf(
+        HookSecretMissing,
       );
       expect(await Effect.runPromise(hookTokenValid("", channel, token))).toBe(false);
     }),
