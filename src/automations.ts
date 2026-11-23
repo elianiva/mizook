@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema, Semaphore } from "effect";
 import { ScheduleError, StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 import {
   ActionJson,
   firstFire,
@@ -40,8 +41,6 @@ const toAutomation = (row: typeof Row.Type): Automation => ({
   lastHash: row.last_hash ?? undefined,
 });
 
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
-
 const HOUR = 3_600_000;
 
 const firesByClock = (a: Automation) => a.nextAt < NEVER;
@@ -73,11 +72,7 @@ export class Automations extends Context.Service<
     Layer.effect(
       Automations,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
 
         yield* run("migrate automations", async () => {
           await sql.all(
@@ -93,13 +88,10 @@ export class Automations extends Context.Service<
 
         const oneWakeAtATime = (yield* Semaphore.make(1)).withPermits(1);
 
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toAutomation)),
+          selectRows(operation, text, ...params).pipe(
+            Effect.map((found) => found.map(toAutomation)),
           );
         const all = query(
           "all automations",

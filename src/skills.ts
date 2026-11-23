@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const MAX_SKILL_DESCRIPTION = 200;
@@ -27,7 +28,6 @@ const Row = Schema.Struct({
   use_count: Schema.Finite,
   pinned: Schema.Finite,
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const toSkill = (row: typeof Row.Type): Skill => ({
   name: row.name,
@@ -59,11 +59,7 @@ export class Skills extends Context.Service<
     Layer.effect(
       Skills,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
 
         yield* run("migrate skills", () =>
           sql.all(
@@ -75,14 +71,9 @@ export class Skills extends Context.Service<
           ),
         );
 
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toSkill)),
-          );
+          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toSkill)));
 
         const one = (operation: string, name: string) =>
           query(operation, `${SELECT} WHERE name = ?`, name).pipe(Effect.map((rows) => rows[0]));

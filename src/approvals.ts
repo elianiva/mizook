@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export interface Approval {
   readonly id: number;
@@ -21,7 +22,6 @@ const Row = Schema.Struct({
   place: Schema.String,
   action: Schema.String,
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const toApproval = (r: typeof Row.Type): Approval => ({
   id: r.id,
@@ -54,11 +54,7 @@ export class Approvals extends Context.Service<
     Layer.effect(
       Approvals,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
         yield* run("migrate approvals", () =>
           sql.all(
             `CREATE TABLE IF NOT EXISTS app_approvals (
@@ -68,14 +64,9 @@ export class Approvals extends Context.Service<
                place TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '')`,
           ),
         );
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toApproval)),
-          );
+          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toApproval)));
         return Approvals.of({
           add: (executionId, summary, match, place, action) =>
             query(

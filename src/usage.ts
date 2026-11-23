@@ -1,7 +1,8 @@
 import type { Usage as ModelUsage } from "@earendil-works/pi-ai";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
-import { StateError } from "./errors.ts";
+import type { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export interface Spend {
   readonly last24h: number;
@@ -9,8 +10,7 @@ export interface Spend {
   readonly total: number;
 }
 
-const Total = Schema.Array(Schema.Struct({ total: Schema.NullOr(Schema.Finite) }));
-const decodeTotal = Schema.decodeUnknownEffect(Total);
+const Total = Schema.Struct({ total: Schema.NullOr(Schema.Finite) });
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -32,11 +32,7 @@ export class Usage extends Context.Service<
     Layer.effect(
       Usage,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
         yield* run("migrate usage", () =>
           sql.all(
             `CREATE TABLE IF NOT EXISTS app_usage (
@@ -46,15 +42,11 @@ export class Usage extends Context.Service<
           ),
         );
         const spentDollarsSince = (sinceEpochMs: number) =>
-          run("spent", () =>
-            sql.all(`SELECT SUM(cost) AS total FROM app_usage WHERE at >= ?`, sinceEpochMs),
-          ).pipe(
-            Effect.flatMap(decodeTotal),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation: "spent", cause }),
-            ),
-            Effect.map((rows) => rows[0]?.total ?? 0),
-          );
+          rows(Total)(
+            "spent",
+            `SELECT SUM(cost) AS total FROM app_usage WHERE at >= ?`,
+            sinceEpochMs,
+          ).pipe(Effect.map((found) => found[0]?.total ?? 0));
         return Usage.of({
           record: (kind, model, usage) =>
             run("record usage", () =>

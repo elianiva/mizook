@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
-import { StateError } from "../errors.ts";
+import type { StateError } from "../errors.ts";
+import { stateSql } from "../sql.ts";
 import type { WebMessage } from "./types.ts";
 
 const Row = Schema.Struct({
@@ -9,7 +10,6 @@ const Row = Schema.Struct({
   text: Schema.String,
   at: Schema.Finite,
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const toMessage = (row: typeof Row.Type): WebMessage => ({
   id: row.id,
@@ -38,11 +38,7 @@ export class WebThreads extends Context.Service<
     Layer.effect(
       WebThreads,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
 
         yield* run("migrate web messages", async () => {
           await sql.all(
@@ -60,23 +56,14 @@ export class WebThreads extends Context.Service<
 
         return WebThreads.of({
           messages: (place, after, limit = MAX_MESSAGES) =>
-            run("web messages", () =>
-              sql.all(
-                `SELECT id, role, text, at FROM web_messages
-                 WHERE place = ? AND id > ? ORDER BY id ASC LIMIT ?`,
-                place,
-                Math.max(after, 0),
-                Math.min(Math.max(limit, 1), MAX_MESSAGES),
-              ),
-            ).pipe(
-              Effect.flatMap(decodeRows),
-              Effect.mapError((cause) =>
-                cause instanceof StateError
-                  ? cause
-                  : new StateError({ operation: "web messages", cause }),
-              ),
-              Effect.map((rows) => rows.map(toMessage)),
-            ),
+            rows(Row)(
+              "web messages",
+              `SELECT id, role, text, at FROM web_messages
+               WHERE place = ? AND id > ? ORDER BY id ASC LIMIT ?`,
+              place,
+              Math.max(after, 0),
+              Math.min(Math.max(limit, 1), MAX_MESSAGES),
+            ).pipe(Effect.map((found) => found.map(toMessage))),
         });
       }),
     );

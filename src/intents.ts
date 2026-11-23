@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export const MAX_INTENT_DESCRIPTION = 500;
 export const MAX_INTENT_TRIGGERS = 8;
@@ -41,7 +42,6 @@ const Row = Schema.Struct({
   last_fired: Schema.NullOr(Schema.Finite),
   state: Schema.Literals(["armed", "done", "cancelled", "expired"]),
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const parseTriggersOrNone = (json: string): string[] => {
   try {
@@ -111,11 +111,7 @@ export class Intents extends Context.Service<
     Layer.effect(
       Intents,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
 
         yield* run("migrate intents", () =>
           sql.all(
@@ -128,14 +124,9 @@ export class Intents extends Context.Service<
           ),
         );
 
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toIntent)),
-          );
+          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toIntent)));
 
         const one = (operation: string, text: string, ...params: unknown[]) =>
           query(operation, text, ...params).pipe(Effect.map((rows) => rows[0]));

@@ -12,6 +12,7 @@ import {
   MAX_VALUE_BYTES,
 } from "./artifact-data.ts";
 import { StateError, ToolError, type BlobError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export const MAX_ARTIFACT_BYTES = 5_000_000;
 
@@ -26,7 +27,6 @@ const Row = Schema.Struct({
   updated: Schema.Finite,
   visibility: Schema.Literals(["public", "private"]),
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 export type Visibility = "public" | "private";
 
@@ -123,11 +123,7 @@ export class Artifacts extends Context.Service<
       Effect.gen(function* () {
         const blobs = yield* Blobs;
         const { publicUrl } = yield* Settings;
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
         yield* run("migrate artifacts", () =>
           sql.all(
             `CREATE TABLE IF NOT EXISTS app_artifacts (
@@ -148,14 +144,9 @@ export class Artifacts extends Context.Service<
           visibility: row.visibility,
           url: `${publicUrl}/a/${row.token}/${row.name}`,
         });
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toArtifact)),
-          );
+          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toArtifact)));
         const all = query("list artifacts", `SELECT * FROM app_artifacts ORDER BY name`);
 
         const find = (name: string) =>

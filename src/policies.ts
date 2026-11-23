@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export type Decision = "allow" | "ask" | "deny";
 
@@ -15,7 +16,6 @@ const Row = Schema.Struct({
   match: Schema.String,
   decision: Schema.Literals(["allow", "ask", "deny"]),
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const toPolicy = (row: typeof Row.Type): Policy => ({
   id: row.id,
@@ -41,11 +41,7 @@ export class Policies extends Context.Service<
     Layer.effect(
       Policies,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
 
         yield* run("migrate policies", () =>
           sql.all(
@@ -56,14 +52,9 @@ export class Policies extends Context.Service<
           ),
         );
 
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toPolicy)),
-          );
+          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toPolicy)));
 
         const list = query(
           "list policies",

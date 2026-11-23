@@ -1,6 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 const DAY_MS = 86_400_000;
 const RUN_RETENTION_MS = 90 * DAY_MS;
@@ -26,7 +27,6 @@ const Row = Schema.Struct({
   output: Schema.String,
   error: Schema.NullOr(Schema.String),
 });
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 
 const toRun = (row: typeof Row.Type): Run => ({
   id: row.id,
@@ -60,11 +60,7 @@ export class Runs extends Context.Service<
     Layer.effect(
       Runs,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
 
         yield* run("migrate runs", async () => {
           await sql.all(
@@ -76,14 +72,9 @@ export class Runs extends Context.Service<
           await sql.all(`DELETE FROM app_runs WHERE started < ?`, Date.now() - RUN_RETENTION_MS);
         });
 
+        const selectRows = rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
-          run(operation, () => sql.all(text, ...params)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError((cause) =>
-              cause instanceof StateError ? cause : new StateError({ operation, cause }),
-            ),
-            Effect.map((rows) => rows.map(toRun)),
-          );
+          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toRun)));
 
         return Runs.of({
           start: (automationId) =>

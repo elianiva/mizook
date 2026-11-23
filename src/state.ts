@@ -1,7 +1,8 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import type { ConversationId, SubmissionId } from "@earendil-works/pi-durable";
-import { StateError } from "./errors.ts";
+import type { StateError } from "./errors.ts";
+import { stateSql } from "./sql.ts";
 
 export interface PendingTurn {
   readonly chatId: string;
@@ -23,8 +24,6 @@ const Row = Schema.Struct({
   logged: Schema.Finite,
 });
 
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
-
 const toTurn = (row: typeof Row.Type): PendingTurn => ({
   chatId: row.chat_id,
   threadId: row.thread_id,
@@ -34,9 +33,6 @@ const toTurn = (row: typeof Row.Type): PendingTurn => ({
   submissions: row.submissions as SubmissionId[],
   logged: row.logged === 1,
 });
-
-const asStateError = (operation: string) => (cause: unknown) =>
-  cause instanceof StateError ? cause : new StateError({ operation, cause });
 
 const WEEK = 7 * 24 * 3600 * 1000;
 
@@ -64,11 +60,8 @@ export class State extends Context.Service<
     Layer.effect(
       State,
       Effect.gen(function* () {
-        const run = <A>(operation: string, f: () => A | Promise<A>) =>
-          Effect.tryPromise({
-            try: async () => f(),
-            catch: (cause) => new StateError({ operation, cause }),
-          });
+        const { run, rows } = stateSql(sql);
+        const turnRows = rows(Row);
 
         yield* run("migrate", async () => {
           await sql.all(
@@ -92,15 +85,11 @@ export class State extends Context.Service<
 
         return State.of({
           turn: (chatId) =>
-            run("turn", () => sql.all(`SELECT * FROM app_turns WHERE chat_id = ?`, chatId)).pipe(
-              Effect.flatMap(decodeRows),
-              Effect.mapError(asStateError("turn")),
-              Effect.map((rows) => rows[0] && toTurn(rows[0])),
+            turnRows("turn", `SELECT * FROM app_turns WHERE chat_id = ?`, chatId).pipe(
+              Effect.map((found) => found[0] && toTurn(found[0])),
             ),
-          turns: run("turns", () => sql.all(`SELECT * FROM app_turns`)).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.mapError(asStateError("turns")),
-            Effect.map((rows) => rows.map(toTurn)),
+          turns: turnRows("turns", `SELECT * FROM app_turns`).pipe(
+            Effect.map((found) => found.map(toTurn)),
           ),
           putTurn: (t) =>
             run("putTurn", async () => {
@@ -175,27 +164,19 @@ export class State extends Context.Service<
     );
 }
 
-export const readSettings = (sql: SqlDriver) =>
-  Effect.tryPromise({
-    try: async () => {
-      await sql.all(
-        `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-      );
-      return sql.all<{ key: string; value: string }>(
+export const readSettings = (sql: SqlDriver) => {
+  const { run, rows } = stateSql(sql);
+  return run("read settings", () =>
+    sql.all(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
+  ).pipe(
+    Effect.andThen(
+      rows(Schema.Struct({ key: Schema.String, value: Schema.String }))(
+        "read settings",
         `SELECT key, value FROM app_meta WHERE key GLOB 'setting:*'`,
-      );
-    },
-    catch: (cause) => new StateError({ operation: "read settings", cause }),
-  }).pipe(
-    Effect.flatMap(
-      Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.String })),
       ),
     ),
-    Effect.mapError((cause) =>
-      cause instanceof StateError ? cause : new StateError({ operation: "read settings", cause }),
-    ),
-    Effect.map((rows) =>
-      Object.fromEntries(rows.map((r) => [r.key.slice("setting:".length), r.value])),
+    Effect.map((found) =>
+      Object.fromEntries(found.map((r) => [r.key.slice("setting:".length), r.value])),
     ),
   );
+};
