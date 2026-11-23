@@ -82,12 +82,13 @@ export const layer = Layer.effect(
     const persistence = IndexedDb.layer({ namespace: "mizook-web-chat" }).pipe(
       Layer.provide(actor),
     );
-    const lease = yield* Effect.gen(function* () {
-      const client = yield* Client.make(WebChatClient, {
-        persistence: { mode: "persistent" },
-      });
-      return yield* client.open(WebChat.address(WebChatSource));
-    }).pipe(Effect.provide(Layer.mergeAll(actor, persistence, transport)));
+    // Built in this layer's scope: the lease and its IndexedDB connections must
+    // outlive this effect, or the first write after startup finds them closed.
+    const services = yield* Layer.build(Layer.mergeAll(actor, persistence, transport));
+    const client = yield* Client.make(WebChatClient, {
+      persistence: { mode: "persistent" },
+    }).pipe(Effect.provide(services));
+    const lease = yield* client.open(WebChat.address(WebChatSource)).pipe(Effect.provide(services));
     const changes = lease.changes.pipe(
       Stream.map(toView),
       Stream.catchCause(() => Stream.empty),
