@@ -262,9 +262,10 @@ export class AgentObject extends DurableObject<Env> {
     text: string,
     requestId: string,
     where: string,
+    first: boolean,
   ): Promise<WebTurnResult> {
     return this.runtime.runPromise(
-      Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where)).pipe(
+      Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where, first)).pipe(
         Effect.tap(Effect.promise(() => this.rearmAlarm())),
         Effect.catchCause((cause) =>
           Effect.as(Effect.logError("web turn failed to start", cause), {

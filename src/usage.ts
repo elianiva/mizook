@@ -20,7 +20,7 @@ export class Usage extends Context.Service<
   Usage,
   {
     record(
-      kind: "turn" | "memory" | "ask",
+      kind: "turn" | "memory" | "ask" | "title",
       model: string,
       usage: ModelUsage,
     ): Effect.Effect<void, StateError>;

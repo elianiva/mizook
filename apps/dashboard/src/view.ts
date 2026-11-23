@@ -2362,9 +2362,13 @@ const openPaletteView = (
   );
 };
 
-const railView = (model: Model, h: H): Html =>
+const railView = (model: Model, h: H, swipe = false): Html =>
   h.nav(
-    [h.Class(ui.rail), h.AriaLabel("Sections")],
+    [
+      h.Class(ui.rail),
+      h.AriaLabel("Sections"),
+      ...(swipe ? [h.Attribute("data-swipe-panel", ""), h.Attribute("data-open", "")] : []),
+    ],
     [
       h.div(
         [h.Class(ui.railTop)],
@@ -2582,8 +2586,15 @@ export const view = (model: Model, h: H): Document => {
                     ...NavState.match(model.nav, {
                       Closed: () => [],
                       Open: () => [
-                        h.div([h.Class(ui.mobileNavBackdrop), h.OnClick(Message.ClosedNav())], []),
-                        railView(model, h),
+                        h.div(
+                          [
+                            h.Class(ui.mobileNavBackdrop),
+                            h.Attribute("data-swipe-backdrop", ""),
+                            h.OnClick(Message.ClosedNav()),
+                          ],
+                          [],
+                        ),
+                        railView(model, h, true),
                       ],
                     }),
                   ],

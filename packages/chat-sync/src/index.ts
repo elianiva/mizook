@@ -134,6 +134,17 @@ const RenameThread = Action.make("rename", {
   error: ActionError,
 });
 
+/** A generated title, applied only while the thread still wears the old one. */
+const AutoTitleThread = Action.make("autoTitle", {
+  payload: Schema.Struct({
+    threadId: Schema.String,
+    title: Schema.String,
+    from: Schema.String,
+  }),
+  success: Schema.Struct({ thread: ThreadSummary }),
+  error: ActionError,
+});
+
 const ArchiveThread = Action.make("archive", {
   payload: Schema.Struct({ threadId: Schema.String }),
   success: Schema.Void,
@@ -174,6 +185,7 @@ export const WebChat = Source.make({
     StopTurn,
     Approve,
     RenameThread,
+    AutoTitleThread,
     ArchiveThread,
     Refresh,
     AppendAgentMessage,
@@ -307,6 +319,14 @@ const optimistic = {
   rename: (state: ChatState, payload: { readonly threadId: string; readonly title: string }) => {
     const thread = state.threads.find((candidate) => candidate.id === payload.threadId);
     if (thread === undefined) return state;
+    return withThread(state, asThread(thread, { title: payload.title, updated: Date.now() }));
+  },
+  autoTitle: (
+    state: ChatState,
+    payload: { readonly threadId: string; readonly title: string; readonly from: string },
+  ) => {
+    const thread = state.threads.find((candidate) => candidate.id === payload.threadId);
+    if (thread === undefined || thread.title !== payload.from) return state;
     return withThread(state, asThread(thread, { title: payload.title, updated: Date.now() }));
   },
   archive: (state: ChatState, payload: { readonly threadId: string }) => {

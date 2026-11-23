@@ -22,7 +22,11 @@ export const Message = defineMessageUnion({
   FailedRecover: { reason: Schema.String },
 
   SentMessage: { threadId: Schema.String, text: Schema.String },
-  FailedSend: { reason: Schema.String },
+  FailedSend: {
+    reason: Schema.String,
+    text: Schema.optionalKey(Schema.String),
+    threadId: Schema.optionalKey(Schema.String),
+  },
   Stopped: { ok: Schema.Boolean },
   FailedStop: { reason: Schema.String },
   Approved: { ok: Schema.Boolean },

@@ -416,7 +416,6 @@ const messageView = (
   h: H,
   agent: string,
   continued: boolean,
-  latest: boolean,
   copied: boolean,
 ): Html => {
   const user = message.role === "user";
@@ -425,11 +424,7 @@ const messageView = (
     [clock(message.at)],
   );
   return h.article(
-    [
-      h.Key(String(message.id)),
-      h.Class(ui.message({ role: message.role, continued })),
-      ...(latest ? [h.Id("latest")] : []),
-    ],
+    [h.Key(String(message.id)), h.Class(ui.message({ role: message.role, continued }))],
     user
       ? [
           h.div(
@@ -467,6 +462,29 @@ const messageView = (
           ),
         ],
   );
+};
+
+/**
+ * The web chat is turn-based: every bubble an agent sends during one turn is
+ * one answer. Join consecutive agent messages so the transcript reads as one
+ * entry with one copy button, like the turn it was.
+ */
+const collapseAgentMessages = (
+  messages: ReadonlyArray<ChatMessage>,
+): ReadonlyArray<ChatMessage> => {
+  const collapsed: ChatMessage[] = [];
+  for (const message of messages) {
+    const previous = collapsed[collapsed.length - 1];
+    if (message.role === "agent" && previous?.role === "agent") {
+      collapsed[collapsed.length - 1] = {
+        ...previous,
+        text: `${previous.text}\n\n${message.text}`,
+      };
+    } else {
+      collapsed.push(message);
+    }
+  }
+  return collapsed;
 };
 
 /** An approval blocks the turn, so it sits on the composer, not in the scroll. */
@@ -509,28 +527,20 @@ const approvalView = (h: H, approval: Approval): Html =>
     ],
   );
 
-const latestIndex = (messages: ReadonlyArray<ChatMessage>): number => {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.role === "user") return index;
-  }
-  return messages.length - 1;
-};
-
 const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
-  const latest = latestIndex(state.messages);
+  const messages = collapseAgentMessages(state.messages);
   return h.section(
     [h.Class(ui.messages), h.Key("messages"), h.AriaLive("polite")],
     [
       h.div(
         [h.Class(ui.messagesInner)],
         [
-          ...state.messages.map((message, index) =>
+          ...messages.map((message, index) =>
             messageView(
               message,
               h,
               agentRoleLabel(state.thread),
-              state.messages[index - 1]?.role === message.role,
-              index === latest,
+              messages[index - 1]?.role === message.role,
               Option.exists(model.copied, (copied) => copied.id === message.id),
             ),
           ),
@@ -547,9 +557,9 @@ const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
                 ),
               ]
             : []),
-          h.div([h.Id("messages-end"), h.Class(ui.messagesEnd)], []),
         ],
       ),
+      h.div([h.Id("messages-end"), h.Class(ui.messagesEnd)], []),
       ...(state.messages.length > 2
         ? [
             h.div(
@@ -564,6 +574,7 @@ const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
 
 const agentPicker = (model: Model, h: H, config: PartsConfig<Message>): Html => {
   const select = Select.parts(model.ui.agent, h, config);
+  const value = model.ui.agent.value;
   return select.root(
     {},
     [h.Class(ui.selectRoot)],
@@ -572,9 +583,15 @@ const agentPicker = (model: Model, h: H, config: PartsConfig<Message>): Html => 
         {},
         [h.Class(ui.selectTrigger), h.AriaLabel("Agent")],
         [
-          icon(h, "bot", 16),
-          h.span([h.Class(ui.selectValue)], [selectedAgentName(model)]),
-          select.arrow({}, [h.Class(ui.selectArrow)], [icon(h, "chevronDown", 14)]),
+          h.span([h.Class(ui.selectBot)], [icon(h, "bot", 18)]),
+          h.span(
+            [h.Class(ui.selectText)],
+            [
+              h.span([h.Class(ui.selectValue)], [selectedAgentName(model)]),
+              ...(value === "" ? [] : [h.span([h.Class(ui.selectMeta)], [`/${value}`])]),
+            ],
+          ),
+          h.span([h.Class(ui.selectArrow)], [icon(h, "chevronDown", 16)]),
         ],
       ),
       select.content(
@@ -589,8 +606,20 @@ const agentPicker = (model: Model, h: H, config: PartsConfig<Message>): Html => 
                 { value: item.value, label: item.label },
                 [h.Class(ui.selectItem)],
                 [
-                  h.span([h.Class(ui.selectSlug)], [`/${item.value}`]),
-                  select["item-text"]({ text: item.label }, [], [item.label]),
+                  h.span(
+                    [h.Class(ui.selectText)],
+                    [
+                      select["item-text"](
+                        { text: item.label },
+                        [h.Class(ui.selectName)],
+                        [item.label],
+                      ),
+                      h.span([h.Class(ui.selectMeta)], [`/${item.value}`]),
+                    ],
+                  ),
+                  ...(item.value === value
+                    ? [h.span([h.Class(ui.selectCheck)], [icon(h, "check", 16)])]
+                    : []),
                 ],
               ),
             ),
@@ -857,14 +886,14 @@ const drawerLayer = (model: Model, h: H, config: PartsConfig<Message>): Html => 
   return h.div(
     [],
     [
-      drawer.backdrop({}, [h.Class(ui.drawerBackdrop)], []),
+      drawer.backdrop({}, [h.Class(ui.drawerBackdrop), h.Attribute("data-swipe-backdrop", "")], []),
       drawer.viewport(
         {},
         [h.Class(ui.drawerViewport)],
         [
           drawer.content(
             {},
-            [h.Class(ui.drawerContent)],
+            [h.Class(ui.drawerContent), h.Attribute("data-swipe-panel", "")],
             [
               drawer.title({}, [h.Class(ui.srOnly)], ["Threads"]),
               drawer.close(

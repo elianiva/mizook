@@ -49,6 +49,32 @@ export const mizookPreset = definePreset({
     p: { textWrap: "pretty" },
     "::selection": { backgroundColor: "accent", color: "bg" },
     ":focus-visible": { outline: "2px solid var(--colors-accent)", outlineOffset: "2px" },
+    // A side menu follows the finger, then settles. `swipeDrawer` sets these
+    // attributes and the two offsets on `<html>` while a drag is in flight.
+    "[data-swiping] [data-swipe-panel]": {
+      animation: "none !important",
+      transition: "none !important",
+      translate: "calc(var(--swipe-offset, 0px) - 100%) 0 !important",
+    },
+    "[data-swiping] [data-swipe-backdrop]": {
+      animation: "none !important",
+      transition: "none !important",
+      opacity: "var(--swipe-progress, 0) !important",
+    },
+    "[data-settling] [data-swipe-panel], [data-swiped] [data-swipe-panel]": {
+      animation: "none !important",
+      translate: "calc(var(--swipe-offset, 0px) - 100%) 0 !important",
+    },
+    "[data-settling] [data-swipe-panel]": {
+      transition: "translate 240ms {easings.out} !important",
+    },
+    "[data-settling] [data-swipe-backdrop], [data-swiped] [data-swipe-backdrop]": {
+      animation: "none !important",
+      opacity: "var(--swipe-progress, 0) !important",
+    },
+    "[data-settling] [data-swipe-backdrop]": {
+      transition: "opacity 240ms {easings.out} !important",
+    },
     "@media (prefers-reduced-motion: reduce)": {
       "*, *::before, *::after": {
         animationDuration: "1ms !important",

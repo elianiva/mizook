@@ -27,6 +27,7 @@ export class WebChatClient extends Context.Service<
       running: boolean,
       approvals: ReadonlyArray<Approval>,
     ): Effect.Effect<void, StateError>;
+    autoTitle(place: string, title: string, from: string): Effect.Effect<void, StateError>;
   }
 >()("mizook/WebChatClient") {
   static readonly layer = (env: Env) =>
@@ -66,6 +67,12 @@ export class WebChatClient extends Context.Service<
               threadId: threadIdOf(place),
               running,
               approvals,
+            }),
+          autoTitle: (place, title, from) =>
+            execute("name a web thread", WebChat.actions.autoTitle, {
+              threadId: threadIdOf(place),
+              title,
+              from,
             }),
         });
       }),

@@ -1,7 +1,7 @@
 import { Array, Duration, Effect, Option, Predicate, Record, Schema, Stream, pipe } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
 import * as Dom from "foldkit/dom";
-import { swipes } from "@mizook/ui/swipe";
+import { swipeDrawer } from "@mizook/ui/swipe";
 import { Machine } from "foldkit/experimental";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
@@ -1169,9 +1169,12 @@ const step = (model: Model, message: Message): UpdateReturn =>
 
 export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
   swipe: Subscription.persistentEntry(
-    swipes({ maxWidth: 899 }).pipe(
-      Stream.map((swipe) => (swipe === "Right" ? Message.SwipedRight() : Message.SwipedLeft())),
-    ),
+    swipeDrawer<Message>({
+      maxWidth: 899,
+      width: (viewport) => Math.min(320, viewport * 0.88),
+      open: () => Message.SwipedRight(),
+      close: () => Message.SwipedLeft(),
+    }),
   ),
   keys: entryOf(
     { isPaletteOpen: Schema.Boolean, isOnLog: Schema.Boolean, isArmed: Schema.Boolean },

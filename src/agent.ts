@@ -107,6 +107,8 @@ export class Agent extends Context.Service<
     finish(chatId: string): Effect.Effect<string, AgentError>;
     stop(chatId: string): Effect.Effect<boolean, AgentError>;
     ask(question: string): Effect.Effect<string, AgentError>;
+    /** A short name for a web thread, from its opening exchange. */
+    title(chatId: string): Effect.Effect<string, AgentError>;
     readonly pending: Effect.Effect<ReadonlyArray<PendingTurn>, AgentError>;
   }
 >()("mizook/Agent") {
@@ -123,7 +125,7 @@ export class Agent extends Context.Service<
       const host = yield* Host;
       const skills = yield* Skills;
       const intents = yield* Intents;
-      const { main } = yield* Models;
+      const { main, summary } = yield* Models;
       const { harness, context, turnInputs } = durable;
 
       const call = <A>(operation: string, f: () => Promise<A>) =>
@@ -401,7 +403,45 @@ export class Agent extends Context.Service<
         return "(I could not settle on an answer in time.)";
       });
 
-      return Agent.of({ begin, finish, stop, ask, pending: state.turns });
+      const title = Effect.fn("Agent.title")(function* (chatId: string) {
+        const lines = yield* state
+          .thread(chatId)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<ThreadLine> => []));
+        const opening = lines
+          .slice(0, 6)
+          .map((line) => `${line.role}: ${line.text}`)
+          .join("\n\n")
+          .slice(0, 4_000);
+        if (opening.trim() === "") return "";
+        const reply = yield* call("title", () =>
+          durable.models.completeSimple(
+            summary,
+            {
+              systemPrompt:
+                "You name conversations. Read the opening exchange and reply with a title only: short, 2 to 5 words in the conversation's language, no quotes, no ending punctuation.",
+              messages: [
+                {
+                  role: "user",
+                  content: [{ type: "text", text: opening }],
+                  timestamp: Date.now(),
+                },
+              ],
+              tools: [],
+            },
+            { sessionId: "title" },
+          ),
+        );
+        yield* usage.record("title", summary.id, reply.usage).pipe(Effect.ignore);
+        return textOf(reply)
+          .replace(/\s+/g, " ")
+          .replace(/^title:\s*/i, "")
+          .replace(/^["'“”‘’`\s]+|["'“”‘’`\s]+$/g, "")
+          .replace(/[.!?]+$/, "")
+          .trim()
+          .slice(0, 60);
+      });
+
+      return Agent.of({ begin, finish, stop, ask, title, pending: state.turns });
     }),
   );
 }

@@ -35,7 +35,13 @@ interface HubChatApi {
 }
 
 interface AgentChatApi {
-  webTurn(place: string, text: string, requestId: string, where: string): Promise<WebTurnResult>;
+  webTurn(
+    place: string,
+    text: string,
+    requestId: string,
+    where: string,
+    first: boolean,
+  ): Promise<WebTurnResult>;
   webState(place: string, after: number): Promise<WebState>;
   webStatus(place: string): Promise<WebStatus>;
   webStop(place: string): Promise<boolean>;
@@ -191,6 +197,7 @@ const send = (
       at,
       requestId,
     };
+    const first = thread.title === "New chat";
     const title = titleOf(thread, text);
     const preview = previewOf(text);
     const updated: ThreadSummary = { ...thread, title, preview, updated: at };
@@ -200,7 +207,7 @@ const send = (
       running: true,
     });
     const result = yield* promise("start a web turn", () =>
-      agentOf(env, thread).webTurn(`web:${thread.id}`, text, requestId, title),
+      agentOf(env, thread).webTurn(`web:${thread.id}`, text, requestId, title, first),
     );
     if (!result.ok) return yield* Effect.fail({ reason: result.reason });
     return Server.commit({
@@ -285,6 +292,29 @@ const rename = (
     if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
     const title = payload.title.replace(/\s+/g, " ").trim().slice(0, 120);
     if (title === "") return yield* Effect.fail({ reason: "Give the chat a name." });
+    const updated: ThreadSummary = { ...thread, title, updated: Date.now() };
+    return Server.commit({
+      state: { ...state, chat: withThread(state.chat, updated) },
+      events: [ChatEvent.cases.Thread.make({ thread: updated })],
+      result: { thread: updated },
+    });
+  });
+
+/**
+ * Names a thread from its first turn. `from` is the title the user saw when the
+ * turn began; if they renamed it meanwhile, the generated name is dropped.
+ */
+const autoTitle = (
+  state: ServerState,
+  payload: { readonly threadId: string; readonly title: string; readonly from: string },
+) =>
+  Effect.gen(function* () {
+    const thread = threadOf(state, payload.threadId);
+    if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
+    if (thread.title !== payload.from)
+      return Server.commit({ state, events: [], result: { thread } });
+    const title = payload.title.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (title === "") return yield* Effect.fail({ reason: "The name came back empty." });
     const updated: ThreadSummary = { ...thread, title, updated: Date.now() };
     return Server.commit({
       state: { ...state, chat: withThread(state.chat, updated) },
@@ -445,7 +475,7 @@ const setStatus = (
     });
   });
 
-const INTERNAL_ACTIONS: ReadonlySet<string> = new Set(["appendAgent", "setStatus"]);
+const INTERNAL_ACTIONS: ReadonlySet<string> = new Set(["appendAgent", "setStatus", "autoTitle"]);
 
 export const makeWebChatServer = (env: Env): Server.Definition<typeof WebChat.spec, never> =>
   Server.make(WebChat, {
@@ -473,6 +503,7 @@ export const makeWebChatServer = (env: Env): Server.Definition<typeof WebChat.sp
       stop: ({ state, payload }) => stop(env, state, payload),
       approve: ({ state, payload, principal }) => approve(env, principal, state, payload),
       rename: ({ state, payload }) => rename(state, payload),
+      autoTitle: ({ state, payload }) => autoTitle(state, payload),
       archive: ({ state, payload }) => archive(state, payload),
       refresh: ({ state, payload }) => refresh(env, state, payload),
       appendAgent: ({ state, payload }) => appendAgent(state, payload),

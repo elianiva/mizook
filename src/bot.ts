@@ -64,6 +64,7 @@ export class Bot extends Context.Service<
       text: string,
       requestId: string,
       where: string,
+      first: boolean,
     ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError>;
     postTo(place: string, text: string): Effect.Effect<void, StateError | TelegramError>;
     approve(
@@ -223,7 +224,12 @@ export class Bot extends Context.Service<
           }
         });
 
-      const waitForAnswerAndPost = (chatId: string, threadId: string, typingStarted = false) =>
+      const waitForAnswerAndPost = (
+        chatId: string,
+        threadId: string,
+        typingStarted = false,
+        renameFrom?: string,
+      ) =>
         Effect.gen(function* () {
           if (!typingStarted) yield* keepTyping(threadId);
           const reply = yield* agent.finish(chatId);
@@ -232,6 +238,13 @@ export class Bot extends Context.Service<
           if (isWebPlace(threadId)) {
             const pending = yield* approvals.unposted(threadId);
             yield* webChat.setStatus(threadId, false, pending.map(sourceApproval));
+            if (renameFrom !== undefined) {
+              const title = yield* agent
+                .title(chatId)
+                .pipe(Effect.catchCause(() => Effect.succeed("")));
+              if (title !== "")
+                yield* webChat.autoTitle(threadId, title, renameFrom).pipe(Effect.ignore);
+            }
           }
           return reply;
         }).pipe(Effect.scoped);
@@ -419,6 +432,7 @@ export class Bot extends Context.Service<
         text: string,
         requestId: string,
         where: string,
+        first: boolean,
       ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError> =>
         Effect.gen(function* () {
           if (settings.budgetDaily > 0) {
@@ -439,7 +453,12 @@ export class Bot extends Context.Service<
           });
           if (started === "folded") return { ok: true as const, folded: true };
           yield* Effect.forkDetach(
-            Effect.scoped(Effect.andThen(holdChat(place), waitForAnswerAndPost(place, place))).pipe(
+            Effect.scoped(
+              Effect.andThen(
+                holdChat(place),
+                waitForAnswerAndPost(place, place, false, first ? where : undefined),
+              ),
+            ).pipe(
               Effect.catchCause((cause) =>
                 Effect.logError("web turn failed", cause).pipe(
                   Effect.andThen(

@@ -15,7 +15,7 @@ import {
   type UiRegistry,
 } from "@mizook/ui";
 import { WebChat, type ChatState } from "@mizook/chat-sync";
-import { swipes } from "@mizook/ui/swipe";
+import { swipeDrawer } from "@mizook/ui/swipe";
 
 import { type Bootstrap, type ThreadState } from "./api.ts";
 import { ChatSync } from "./sync.ts";
@@ -72,7 +72,9 @@ const SendMessage = Command.define("SendMessage", {
       yield* command.awaitResult;
       return Message.SentMessage({ threadId, text });
     }).pipe(
-      Effect.catch((error) => Effect.succeed(Message.FailedSend({ reason: describe(error) }))),
+      Effect.catch((error) => {
+        return Effect.succeed(Message.FailedSend({ reason: describe(error), text, threadId }));
+      }),
     ),
 });
 
@@ -179,8 +181,8 @@ const Recover = Command.define("Recover", {
 
 const ScrollToBottom = Command.define("ScrollToBottom", {
   messages: [Message.CompletedScroll],
-  // The latest question goes to the top, so its answer reads from the start.
-  execute: scrollIntoViewAfterPaint("#latest", { block: "start" }).pipe(
+  // The newest message sits at the bottom, like a chat, with no empty runway.
+  execute: scrollIntoViewAfterPaint("#messages-end", { block: "end" }).pipe(
     Effect.as(Message.CompletedScroll()),
     Effect.catchCause(() => Effect.succeed(Message.CompletedScroll())),
   ),
@@ -514,15 +516,23 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const current = AsyncData.getData(model.thread);
       if (Option.isSome(current) && current.value.thread.id !== threadId) return { model };
       const turn = stepTurn(model, message);
-      const cleared = clearComposer({ ...model, turn, notice: Option.none() });
+      // The composer was cleared on press; a draft typed since must survive.
       return {
-        model: { ...model, ui: cleared.ui, turn, notice: Option.none() },
-        commands: [...cleared.commands, ScrollToBottom(), FocusComposer({ always: true })],
+        model: { ...model, turn, notice: Option.none() },
+        commands: [ScrollToBottom(), FocusComposer({ always: true })],
       };
     },
-    FailedSend: ({ reason }) => ({
-      model: { ...model, turn: stepTurn(model, message), notice: Option.some(reason) },
-    }),
+    FailedSend: ({ reason, text, threadId }) => {
+      const turn = stepTurn(model, message);
+      const next: Model = { ...model, turn, notice: Option.some(reason) };
+      // Put the unsent text back, unless the user has moved on or started
+      // something new.
+      const sameThread = threadId === undefined || Option.contains(activeThread(model), threadId);
+      if (text === undefined || !sameThread || model.ui.composer.value.trim() !== "")
+        return { model: next };
+      const restored = uiChange(next, "textarea", "composer", { value: text });
+      return { model: { ...next, ui: restored.ui }, commands: restored.commands };
+    },
 
     Stopped: ({ ok }) => {
       const toast = withToast(
@@ -641,11 +651,16 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const text = model.ui.composer.value.trim();
       if (text === "" || !TurnState.guards.Idle(model.turn)) return { model };
       const requestId = crypto.randomUUID();
+      const turn = stepTurn(model, message);
+      // Clear on press, not on the server's answer: the message is already on its way.
+      const cleared = clearComposer({ ...model, turn, notice: Option.none() });
+      const writing: Model = { ...model, ui: cleared.ui, turn, notice: Option.none() };
       const active = activeThread(model);
       if (Option.isSome(active))
         return {
-          model: { ...model, turn: stepTurn(model, message), notice: Option.none() },
+          model: writing,
           commands: [
+            ...cleared.commands,
             SendMessage({ threadId: active.value, text, requestId }),
             FocusComposer({ always: true }),
           ],
@@ -658,14 +673,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const route = AppRoute.Thread({ threadId });
       return {
         model: {
-          ...model,
+          ...writing,
           route,
           thread: AsyncData.Idle(),
-          turn: stepTurn(model, message),
-          notice: Option.none(),
           armedArchive: Confirmation.Resting(),
         },
         commands: [
+          ...cleared.commands,
           NavigateInternal({ url: routeHref(route) }),
           SendMessage({ threadId, text, requestId, agent }),
           FocusComposer({ always: true }),
@@ -831,9 +845,12 @@ export const subscriptions = Subscription.make<Model, Message, ChatSync>()((entr
     }),
   ),
   swipe: Subscription.persistentEntry(
-    swipes({ maxWidth: 767 }).pipe(
-      Stream.map((swipe) => (swipe === "Right" ? Message.SwipedRight() : Message.SwipedLeft())),
-    ),
+    swipeDrawer<Message>({
+      maxWidth: 767,
+      width: (viewport) => Math.min(340, viewport * 0.9),
+      open: () => Message.SwipedRight(),
+      close: () => Message.SwipedLeft(),
+    }),
   ),
   timer: Subscription.persistentEntry(
     Stream.fromEffectSchedule(Effect.succeed(Message.RefreshTick()), Schedule.spaced("2 seconds")),
