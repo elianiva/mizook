@@ -1733,51 +1733,54 @@ const agentManagerForm = (
   );
 };
 
-const agentCard = (row: AgentRow, h: H): Html =>
-  h.keyed("div")(
+const agentCard = (row: AgentRow, h: H): Html => {
+  const noRole = row.role.trim() === "";
+  return h.keyed("div")(
     row.slug,
-    [h.Class(ui.card)],
+    [h.Class(ui.agentCard)],
     [
       h.div(
-        [h.Class(ui.cardBody)],
+        [h.Class(ui.agentHead)],
         [
+          h.span([h.Class(ui.agentMark)], [icon(h, "bot", 17)]),
           h.div(
-            [h.Class(ui.cardHead)],
+            [h.Class(ui.agentIdentity)],
             [
-              h.span([h.Class(ui.strong)], [row.name]),
-              h.span([h.Class(`${ui.muted} ${ui.mono}`)], [`/${row.slug}`]),
-              row.isDefault ? h.span([h.Class(ui.badge)], ["default"]) : h.empty,
+              h.span([h.Class(ui.agentName)], [row.name]),
+              h.span([h.Class(ui.agentSlug)], [`/${row.slug}`]),
             ],
           ),
-          h.div(
-            [h.Class(ui.clamp3)],
-            [row.role.trim() === "" ? "No role. It answers as the default persona." : row.role],
-          ),
-          h.div(
-            [h.Class(ui.cardFoot)],
+          row.isDefault ? h.span([h.Class(ui.badge)], ["default"]) : h.empty,
+        ],
+      ),
+      h.p(
+        [h.Class(noRole ? `${ui.agentRole} ${ui.agentRoleQuiet}` : ui.agentRole)],
+        [noRole ? "No role. It answers as the default persona." : row.role],
+      ),
+      h.div(
+        [h.Class(ui.agentFoot)],
+        [
+          h.span(
+            [h.Class(ui.agentMeta)],
             [
-              h.span(
-                [h.Class(`${ui.muted} ${ui.mono}`)],
-                [
-                  `${row.model === "" ? "default model" : row.model} · ${
-                    row.tools === null ? "every tool" : `${row.tools.length} tools`
-                  }`,
-                ],
-              ),
-              h.button(
-                [
-                  h.Type("button"),
-                  h.Class(ui.buttonSmall),
-                  h.OnClick(Message.ClickedAgentManage({ slug: row.slug })),
-                ],
-                ["Edit"],
-              ),
+              `${row.model === "" ? "default model" : row.model} · ${
+                row.tools === null ? "every tool" : `${row.tools.length} tools`
+              }`,
             ],
+          ),
+          h.button(
+            [
+              h.Type("button"),
+              h.Class(ui.buttonSmall),
+              h.OnClick(Message.ClickedAgentManage({ slug: row.slug })),
+            ],
+            [icon(h, "pencil", 13), "Edit"],
           ),
         ],
       ),
     ],
   );
+};
 
 const agentsView = (model: Model, h: H): Html =>
   remote(agentsQuery.read(model.agents), h, skeletonView(h, 2), (rows) =>
@@ -1791,26 +1794,8 @@ const agentsView = (model: Model, h: H): Html =>
         ),
       onNone: () =>
         h.div(
-          [h.Class(ui.stack)],
-          [
-            h.div(
-              [h.Class(ui.toolbar)],
-              [
-                h.button(
-                  [
-                    h.Type("button"),
-                    h.Class(ui.buttonSmall),
-                    h.OnClick(Message.ClickedAgentManage({ slug: "" })),
-                  ],
-                  ["New agent"],
-                ),
-              ],
-            ),
-            h.div(
-              [h.Class(ui.cards)],
-              Array.map(rows, (row) => agentCard(row, h)),
-            ),
-          ],
+          [h.Class(ui.agentGrid)],
+          Array.map(rows, (row) => agentCard(row, h)),
         ),
     }),
   );
@@ -2500,7 +2485,29 @@ const pageView = (model: Model, h: H): Html =>
           ),
         Agent: () =>
           h.div([h.Class(ui.page)], [titleView("Skills", [], h), agentView(model, channel, h)]),
-        Agents: () => h.div([h.Class(ui.page)], [titleView("Agents", [], h), agentsView(model, h)]),
+        Agents: () =>
+          h.div(
+            [h.Class(ui.page)],
+            [
+              titleView(
+                "Agents",
+                Option.isNone(model.agentForm)
+                  ? [
+                      h.button(
+                        [
+                          h.Type("button"),
+                          h.Class(ui.buttonPrimary),
+                          h.OnClick(Message.ClickedAgentManage({ slug: "" })),
+                        ],
+                        [icon(h, "plus", 14), "New agent"],
+                      ),
+                    ]
+                  : [],
+                h,
+              ),
+              agentsView(model, h),
+            ],
+          ),
         Profile: () =>
           h.div(
             [h.Class(ui.page)],
