@@ -37,6 +37,7 @@ import {
 } from "./api.ts";
 import { Message } from "./message.ts";
 import { Model } from "./model.ts";
+import { NavState } from "./nav.ts";
 import { Confirmation, isArmed } from "./confirmation.ts";
 import { GO_KEYS, matches, sections } from "./palette.ts";
 import { PaletteState, paletteMachine } from "./palette-machine.ts";
@@ -390,6 +391,7 @@ const setRoute =
     return {
       model: modifyFields(model, {
         route: () => route,
+        nav: () => NavState.Closed(),
         armed: () => Confirmation.Resting(),
         editor: () => Option.none(),
         notice: () => Option.none(),
@@ -479,6 +481,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     drafts: {},
     composer: { name: "", kind: "markdown", content: "" },
     armed: Confirmation.Resting(),
+    nav: NavState.Closed(),
     notice: Option.none(),
     palette: paletteMachine.initial,
     apple: typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform),
@@ -709,6 +712,14 @@ export const update = (model: Model, message: Message) =>
     SucceededAction: () => loadRoute(modifyFields(model, { notice: () => Option.some("Done.") })),
     FailedAction: ({ reason }) =>
       loadRoute(modifyFields(model, { notice: () => Option.some(reason) })),
+
+    ToggledNav: () => ({
+      model: modifyFields(model, {
+        nav: (nav) =>
+          NavState.match(nav, { Closed: () => NavState.Open(), Open: () => NavState.Closed() }),
+      }),
+    }),
+    ClosedNav: () => ({ model: modifyFields(model, { nav: () => NavState.Closed() }) }),
 
     PressedPalette: () => {
       const next = foldPalette(model, message);

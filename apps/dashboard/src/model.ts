@@ -21,6 +21,7 @@ import {
   usageQuery,
 } from "./api.ts";
 import { Confirmation } from "./confirmation.ts";
+import { NavState } from "./nav.ts";
 import { PaletteState } from "./palette-machine.ts";
 import { AppRoute } from "./route.ts";
 
@@ -65,6 +66,7 @@ export const Model = Schema.Struct({
   drafts: UnsavedSettingInputs,
   composer: ArtifactBeingWritten,
   armed: Confirmation,
+  nav: NavState,
   notice: Schema.Option(Schema.String),
   palette: PaletteState,
   /** Whether shortcut hints read ⌘ or Ctrl. Set once at start. */

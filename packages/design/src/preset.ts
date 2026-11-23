@@ -28,8 +28,17 @@ export const mizookPreset = definePreset({
       textRendering: "optimizeLegibility",
       WebkitTextSizeAdjust: "100%",
       WebkitTapHighlightColor: "transparent",
+      height: "100%",
+      overflow: "hidden",
+      overscrollBehavior: "none",
     },
-    body: { minHeight: "100vh", fontSize: "15px", lineHeight: "1.6" },
+    body: {
+      height: "100dvh",
+      overflow: "hidden",
+      overscrollBehavior: "none",
+      fontSize: "15px",
+      lineHeight: "1.6",
+    },
     "button, input, select, textarea": {
       fontFamily: "inherit",
       fontSize: "inherit",

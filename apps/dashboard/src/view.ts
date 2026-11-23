@@ -65,6 +65,7 @@ import { channelsQuery } from "./api.ts";
 import type { GlyphName } from "@mizook/design/icons";
 import { icon } from "./icon.ts";
 import { type Destination, matches, sections } from "./palette.ts";
+import { NavState } from "./nav.ts";
 import { isArmed } from "./confirmation.ts";
 import { PaletteState } from "./palette-machine.ts";
 
@@ -2351,14 +2352,26 @@ export const view = (model: Model, h: H): Document => {
             h.header(
               [h.Class(ui.header)],
               [
-                h.details(
+                h.div(
                   [h.Class(ui.mobileNav)],
                   [
-                    h.summary(
-                      [h.Class(ui.mobileNavButton), h.AriaLabel("Sections")],
+                    h.button(
+                      [
+                        h.Type("button"),
+                        h.Class(ui.mobileNavButton),
+                        h.AriaLabel("Sections"),
+                        h.AriaExpanded(NavState.guards.Open(model.nav)),
+                        h.OnClick(Message.ToggledNav()),
+                      ],
                       [icon(h, "menu", 20)],
                     ),
-                    railView(model, h),
+                    ...NavState.match(model.nav, {
+                      Closed: () => [],
+                      Open: () => [
+                        h.div([h.Class(ui.mobileNavBackdrop), h.OnClick(Message.ClosedNav())], []),
+                        railView(model, h),
+                      ],
+                    }),
                   ],
                 ),
                 h.span([h.Class(ui.crumb)], [agent]),

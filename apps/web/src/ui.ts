@@ -838,8 +838,8 @@ export const ui = {
   drawerViewport: css({ position: "fixed", inset: 0, zIndex: 41, display: "flex" }),
   drawerContent: css({
     position: "relative",
-    width: "300px",
-    maxWidth: "86vw",
+    width: "340px",
+    maxWidth: "90vw",
     height: "100%",
     display: "flex",
     flexDirection: "column",

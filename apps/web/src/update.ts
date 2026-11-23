@@ -399,15 +399,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const route = urlToAppRoute(url);
       if (Equal.equals(model.route, route)) return { model };
       const thread = threadDataFor(model, model.chat);
-      return {
-        model: {
-          ...model,
-          route,
-          thread,
-          notice: Option.none(),
-          armedArchive: Confirmation.Resting(),
-        },
+      const next: Model = {
+        ...model,
+        route,
+        thread,
+        notice: Option.none(),
+        armedArchive: Confirmation.Resting(),
       };
+      const drawer = setDrawer(next, false);
+      return { model: { ...next, ui: drawer.ui }, commands: drawer.commands };
     },
 
     CompletedNavigation: () => ({ model }),

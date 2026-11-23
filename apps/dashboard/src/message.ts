@@ -76,6 +76,8 @@ export const Message = defineMessageUnion({
   SucceededSetting: { key: SettingKey, said: Schema.String },
   FailedAction: { reason: Schema.String },
   TickedOverviewRefresh: {},
+  ToggledNav: {},
+  ClosedNav: {},
   PressedPalette: {},
   ClosedPalette: {},
   TypedPaletteQuery: { value: Schema.String },
