@@ -449,6 +449,9 @@ const INTERNAL_ACTIONS: ReadonlySet<string> = new Set(["appendAgent", "setStatus
 
 export const makeWebChatServer = (env: Env): Server.Definition<typeof WebChat.spec, never> =>
   Server.make(WebChat, {
+    // The agent writes without a known source authority; `authorize` limits those
+    // internal actions to its own principal. The browser client keeps this off.
+    allowUnboundCommands: true,
     principal: Schema.String,
     state: ServerState,
     initialize: initialize(env),
