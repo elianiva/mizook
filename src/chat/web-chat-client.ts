@@ -7,11 +7,15 @@ import { INTERNAL_PRINCIPAL } from "./web-chat-source.ts";
 
 const threadIdOf = (place: string): string => place.replace(/^web:/, "");
 
+// A getter, because the client spreads the identity on every request. A fixed
+// `Date.now() + …` would expire an hour after the isolate loaded this module.
 const internalIdentity = {
   principal: INTERNAL_PRINCIPAL,
   actorId: INTERNAL_PRINCIPAL,
-  expiresAtMillis: Date.now() + 3_600_000,
-} as const;
+  get expiresAtMillis() {
+    return Date.now() + 3_600_000;
+  },
+};
 
 /** The agent's write path into the web chat source. */
 export class WebChatClient extends Context.Service<
