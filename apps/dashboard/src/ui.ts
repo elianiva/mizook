@@ -1,12 +1,5 @@
 import { css } from "../styled-system/css";
 
-const container = {
-  width: "100%",
-  maxWidth: "48rem",
-  marginInline: "auto",
-  paddingInline: { base: "16px", md: "28px" },
-};
-
 const motion = {
   transitionProperty: "color, background-color, border-color, opacity, transform",
   transitionDuration: "120ms",
@@ -357,16 +350,22 @@ export const ui = {
     letterSpacing: "0.04em",
     textTransform: "uppercase",
   }),
+  // The scroller spans the whole column so its scrollbar sits at the window edge;
+  // the padding centres the content at 64rem.
   main: css({
-    ...container,
-    maxWidth: "64rem",
     flex: "1",
+    minWidth: 0,
     minHeight: "0",
     display: "flex",
     flexDirection: "column",
     gap: "20px",
+    overflowX: "hidden",
     overflowY: "auto",
     paddingBlock: "28px",
+    paddingInline: {
+      base: "max(16px, calc((100% - 64rem) / 2 + 16px))",
+      md: "max(28px, calc((100% - 64rem) / 2 + 28px))",
+    },
   }),
   page: css({
     flex: "1 1 auto",

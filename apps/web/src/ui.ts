@@ -280,6 +280,7 @@ export const ui = {
     position: "relative",
     flex: "1",
     minHeight: 0,
+    overflowX: "hidden",
     overflowY: "auto",
     paddingInline: { base: "16px", md: "28px" },
     paddingBlock: "32px",
@@ -289,6 +290,7 @@ export const ui = {
     display: "flex",
     flexDirection: "column",
     gap: "28px",
+    "& > *": { minWidth: 0 },
   }),
   // Room to scroll the latest question to the top of the view.
   messagesEnd: css({ minHeight: "40vh" }),
@@ -401,7 +403,11 @@ export const ui = {
       color: "fgMuted",
     },
     "& table": {
-      width: "100%",
+      display: "block",
+      width: "max-content",
+      minWidth: "100%",
+      maxWidth: "100%",
+      overflowX: "auto",
       margin: "10px 0",
       borderCollapse: "collapse",
       fontSize: "sm",
