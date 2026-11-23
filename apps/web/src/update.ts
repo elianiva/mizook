@@ -2,7 +2,7 @@ import { AsyncData, Command, Subscription, Update } from "foldkit";
 import { scrollIntoViewAfterPaint } from "foldkit/dom";
 import { load, pushUrl, UrlRequest } from "foldkit/navigation";
 import { toString as urlToString, type Url } from "foldkit/url";
-import { Effect, Option, Schedule, Schema, Stream } from "effect";
+import { Effect, Equal, Option, Predicate, Schedule, Schema, Stream } from "effect";
 import {
   Dialog,
   Drawer,
@@ -372,13 +372,6 @@ export const init = (flags: Flags, url: Url) => {
 
 type UpdateReturn = Update.Return<Model, Message, UiRegistry | ChatSync>;
 
-const sameRoute = (a: AppRoute, b: AppRoute): boolean =>
-  AppRoute.match<boolean>(a, {
-    Home: () => b._tag === "Home",
-    Thread: ({ threadId }) => b._tag === "Thread" && b.threadId === threadId,
-    NotFound: ({ path }) => b._tag === "NotFound" && b.path === path,
-  });
-
 const withNotice = (model: Model, notice: string): Model => ({
   ...model,
   notice: Option.some(notice),
@@ -400,7 +393,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ChangedUrl: ({ url }) => {
       const route = urlToAppRoute(url);
-      if (sameRoute(model.route, route)) return { model };
+      if (Equal.equals(model.route, route)) return { model };
       const thread = threadDataFor(model, model.chat);
       return {
         model: {
@@ -574,7 +567,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           model: { ...model, sending: true, notice: Option.none() },
           commands: [SendMessage({ threadId: active.value, text, requestId })],
         };
-      if (model.route._tag !== "Home")
+      if (!Predicate.isTagged(model.route, "Home"))
         return { model: withNotice(model, "That page is not a chat.") };
       const agent = defaultAgent(model);
       if (agent === "") return { model: withNotice(model, "Choose an agent first.") };

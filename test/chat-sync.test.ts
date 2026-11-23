@@ -1,5 +1,6 @@
 import {
   applyEvent,
+  ChatEvent,
   type ChatMessage,
   type ChatState,
   type ThreadSummary,
@@ -25,8 +26,8 @@ const base: ChatState = {
 };
 
 test("a message event appends once and leaves the other transcript fields alone", () => {
-  const once = applyEvent(base, { _tag: "Message", threadId: thread.id, message });
-  const twice = applyEvent(once, { _tag: "Message", threadId: thread.id, message });
+  const once = applyEvent(base, ChatEvent.cases.Message.make({ threadId: thread.id, message }));
+  const twice = applyEvent(once, ChatEvent.cases.Message.make({ threadId: thread.id, message }));
   expect(once.transcripts[thread.id]?.messages).toEqual([message]);
   expect(twice.transcripts[thread.id]?.messages).toEqual([message]);
   expect(once.transcripts[thread.id]?.running).toBe(false);
@@ -34,12 +35,10 @@ test("a message event appends once and leaves the other transcript fields alone"
 
 test("a status event replaces running and approvals together", () => {
   const approval = { id: 3, summary: "Delete the file", match: "", created: 4 };
-  const next = applyEvent(base, {
-    _tag: "Status",
-    threadId: thread.id,
-    running: true,
-    approvals: [approval],
-  });
+  const next = applyEvent(
+    base,
+    ChatEvent.cases.Status.make({ threadId: thread.id, running: true, approvals: [approval] }),
+  );
   expect(next.transcripts[thread.id]).toEqual({
     messages: [],
     running: true,
@@ -51,7 +50,7 @@ test("a thread event moves the updated thread to the front and keeps its transcr
   const renamed = { ...thread, title: "Renamed", updated: 5 };
   const next = applyEvent(
     { ...base, threads: [{ ...thread, id: "t2", title: "Old" }, thread] },
-    { _tag: "Thread", thread: renamed },
+    ChatEvent.cases.Thread.make({ thread: renamed }),
   );
   expect(next.threads.map((entry) => entry.id)).toEqual(["t1", "t2"]);
   expect(next.threads[0]?.title).toBe("Renamed");
@@ -60,11 +59,13 @@ test("a thread event moves the updated thread to the front and keeps its transcr
 
 test("an agents event replaces the list and default without touching threads", () => {
   const other = { ...agent, id: "a2", slug: "other", name: "Other", isWebDefault: false };
-  const next = applyEvent(base, {
-    _tag: "Agents",
-    agents: [agent, other],
-    defaultAgent: { slug: other.slug, name: other.name },
-  });
+  const next = applyEvent(
+    base,
+    ChatEvent.cases.Agents.make({
+      agents: [agent, other],
+      defaultAgent: { slug: other.slug, name: other.name },
+    }),
+  );
   expect(next.agents.map((entry) => entry.slug)).toEqual(["web", "other"]);
   expect(next.defaultAgent.slug).toBe("other");
   expect(next.threads).toEqual(base.threads);

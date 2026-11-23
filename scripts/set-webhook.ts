@@ -1,35 +1,43 @@
-import { callTelegram } from "./telegram.ts";
+import { Config, Data, Effect, Option } from "effect";
 
-const [workerUrl] = process.argv.slice(2);
-const token = process.env.BOT_TOKEN;
-const secret = process.env.MIZOOK_WEBHOOK_SECRET;
+import { callTelegramEffect } from "./telegram.ts";
 
-if (!workerUrl || !token || !secret) {
-  console.error(
-    "usage: BOT_TOKEN=… MIZOOK_WEBHOOK_SECRET=… node scripts/set-webhook.ts <worker url>",
-  );
-  process.exit(1);
+class WebhookError extends Data.TaggedError("WebhookError")<{ readonly reason: string }> {
+  override get message(): string {
+    return this.reason;
+  }
 }
 
-const webhookUrl = `${workerUrl.replace(/\/$/, "")}/telegram/webhook`;
+const USAGE = "usage: BOT_TOKEN=… MIZOOK_WEBHOOK_SECRET=… node scripts/set-webhook.ts <worker url>";
 
-const mustCall = async (method: string, body: unknown) => {
-  const result = await callTelegram(token, method, body);
-  if (!result.ok) {
-    console.error(`${method} failed: ${result.description ?? "unknown error"}`);
-    process.exit(1);
+const program = Effect.gen(function* () {
+  const workerUrl = Option.fromNullishOr(process.argv[2]).pipe(
+    Option.filter((value) => value !== ""),
+  );
+  const token = yield* Config.String("BOT_TOKEN").pipe(Config.option);
+  const secret = yield* Config.String("MIZOOK_WEBHOOK_SECRET").pipe(Config.option);
+  if (Option.isNone(workerUrl) || Option.isNone(token) || Option.isNone(secret)) {
+    return yield* new WebhookError({ reason: USAGE });
   }
-  return result;
-};
-
-try {
-  await mustCall("setWebhook", {
+  const webhookUrl = `${workerUrl.value.replace(/\/$/, "")}/telegram/webhook`;
+  const result = yield* callTelegramEffect(token.value, "setWebhook", {
     url: webhookUrl,
-    secret_token: secret,
+    secret_token: secret.value,
     allowed_updates: ["message", "callback_query"],
   });
-  console.log(`webhook set: ${webhookUrl}`);
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
+  if (!result.ok) {
+    return yield* new WebhookError({
+      reason: `setWebhook failed: ${result.description ?? "unknown error"}`,
+    });
+  }
+  yield* Effect.log(`webhook set: ${webhookUrl}`);
+}).pipe(
+  Effect.catch((error) =>
+    Effect.sync(() => {
+      console.error(error.message);
+      process.exitCode = 1;
+    }),
+  ),
+);
+
+await Effect.runPromise(program);

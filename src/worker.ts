@@ -204,10 +204,8 @@ export default {
       const id = Number(hooked[1]);
       const tokenSignedForThisAutomation = hooked[2]!;
       if (
-        !(await hookTokenValid(
-          env.MIZOOK_WEBHOOK_SECRET,
-          `auto:${id}`,
-          tokenSignedForThisAutomation,
+        !(await Effect.runPromise(
+          hookTokenValid(env.MIZOOK_WEBHOOK_SECRET, `auto:${id}`, tokenSignedForThisAutomation),
         ))
       ) {
         return new Response("Not found", { status: 404 });

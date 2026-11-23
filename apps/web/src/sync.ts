@@ -28,41 +28,39 @@ export class ChatSync extends Context.Service<
   }
 >()("mizook/ChatSync") {}
 
-const actorId = (): string => {
-  if (typeof document === "undefined") return "web";
-  const readStored = () => {
-    try {
-      return localStorage.getItem("mizook_actor");
-    } catch {
-      return null;
-    }
-  };
-  const remember = (value: string) => {
-    try {
-      localStorage.setItem("mizook_actor", value);
-    } catch {
-      // The session still works without the fallback.
-    }
-  };
+const storageKey = "mizook_actor";
+
+const readStored = Effect.try(() => localStorage.getItem(storageKey)).pipe(
+  Effect.map(Option.fromNullishOr),
+  Effect.orElseSucceed(Option.none<string>),
+);
+
+// The session still works without the fallback.
+const remember = (value: string) =>
+  Effect.try(() => localStorage.setItem(storageKey, value)).pipe(Effect.ignore);
+
+const actorIdEffect = Effect.gen(function* () {
   const encoded = document.cookie
     .split("; ")
-    .find((part) => part.startsWith("mizook_actor="))
-    ?.slice("mizook_actor=".length);
+    .find((part) => part.startsWith(`${storageKey}=`))
+    ?.slice(`${storageKey}=`.length);
   if (encoded !== undefined) {
-    try {
-      const decoded = decodeURIComponent(encoded);
-      if (decoded !== "") {
-        remember(decoded);
-        return decoded;
-      }
-    } catch {
-      // Fall back to the last known actor.
+    // A malformed cookie falls back to the last known actor.
+    const decoded = yield* Effect.try(() => decodeURIComponent(encoded)).pipe(Effect.option);
+    if (Option.isSome(decoded) && decoded.value !== "") {
+      yield* remember(decoded.value);
+      return decoded.value;
     }
   }
-  const stored = readStored();
-  if (stored !== null && stored !== "") return stored;
-  return "web";
-};
+  const stored = yield* readStored;
+  return Option.getOrElse(
+    Option.filter(stored, (value) => value !== ""),
+    () => "web",
+  );
+});
+
+const actorId = (): string =>
+  typeof document === "undefined" ? "web" : Effect.runSync(actorIdEffect);
 
 const toView = (replica: Client.State<typeof WebChat.spec>): SyncView => ({
   state: Option.fromNullishOr(replica.value?.source),

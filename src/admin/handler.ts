@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option, Predicate } from "effect";
 import type { Env } from "../env.ts";
 import type { AgentInfo, Profile } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
@@ -179,15 +179,22 @@ const invalidSettingReason = (key: string, value: string): string | undefined =>
   if (key === "budget" && !(Number.isFinite(Number(value)) && Number(value) >= 0))
     return "Give a number of dollars, 0 for none";
   if (key === "timezone") {
-    try {
-      new Intl.DateTimeFormat("en", { timeZone: value });
-    } catch {
-      return `${value} is not an IANA time zone`;
-    }
+    const isZone = Effect.runSync(
+      Effect.isSuccess(Effect.try(() => new Intl.DateTimeFormat("en", { timeZone: value }))),
+    );
+    if (!isZone) return `${value} is not an IANA time zone`;
   }
   if (key === "model" && !/^[\w.:/-]{1,120}$/.test(value)) return "That is not a model id";
   return undefined;
 };
+
+const bodyOf = (request: Request): Promise<unknown> =>
+  Effect.runPromise(
+    Effect.tryPromise(async (): Promise<unknown> => request.json()).pipe(
+      Effect.option,
+      Effect.map(Option.getOrUndefined),
+    ),
+  );
 
 const isSameOriginScriptRequest = (request: Request, url: URL) =>
   request.headers.get("x-mizook-csrf") === "1" && request.headers.get("origin") === url.origin;
@@ -204,7 +211,7 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
   }
 
   if (url.pathname === "/admin/api/artifacts") {
-    const body = (await request.json().catch(() => undefined)) as
+    const body = (await bodyOf(request)) as
       | { name?: unknown; kind?: unknown; content?: unknown }
       | undefined;
     const kind = body?.kind === "html" || body?.kind === "markdown" ? body.kind : undefined;
@@ -216,9 +223,8 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
 
   const edit = /^\/admin\/api\/(profile|skills|intents|policies)$/.exec(url.pathname);
   if (edit) {
-    const body = await request.json().catch(() => undefined);
-    if (body === null || typeof body !== "object" || Array.isArray(body))
-      return json({ error: "bad request" }, 400);
+    const body = await bodyOf(request);
+    if (!Predicate.isObject(body)) return json({ error: "bad request" }, 400);
     const result = await rpc.edit(who, edit[1]!, body);
     return result.ok ? json(result) : json(result, 400);
   }
@@ -237,7 +243,7 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
   if (setting) {
     const key = setting[1]!;
     if (!SETTINGS.includes(key)) return json({ error: "not found" }, 404);
-    const body = (await request.json().catch(() => undefined)) as { value?: unknown } | undefined;
+    const body = (await bodyOf(request)) as { value?: unknown } | undefined;
     const value = typeof body?.value === "string" ? body.value.trim() : undefined;
     if (body === undefined || (body.value !== undefined && value === undefined))
       return json({ error: "bad request" }, 400);

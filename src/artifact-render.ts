@@ -309,7 +309,7 @@ const renderChart = (source: string, ctx: Context): string => {
 
 const readOnlyPageDataBridge = (ctx: Context): string => `<script>
 (()=>{const base=${jsonSafeInScriptTag(ctx.origin)}+"/d/"+${jsonSafeInScriptTag(ctx.token)};
-const call=async path=>{const r=await fetch(base+path);if(!r.ok)throw new Error(await r.text());return r.status===204?null:r.json()};
+const call=path=>fetch(base+path).then(r=>r.ok?(r.status===204?null:r.json()):r.text().then(t=>Promise.reject(new Error(t))));
 window.mizook={data:{
 all:()=>call(""),
 get:async k=>{const r=await fetch(base+"/"+encodeURIComponent(k));return r.status===404?null:r.json()}}};})();

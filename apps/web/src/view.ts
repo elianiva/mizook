@@ -1,4 +1,4 @@
-import { Array, Option } from "effect";
+import { Array, Option, Predicate } from "effect";
 import { AsyncData } from "foldkit";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
 import type { Attribute } from "foldkit/html";
@@ -227,13 +227,12 @@ const noticeView = (model: Model, h: H): Html =>
   });
 
 const savedText = (model: Model): string | undefined => {
-  const hasData =
-    model.route._tag === "Home"
-      ? Option.isSome(AsyncData.getData(model.bootstrap))
-      : model.route._tag === "Thread"
-        ? Option.isSome(AsyncData.getData(model.thread))
-        : false;
-  const messages = model.route._tag === "Thread";
+  const hasData = Predicate.isTagged(model.route, "Home")
+    ? Option.isSome(AsyncData.getData(model.bootstrap))
+    : Predicate.isTagged(model.route, "Thread")
+      ? Option.isSome(AsyncData.getData(model.thread))
+      : false;
+  const messages = Predicate.isTagged(model.route, "Thread");
   if (model.offline) {
     if (!hasData) return "Offline";
     return messages ? "Offline · saved messages" : "Offline · saved threads";
@@ -774,7 +773,7 @@ const menuItem = (h: H, glyph: GlyphName, label: string, message: Message, dange
 const header = (model: Model, h: H, config: PartsConfig<Message>): Html => {
   const drawer = Drawer.parts(model.ui.drawer, h, config);
   const state = AsyncData.getData(model.thread);
-  const hasThread = model.route._tag === "Thread" && Option.isSome(state);
+  const hasThread = Predicate.isTagged(model.route, "Thread") && Option.isSome(state);
   const armed = Option.match(state, {
     onNone: () => false,
     onSome: (value) => Option.contains(model.armedArchive, value.thread.id),
@@ -894,14 +893,14 @@ const renameDialog = (model: Model, h: H, config: PartsConfig<Message>): Html =>
 
 export const view = (model: Model, h: H): Document => {
   const config = configOf(model);
-  const home = model.route._tag === "Home";
+  const home = Predicate.isTagged(model.route, "Home");
   const content = home
     ? AsyncData.matchData(model.bootstrap, {
         onEmpty: () => homeView(model, h, config),
         onFailure: (error) => homeView(model, h, config, error),
         onData: () => homeView(model, h, config),
       })
-    : model.route._tag === "Thread"
+    : Predicate.isTagged(model.route, "Thread")
       ? threadContent(model, h)
       : bigState(
           h,

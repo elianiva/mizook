@@ -1,12 +1,12 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
+import { Effect, Option, Schema } from "effect";
 
-const rowsOrEmpty = async <T>(sql: SqlDriver, text: string, ...params: unknown[]): Promise<T[]> => {
-  try {
-    return await sql.all<T>(text, ...params);
-  } catch {
-    return [];
-  }
-};
+const rowsOrEmpty = <T>(sql: SqlDriver, text: string, ...params: unknown[]): Promise<T[]> =>
+  Effect.runPromise(
+    Effect.tryPromise(async () => sql.all<T>(text, ...params)).pipe(
+      Effect.orElseSucceed((): T[] => []),
+    ),
+  );
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -301,16 +301,15 @@ export interface IntentRow {
   readonly lastFired: number | null;
 }
 
-const triggersOf = (json: string): string[] => {
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
-};
+const decodeJsonArray = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+);
+
+const triggersOf = (json: string): string[] =>
+  decodeJsonArray(json).pipe(
+    Option.map((items) => items.filter((item): item is string => typeof item === "string")),
+    Option.getOrElse((): string[] => []),
+  );
 
 export const intents = async (sql: SqlDriver): Promise<IntentRow[]> =>
   (

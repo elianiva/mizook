@@ -3,7 +3,7 @@
 // `specOf` and `syncUiState` are the same ones. `define` only does the wiring
 // that was identical in every app: one Model slice, one update that folds a ui
 // Message through every component, one sync Command, and one registry layer.
-import { Schema } from "effect";
+import { Predicate, Schema } from "effect";
 import { bindingOf, type Component, makeUpdate, Message, specOf, syncUiState } from "./core.ts";
 import { UiRegistry } from "./registry.ts";
 
@@ -50,7 +50,7 @@ export const define = <const E extends Entries>(entries: E, options: DefineOptio
    * to react to a change, as the demo does for validation.
    */
   const update = (model: ModelOf<E>, message: Message) => {
-    if (message._tag === "CompletedUiSync") {
+    if (Predicate.isTagged(message, "CompletedUiSync")) {
       return { model, commands: [] as ReadonlyArray<ReturnType<typeof syncUiState>> };
     }
     const next = Object.fromEntries(

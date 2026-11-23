@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Data, Effect, Option, Predicate, Schema } from "effect";
 import { Query } from "foldkit/experimental";
 
 export const Channel = Schema.Struct({
@@ -153,35 +153,50 @@ export const AgentEdit = Schema.Struct({
 });
 export type AgentEdit = typeof AgentEdit.Type;
 
+class ApiError extends Data.TaggedError("ApiError")<{ readonly reason: string }> {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+const reasonOf = (cause: unknown): string =>
+  Predicate.isError(cause) ? cause.message : String(cause);
+
+const sendRequest = (input: string, init?: RequestInit) =>
+  Effect.tryPromise({
+    try: (signal) => fetch(input, { ...init, signal }),
+    catch: (cause) => new ApiError({ reason: reasonOf(cause) }),
+  });
+
+const readJson = (response: Response) =>
+  Effect.tryPromise({
+    try: () => response.json() as Promise<unknown>,
+    catch: (cause) => new ApiError({ reason: reasonOf(cause) }),
+  });
+
 const fetchJson = <A, I>(
   schema: Schema.Codec<A, I>,
   path: string,
   params: Readonly<Record<string, string | number>>,
 ): Effect.Effect<A, string> =>
-  Effect.tryPromise({
-    try: async () => {
-      const url = new URL(`/admin/api/${path}`, location.origin);
-      Object.entries(params).forEach(([key, value]) => {
-        if (value !== "") {
-          url.searchParams.set(key, String(value));
-        }
+  Effect.gen(function* () {
+    const query = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, value]) => value !== "")
+        .map(([key, value]) => [key, String(value)]),
+    ).toString();
+    const url = query === "" ? `/admin/api/${path}` : `/admin/api/${path}?${query}`;
+    const response = yield* sendRequest(url, { headers: { accept: "application/json" } });
+    if (!response.ok) {
+      return yield* new ApiError({
+        reason: response.status === 404 ? "Not found" : `Request failed (${response.status})`,
       });
-      const response = await fetch(url, { headers: { accept: "application/json" } });
-      if (!response.ok) {
-        throw new Error(
-          response.status === 404 ? "Not found" : `Request failed (${response.status})`,
-        );
-      }
-      return response.json() as Promise<unknown>;
-    },
-    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-  }).pipe(
-    Effect.flatMap((body) =>
-      Schema.decodeUnknownEffect(schema)(body).pipe(
-        Effect.mapError(() => "The server sent something unexpected"),
-      ),
-    ),
-  );
+    }
+    const body = yield* readJson(response);
+    return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
+      Effect.mapError(() => new ApiError({ reason: "The server sent something unexpected" })),
+    );
+  }).pipe(Effect.mapError((error) => error.message));
 
 const channelArgs = { channel: Schema.String };
 
@@ -374,33 +389,34 @@ export type SettingKey = typeof SettingKey.Type;
 const CSRF_HEADER = { "x-mizook-csrf": "1" };
 const HTTP_CONFLICT = 409;
 
+const ErrorReply = Schema.Struct({ error: Schema.String });
+
 const postSameOrigin = (
   path: string,
   channel: string,
   body?: unknown,
 ): Effect.Effect<unknown, string> =>
-  Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
-        method: "POST",
-        headers: {
-          ...CSRF_HEADER,
-          "content-type": "application/json",
-        },
-        ...(body !== undefined && { body: JSON.stringify(body) }),
-      });
-      const reply = (await response.json().catch(() => ({}))) as { error?: string };
-      if (!response.ok) {
-        throw new Error(
+  Effect.gen(function* () {
+    const response = yield* sendRequest(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
+      method: "POST",
+      headers: {
+        ...CSRF_HEADER,
+        "content-type": "application/json",
+      },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+    const reply: unknown = yield* readJson(response).pipe(Effect.orElseSucceed(() => ({})));
+    if (!response.ok) {
+      const serverError = Option.map(Schema.decodeUnknownOption(ErrorReply)(reply), (r) => r.error);
+      return yield* new ApiError({
+        reason:
           response.status === HTTP_CONFLICT
             ? "It was already handled"
-            : (reply.error ?? `Request failed (${response.status})`),
-        );
-      }
-      return reply;
-    },
-    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-  });
+            : Option.getOrElse(serverError, () => `Request failed (${response.status})`),
+      });
+    }
+    return reply;
+  }).pipe(Effect.mapError((error) => error.message));
 
 export const postAction = (
   channel: string,

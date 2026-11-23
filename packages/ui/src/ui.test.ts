@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option, Predicate } from "effect";
 import { Command, given, message, model, story } from "foldkit/story";
 import { expect, test } from "vite-plus/test";
 import { Accordion, Combobox, Message, specOf, syncUiState, Ui, UiRegistry } from "./index.ts";
@@ -33,7 +33,7 @@ test("an app can step out of the facade: one component, wired by hand", () => {
   type Model = { readonly help: Accordion.State };
   const update = (m: Model, msg: Message) => {
     // A sync's own completion must not start another one.
-    if (msg._tag === "CompletedUiSync") return { model: m, commands: [] };
+    if (Predicate.isTagged(msg, "CompletedUiSync")) return { model: m, commands: [] };
     const help = Accordion.update(m.help, msg);
     return {
       model: { help },
@@ -81,6 +81,6 @@ test("the registry is a Resource: Commands reach it, and closing the scope relea
     ),
   );
   expect(registry.entries.size).toBe(0);
-  expect(findRegistry(container)._tag).toBe("None");
+  expect(Option.isNone(findRegistry(container))).toBe(true);
   expect(document.documentElement.hasAttribute(LOCK_MARKER)).toBe(false);
 });

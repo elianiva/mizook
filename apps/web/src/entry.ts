@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Data, Effect, Layer, Option } from "effect";
 import { Runtime } from "foldkit";
 
 import { kit } from "./kit.ts";
@@ -7,25 +7,36 @@ import { startServiceWorker } from "./pwa.ts";
 import { layer as chatSyncLayer } from "./sync.ts";
 import "./styles.css";
 
-const container = document.getElementById("root");
-if (container === null) throw new Error("The app root is missing.");
+class AppRootMissing extends Data.TaggedError("AppRootMissing") {
+  override get message(): string {
+    return "The app root is missing.";
+  }
+}
 
-const ui = kit.layer(container);
-const application = Runtime.makeApplication({
-  Model,
-  Flags,
-  init,
-  update,
-  view,
-  subscriptions,
-  container,
-  resources: Layer.merge(ui.layer, chatSyncLayer),
-  routing: {
-    onUrlRequest: (request) => Message.ClickedLink({ request }),
-    onUrlChange: (url) => Message.ChangedUrl({ url }),
-  },
-  devTools: { Message },
+const start = Effect.gen(function* () {
+  const container = yield* Option.fromNullishOr(document.getElementById("root")).pipe(
+    Effect.fromOption,
+    Effect.mapError(() => new AppRootMissing()),
+  );
+  const ui = kit.layer(container);
+  const application = Runtime.makeApplication({
+    Model,
+    Flags,
+    init,
+    update,
+    view,
+    subscriptions,
+    container,
+    resources: Layer.merge(ui.layer, chatSyncLayer),
+    routing: {
+      onUrlRequest: (request) => Message.ClickedLink({ request }),
+      onUrlChange: (url) => Message.ChangedUrl({ url }),
+    },
+    devTools: { Message },
+  });
+
+  Runtime.run(application, { flags: Effect.succeed({ anchorId: ui.anchorId }) });
+  startServiceWorker();
 });
 
-Runtime.run(application, { flags: Effect.succeed({ anchorId: ui.anchorId }) });
-startServiceWorker();
+Effect.runFork(start);

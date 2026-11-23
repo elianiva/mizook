@@ -1,9 +1,10 @@
 import type { GlyphName } from "@mizook/design/icons";
-import { Option } from "effect";
+import { Option, Predicate } from "effect";
 import { AsyncData } from "foldkit";
 
 import { channelsQuery } from "./api.ts";
 import type { Model } from "./model.ts";
+import type { AppRoute } from "./route.ts";
 import { PaletteState } from "./palette-machine.ts";
 import {
   agentRouter,
@@ -52,7 +53,8 @@ export const GO_KEYS: Readonly<Record<string, string>> = {
 /** The sections, in rail order. The rail and the jump menu both read this list. */
 export const sections = (model: Model): ReadonlyArray<Destination> => {
   const channel = routeChannel(model.route);
-  const tag = model.route._tag;
+  const on = (...tags: ReadonlyArray<AppRoute["_tag"]>) =>
+    tags.some((tag) => Predicate.isTagged(model.route, tag));
   const none = Option.none<string>();
   const section = (
     group: string,
@@ -66,29 +68,29 @@ export const sections = (model: Model): ReadonlyArray<Destination> => {
     return { id, group, glyph, label, href, active, ...(key !== undefined && { key }) };
   };
   return [
-    section("Watch", "grid", "Overview", overviewRouter({ channel }), tag === "Overview"),
+    section("Watch", "grid", "Overview", overviewRouter({ channel }), on("Overview")),
     section(
       "Watch",
       "log",
       "Log",
       logRouter({ channel, kind: none, q: none, before: none }),
-      tag === "Log" || tag === "Entry",
+      on("Log", "Entry"),
     ),
-    section("Watch", "tree", "Memory", memoryRouter({ channel }), tag === "Memory"),
-    section("Watch", "bars", "Usage", usageRouter({ channel, days: none }), tag === "Usage"),
-    section("Automate", "clock", "Automations", schedulesRouter({ channel }), tag === "Schedules"),
-    section("Automate", "pulse", "Runs", runsRouter({ channel }), tag === "Runs"),
-    section("Configure", "book", "Skills", agentRouter({ channel }), tag === "Agent"),
-    section("Configure", "sliders", "Settings", settingsRouter({ channel }), tag === "Settings"),
+    section("Watch", "tree", "Memory", memoryRouter({ channel }), on("Memory")),
+    section("Watch", "bars", "Usage", usageRouter({ channel, days: none }), on("Usage")),
+    section("Automate", "clock", "Automations", schedulesRouter({ channel }), on("Schedules")),
+    section("Automate", "pulse", "Runs", runsRouter({ channel }), on("Runs")),
+    section("Configure", "book", "Skills", agentRouter({ channel }), on("Agent")),
+    section("Configure", "sliders", "Settings", settingsRouter({ channel }), on("Settings")),
     section(
       "Configure",
       "file",
       "Artifacts",
       artifactsRouter({ channel, name: none }),
-      tag === "Artifacts",
+      on("Artifacts"),
     ),
-    section("Configure", "audit", "Audit", auditRouter({ channel }), tag === "Audit"),
-    section("Shared", "user", "Profile", profileRouter({ channel }), tag === "Profile"),
+    section("Configure", "audit", "Audit", auditRouter({ channel }), on("Audit")),
+    section("Shared", "user", "Profile", profileRouter({ channel }), on("Profile")),
   ];
 };
 

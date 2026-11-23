@@ -31,18 +31,22 @@ export class WebChatObject extends DurableObject<Env> {
         }),
       ),
     );
-    void Effect.runPromise(Effect.scoped(start)).catch(() => undefined);
-    ctx.blockConcurrencyWhile(() => this.ready).catch(() => undefined);
+    void Effect.runPromise(Effect.scoped(start).pipe(Effect.ignoreCause));
+    void ctx.blockConcurrencyWhile(() =>
+      Effect.runPromise(Effect.ignoreCause(Effect.promise(() => this.ready))),
+    );
   }
 
   override async fetch(request: Request): Promise<Response> {
     const handlers = await this.ready;
-    try {
-      return await Effect.runPromise(handlers.fetch(request));
-    } catch (error) {
-      if (error instanceof ProtocolError) return Cloudflare.errorResponse(error);
-      throw error;
-    }
+    return Effect.runPromise(
+      handlers.fetch(request).pipe(
+        Effect.catchIf(
+          (error): error is ProtocolError => error instanceof ProtocolError,
+          (error) => Effect.succeed(Cloudflare.errorResponse(error)),
+        ),
+      ),
+    );
   }
 
   override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {

@@ -11,15 +11,10 @@ const ENTITIES: Readonly<Record<string, string>> = {
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (char) => ENTITIES[char]!);
 
 export const safeHref = (href: string, image: boolean): string | undefined => {
-  try {
-    const url = new URL(href);
-    if (image) return url.protocol === "https:" ? href : undefined;
-    return url.protocol === "https:" || url.protocol === "http:" || url.protocol === "mailto:"
-      ? href
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  if (!URL.canParse(href)) return undefined;
+  const { protocol } = new URL(href);
+  if (image) return protocol === "https:" ? href : undefined;
+  return protocol === "https:" || protocol === "http:" || protocol === "mailto:" ? href : undefined;
 };
 
 /**

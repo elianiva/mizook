@@ -140,10 +140,16 @@ export const defineComponent = <State, Slot extends string>(
 export const makeUpdate =
   <State, Slot extends string>(component: Component<State, Slot>) =>
   (state: State, message: Message): State => {
-    if (message._tag === "CompletedUiSync" || message._tag === "RefusedUiChange") return state;
-    if (message.component !== component.name || message.key !== component.key(state)) return state;
-    if (message._tag === "TypedUiText") return component.typed?.(state, message.value) ?? state;
-    return component.fold(state, message.snapshot, message.reason);
+    const aboutThis = (target: { readonly component: string; readonly key: string }) =>
+      target.component === component.name && target.key === component.key(state);
+    return Message.match<State>(message, {
+      CompletedUiSync: () => state,
+      RefusedUiChange: () => state,
+      TypedUiText: (typed) =>
+        aboutThis(typed) ? (component.typed?.(state, typed.value) ?? state) : state,
+      ChangedUiState: (changed) =>
+        aboutThis(changed) ? component.fold(state, changed.snapshot, changed.reason) : state,
+    });
   };
 
 // ── Bind phase: Mount ───────────────────────────────────────────────────────

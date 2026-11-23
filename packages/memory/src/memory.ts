@@ -187,11 +187,7 @@ const make = Effect.fnUntraced(function* (config: MemoryConfig) {
       const found = yield* message(id);
       return `${found.kind}: ${found.text}`;
     }
-    const { l, i } = yield* Effect.try({
-      try: () => parseLabel(id, n),
-      catch: (error) =>
-        new ZoomError({ reason: error instanceof Error ? error.message : String(error) }),
-    });
+    const { l, i } = yield* parseLabel(id, n);
     if (id + n > total) {
       return yield* new ZoomError({ reason: `zoom(${id}, ${n}): the chat has ${total} messages` });
     }

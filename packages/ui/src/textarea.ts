@@ -1,5 +1,5 @@
 import { textarea } from "@ui-sdk/core/input";
-import { Schema } from "effect";
+import { Predicate, Schema } from "effect";
 import type { Attribute, Html, HtmlBuilder, TextareaAttribute } from "foldkit/html";
 import { defineComponent, makeParts, makeUpdate, Message, type PartsConfig } from "./core.ts";
 import type { PartProps } from "./internal/render.ts";
@@ -58,7 +58,8 @@ export const parts = <AppMessage>(
           ),
           ...attributes,
         ].filter(
-          (attribute): attribute is TextareaAttribute<AppMessage> => attribute._tag !== "InnerHTML",
+          (attribute): attribute is TextareaAttribute<AppMessage> =>
+            !Predicate.isTagged(attribute, "InnerHTML"),
         ),
       ),
     attributes: core.attributes,

@@ -19,11 +19,11 @@ property(
   Arbitrary.all({ secret: secretText, channel: wellFormed }),
   ({ secret, channel }) =>
     Effect.promise(async () => {
-      const token = await hookToken(secret, channel);
+      const token = await Effect.runPromise(hookToken(secret, channel));
       expect(token).toHaveLength(43);
       expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(await hookToken(secret, channel)).toBe(token);
-      expect(await hookTokenValid(secret, channel, token)).toBe(true);
+      expect(await Effect.runPromise(hookToken(secret, channel))).toBe(token);
+      expect(await Effect.runPromise(hookTokenValid(secret, channel, token))).toBe(true);
     }),
 );
 
@@ -48,8 +48,8 @@ property(
   Arbitrary.all({ secret: secretText, channels: twoDifferent(wellFormed) }),
   ({ secret, channels: [channel, other] }) =>
     Effect.promise(async () => {
-      const token = await hookToken(secret, other);
-      expect(await hookTokenValid(secret, channel, token)).toBe(false);
+      const token = await Effect.runPromise(hookToken(secret, other));
+      expect(await Effect.runPromise(hookTokenValid(secret, channel, token))).toBe(false);
     }),
 );
 
@@ -58,8 +58,8 @@ property(
   Arbitrary.all({ secrets: twoDifferent(secretText), channel: wellFormed }),
   ({ secrets: [secret, other], channel }) =>
     Effect.promise(async () => {
-      const token = await hookToken(other, channel);
-      expect(await hookTokenValid(secret, channel, token)).toBe(false);
+      const token = await Effect.runPromise(hookToken(other, channel));
+      expect(await Effect.runPromise(hookTokenValid(secret, channel, token))).toBe(false);
     }),
 );
 
@@ -73,7 +73,7 @@ property(
   }),
   ({ secret, channel, edit, at }) =>
     Effect.promise(async () => {
-      const token = await hookToken(secret, channel);
+      const token = await Effect.runPromise(hookToken(secret, channel));
       const swapped = token[at] === "A" ? "B" : "A";
       const forged =
         edit === "cut"
@@ -83,7 +83,7 @@ property(
             : edit === "swap"
               ? token.slice(0, at) + swapped + token.slice(at + 1)
               : "";
-      expect(await hookTokenValid(secret, channel, forged)).toBe(false);
+      expect(await Effect.runPromise(hookTokenValid(secret, channel, forged))).toBe(false);
     }),
 );
 
@@ -92,7 +92,9 @@ property(
   Arbitrary.all({ channel: wellFormed, token: wellFormed }),
   ({ channel, token }) =>
     Effect.promise(async () => {
-      await expect(hookToken("", channel)).rejects.toThrow("MIZOOK_WEBHOOK_SECRET is empty");
-      expect(await hookTokenValid("", channel, token)).toBe(false);
+      expect((await Effect.runPromise(Effect.flip(hookToken("", channel))))._tag).toBe(
+        "HookSecretMissing",
+      );
+      expect(await Effect.runPromise(hookTokenValid("", channel, token))).toBe(false);
     }),
 );

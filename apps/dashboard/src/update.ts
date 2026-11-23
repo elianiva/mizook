@@ -1,4 +1,4 @@
-import { Array, Duration, Effect, Option, Record, Schema, Stream, pipe } from "effect";
+import { Array, Duration, Effect, Option, Predicate, Record, Schema, Stream, pipe } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
 import * as Dom from "foldkit/dom";
 import { Machine } from "foldkit/experimental";
@@ -37,6 +37,7 @@ import {
 } from "./api.ts";
 import { Message } from "./message.ts";
 import { Model } from "./model.ts";
+import { Confirmation, isArmed } from "./confirmation.ts";
 import { GO_KEYS, matches, sections } from "./palette.ts";
 import { PaletteState, paletteMachine } from "./palette-machine.ts";
 import {
@@ -296,7 +297,7 @@ const openEditor = (model: Model, kind: AgentKind, id: string): UpdateReturn => 
   return {
     model: modifyFields(model, {
       editor: () => Option.some<Editor>({ kind, id, fields }),
-      armed: () => Option.none(),
+      armed: () => Confirmation.Resting(),
       notice: () => Option.none(),
     }),
   };
@@ -389,7 +390,7 @@ const setRoute =
     return {
       model: modifyFields(model, {
         route: () => route,
-        armed: () => Option.none(),
+        armed: () => Confirmation.Resting(),
         editor: () => Option.none(),
         notice: () => Option.none(),
         draftKind: () => drafts.draftKind,
@@ -477,7 +478,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     editor: Option.none(),
     drafts: {},
     composer: { name: "", kind: "markdown", content: "" },
-    armed: Option.none(),
+    armed: Confirmation.Resting(),
     notice: Option.none(),
     palette: paletteMachine.initial,
     apple: typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform),
@@ -541,7 +542,7 @@ export const update = (model: Model, message: Message) =>
     ClickedAgentClose: () => ({
       model: modifyFields(model, {
         editor: () => Option.none(),
-        armed: () => Option.none(),
+        armed: () => Confirmation.Resting(),
       }),
     }),
     ClickedAgentSave: () =>
@@ -561,10 +562,10 @@ export const update = (model: Model, message: Message) =>
       }),
     ClickedAgentRemove: ({ kind, id }) => {
       const key = `agent-remove:${kind}:${id}`;
-      if (!Option.contains(model.armed, key)) {
+      if (!isArmed(model.armed, key)) {
         return {
           model: modifyFields(model, {
-            armed: () => Option.some(key),
+            armed: () => Confirmation.Armed({ key }),
             notice: () => Option.none(),
           }),
         };
@@ -574,7 +575,7 @@ export const update = (model: Model, message: Message) =>
       return Option.match(currentChannel(model), {
         onNone: () => ({ model }),
         onSome: (channel) => ({
-          model: modifyFields(model, { armed: () => Option.none() }),
+          model: modifyFields(model, { armed: () => Confirmation.Resting() }),
           commands: [PostAgent({ channel, edit })],
         }),
       });
@@ -583,7 +584,7 @@ export const update = (model: Model, message: Message) =>
       loadRoute(
         modifyFields(model, {
           editor: () => Option.none(),
-          armed: () => Option.none(),
+          armed: () => Confirmation.Resting(),
           notice: () => Option.some(said),
         }),
       ),
@@ -621,17 +622,17 @@ export const update = (model: Model, message: Message) =>
         return { model };
       }
       const onlyDeletingAsksTwice = action === "delete";
-      const isFirstClick = !Option.contains(model.armed, key);
+      const isFirstClick = !isArmed(model.armed, key);
       if (onlyDeletingAsksTwice && isFirstClick) {
         return {
           model: modifyFields(model, {
-            armed: () => Option.some(key),
+            armed: () => Confirmation.Armed({ key }),
             notice: () => Option.none(),
           }),
         };
       }
       return {
-        model: modifyFields(model, { armed: () => Option.none() }),
+        model: modifyFields(model, { armed: () => Confirmation.Resting() }),
         commands: [PostArtifact({ channel: channel.value, name, action })],
       };
     },
@@ -692,16 +693,16 @@ export const update = (model: Model, message: Message) =>
     ClickedAction: ({ action, id }) => {
       const key = `${action}:${id}`;
       const channel = currentChannel(model);
-      if (Option.isNone(channel) || !Option.contains(model.armed, key)) {
+      if (Option.isNone(channel) || !isArmed(model.armed, key)) {
         return {
           model: modifyFields(model, {
-            armed: () => Option.some(key),
+            armed: () => Confirmation.Armed({ key }),
             notice: () => Option.none(),
           }),
         };
       }
       return {
-        model: modifyFields(model, { armed: () => Option.none() }),
+        model: modifyFields(model, { armed: () => Confirmation.Resting() }),
         commands: [PostAction({ channel: channel.value, action, id })],
       };
     },
@@ -754,7 +755,7 @@ export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
     {
       modelToDependencies: (model) => ({
         isPaletteOpen: PaletteState.guards.Open(model.palette),
-        isOnLog: model.route._tag === "Log",
+        isOnLog: Predicate.isTagged(model.route, "Log"),
       }),
       dependenciesToStream: ({ isPaletteOpen, isOnLog }) =>
         Dom.streamFromKeyBindings<Message>({
@@ -781,7 +782,7 @@ export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
     {
       modelToDependencies: (model) => ({
         isRefreshActive:
-          model.route._tag === "Overview" &&
+          Predicate.isTagged(model.route, "Overview") &&
           Option.exists(currentChannel(model), (channel) =>
             AsyncData.hasData(overviewQuery.read(model.overview, { channel })),
           ),

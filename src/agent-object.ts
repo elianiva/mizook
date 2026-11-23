@@ -118,26 +118,29 @@ export class AgentObject extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const resumeInterruptedWork = () => this.alarm();
-    void ctx
-      .blockConcurrencyWhile(async () => {
-        const id = this.doName.replace(/^agent:/, "");
-        this.self = (await this.hub().agent(id)) ?? {
-          id,
-          slug: id,
-          name: env.AGENT_NAME || "Mizook",
-          role: "",
-          persona: "",
-          tools: undefined,
-          doName: this.doName,
-          isDefault: false,
-          bound: [],
-          created: 0,
-          lastActive: 0,
-        };
-        this.runtime = makeRuntime(ctx.storage, env, this.host());
-        await this.runtime.runPromise(Effect.void);
-      })
-      .then(resumeInterruptedWork);
+    const initialise = async () => {
+      const id = this.doName.replace(/^agent:/, "");
+      this.self = (await this.hub().agent(id)) ?? {
+        id,
+        slug: id,
+        name: env.AGENT_NAME || "Mizook",
+        role: "",
+        persona: "",
+        tools: undefined,
+        doName: this.doName,
+        isDefault: false,
+        bound: [],
+        created: 0,
+        lastActive: 0,
+      };
+      this.runtime = makeRuntime(ctx.storage, env, this.host());
+      await this.runtime.runPromise(Effect.void);
+    };
+    void Effect.runPromise(
+      Effect.promise(() => ctx.blockConcurrencyWhile(initialise)).pipe(
+        Effect.andThen(Effect.promise(resumeInterruptedWork)),
+      ),
+    );
   }
 
   private get doName(): string {
@@ -260,16 +263,17 @@ export class AgentObject extends DurableObject<Env> {
     requestId: string,
     where: string,
   ): Promise<WebTurnResult> {
-    try {
-      const result = await this.runtime.runPromise(
-        Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where)),
-      );
-      await this.rearmAlarm();
-      return result;
-    } catch (cause) {
-      console.error("web turn failed to start", cause);
-      return { ok: false, reason: "The turn could not start. Try again." };
-    }
+    return this.runtime.runPromise(
+      Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where)).pipe(
+        Effect.tap(Effect.promise(() => this.rearmAlarm())),
+        Effect.catchCause((cause) =>
+          Effect.as(Effect.logError("web turn failed to start", cause), {
+            ok: false as const,
+            reason: "The turn could not start. Try again.",
+          }),
+        ),
+      ),
+    );
   }
 
   async webStatus(place: string): Promise<WebStatus> {
@@ -301,12 +305,13 @@ export class AgentObject extends DurableObject<Env> {
   }
 
   async webStop(place: string): Promise<boolean> {
-    try {
-      return await this.runtime.runPromise(Agent.use((agent) => agent.stop(place)));
-    } catch (cause) {
-      console.error("stopping a web turn failed", cause);
-      return false;
-    }
+    return this.runtime.runPromise(
+      Agent.use((agent) => agent.stop(place)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.as(Effect.logError("stopping a web turn failed", cause), false),
+        ),
+      ),
+    );
   }
 
   async postTo(place: string, text: string): Promise<void> {
@@ -351,9 +356,11 @@ export class AgentObject extends DurableObject<Env> {
       case "artifacts":
         return this.runtime.runPromise(Artifacts.use((artifacts) => artifacts.list));
       case "artifact":
-        return this.runtime
-          .runPromise(Artifacts.use((artifacts) => artifacts.source(params.name ?? "")))
-          .catch(() => undefined);
+        return this.runtime.runPromise(
+          Artifacts.use((artifacts) => artifacts.source(params.name ?? "")).pipe(
+            Effect.catchCause(() => Effect.undefined),
+          ),
+        );
       default:
         return undefined;
     }
@@ -374,13 +381,11 @@ export class AgentObject extends DurableObject<Env> {
     const label =
       kind === "skills" && typeof data.name === "string" && data.name !== "" ? `:${data.name}` : "";
     const target = kind === "intents" || kind === "policies" ? Number(data.id) || 0 : 0;
-    await this.runtime
-      .runPromise(
-        State.use((state) =>
-          state.audit(who, `agent:${kind}:${action}${label}`, target, result.ok),
-        ),
-      )
-      .catch(() => undefined);
+    await this.runtime.runPromise(
+      State.use((state) =>
+        state.audit(who, `agent:${kind}:${action}${label}`, target, result.ok),
+      ).pipe(Effect.ignoreCause),
+    );
     return result;
   }
 
@@ -400,25 +405,25 @@ export class AgentObject extends DurableObject<Env> {
     if (done.after) {
       const resumeExecutorThenTurn = done.after;
       this.ctx.waitUntil(
-        this.runtime.runPromise(resumeExecutorThenTurn).then(() => this.rearmAlarm()),
+        this.runtime.runPromise(
+          resumeExecutorThenTurn.pipe(Effect.andThen(Effect.promise(() => this.rearmAlarm()))),
+        ),
       );
     }
     return done.ok;
   }
 
   async artifact(who: string, name: string, action: string): Promise<boolean> {
-    const ok = await this.runtime
-      .runPromise(
-        Artifacts.use((artifacts) =>
-          action === "delete"
-            ? artifacts.remove(this.doName, name)
-            : Effect.as(
-                artifacts.setVisibility(name, action === "private" ? "private" : "public"),
-                true,
-              ),
-        ),
-      )
-      .catch(() => false);
+    const ok = await this.runtime.runPromise(
+      Artifacts.use((artifacts) =>
+        action === "delete"
+          ? artifacts.remove(this.doName, name)
+          : Effect.as(
+              artifacts.setVisibility(name, action === "private" ? "private" : "public"),
+              true,
+            ),
+      ).pipe(Effect.catchCause(() => Effect.succeed(false))),
+    );
     await this.runtime.runPromise(
       State.use((state) => state.audit(who, `artifact:${action}:${name}`, 0, ok)),
     );
@@ -431,21 +436,18 @@ export class AgentObject extends DurableObject<Env> {
     content: string,
     contentType: string,
   ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-    const result = await this.runtime
-      .runPromise(
-        Artifacts.use((artifacts) =>
-          artifacts.publish(this.doName, name, content, contentType),
-        ).pipe(
-          Effect.match({
-            onSuccess: (made) => ({ ok: true as const, url: made.url }),
-            onFailure: (e) => ({
-              ok: false as const,
-              error: "reason" in e ? e.reason : "Could not save it",
-            }),
+    const result = await this.runtime.runPromise(
+      Artifacts.use((artifacts) => artifacts.publish(this.doName, name, content, contentType)).pipe(
+        Effect.match({
+          onSuccess: (made) => ({ ok: true as const, url: made.url }),
+          onFailure: (e) => ({
+            ok: false as const,
+            error: "reason" in e ? e.reason : "Could not save it",
           }),
-        ),
-      )
-      .catch(() => ({ ok: false as const, error: "Could not save it" }));
+        }),
+        Effect.catchCause(() => Effect.succeed({ ok: false as const, error: "Could not save it" })),
+      ),
+    );
     await this.runtime.runPromise(
       State.use((state) => state.audit(who, `artifact:create:${name}`, 0, result.ok)),
     );
@@ -486,9 +488,11 @@ export class AgentObject extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     const attempt = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
-      this.runtime.runPromise(effect as never).catch((error) => {
-        console.error(`${label} failed`, error);
-      });
+      this.runtime.runPromise(
+        (effect as Effect.Effect<A, E, never>).pipe(
+          Effect.catchCause((cause) => Effect.logError(`${label} failed`, cause)),
+        ),
+      );
     await attempt(
       "recovery",
       Bot.use((bot) => bot.recover),
@@ -501,13 +505,20 @@ export class AgentObject extends DurableObject<Env> {
   }
 
   private async rearmAlarm(): Promise<void> {
-    const times = await Promise.all([
-      this.runtime
-        .runPromise(Bot.use((bot) => bot.nextWake))
-        .catch(() => Date.now() + RECOVER_AFTER_MS),
-      this.runtime.runPromise(Backup.use((backup) => backup.nextBackupAt)).catch(() => undefined),
-    ]);
-    const at = times.filter((t): t is number => t !== undefined);
-    if (at.length > 0) await this.ctx.storage.setAlarm(Math.min(...at));
+    const storage = this.ctx.storage;
+    await this.runtime.runPromise(
+      Effect.gen(function* () {
+        const times = yield* Effect.all([
+          Bot.use((bot) => bot.nextWake).pipe(
+            Effect.catchCause(() => Effect.succeed(Date.now() + RECOVER_AFTER_MS)),
+          ),
+          Backup.use((backup) => backup.nextBackupAt).pipe(
+            Effect.catchCause(() => Effect.undefined),
+          ),
+        ]);
+        const at = times.filter((t): t is number => t !== undefined);
+        if (at.length > 0) yield* Effect.promise(() => storage.setAlarm(Math.min(...at)));
+      }),
+    );
   }
 }

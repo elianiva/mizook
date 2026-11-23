@@ -1,4 +1,4 @@
-import { Array, Option, Order, Record, pipe } from "effect";
+import { Array, Option, Order, Predicate, Record, pipe } from "effect";
 import { AsyncData } from "foldkit";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
 
@@ -65,6 +65,7 @@ import { channelsQuery } from "./api.ts";
 import type { GlyphName } from "@mizook/design/icons";
 import { icon } from "./icon.ts";
 import { type Destination, matches, sections } from "./palette.ts";
+import { isArmed } from "./confirmation.ts";
 import { PaletteState } from "./palette-machine.ts";
 
 const channelsRead = channelsQuery.read;
@@ -120,7 +121,7 @@ const ACTION_GLYPH: Record<ActionKind, GlyphName> = {
 };
 
 const actionButton = (model: Model, action: ActionKind, id: number, label: string, h: H): Html => {
-  const armed = Option.contains(model.armed, `${action}:${id}`);
+  const armed = isArmed(model.armed, `${action}:${id}`);
   return h.button(
     [
       h.Type("button"),
@@ -556,10 +557,9 @@ const logRowView = (m: LogMessage, channel: Option.Option<string>, h: H): Html =
 
 const logView = (model: Model, channel: string, h: H): Html => {
   const route = model.route;
-  const [kind, q, before] =
-    route._tag === "Log"
-      ? [textOf(route.kind), textOf(route.q), textOf(route.before)]
-      : ["", "", ""];
+  const [kind, q, before] = Predicate.isTagged(route, "Log")
+    ? [textOf(route.kind), textOf(route.q), textOf(route.before)]
+    : ["", "", ""];
   const maybeChannel = routeChannel(route);
   return h.div(
     [h.Class(ui.page)],
@@ -1264,7 +1264,7 @@ const agentForm = (
 ): Html => {
   const fields = editor.fields;
   const ready = agentReady(editor);
-  const armed = Option.contains(model.armed, `agent-remove:${editor.kind}:${editor.id}`);
+  const armed = isArmed(model.armed, `agent-remove:${editor.kind}:${editor.id}`);
   const controls =
     editor.kind === "profile"
       ? [
@@ -1769,7 +1769,7 @@ const settingsView = (model: Model, channel: string, h: H): Html =>
   );
 
 const deleteButton = (model: Model, row: typeof ArtifactRow.Type, h: H): Html => {
-  const armed = Option.contains(model.armed, `artifact-delete:${row.name}`);
+  const armed = isArmed(model.armed, `artifact-delete:${row.name}`);
   return h.button(
     [
       h.Type("button"),
@@ -2222,21 +2222,22 @@ const railView = (model: Model, h: H): Html =>
     ],
   );
 
-const PAGE_NAMES: Record<AppRoute["_tag"], string> = {
-  Overview: "Overview",
-  Log: "Log",
-  Entry: "Log",
-  Memory: "Memory",
-  Usage: "Usage",
-  Schedules: "Automations",
-  Agent: "Skills",
-  Profile: "Profile",
-  Runs: "Runs",
-  Settings: "Settings",
-  Audit: "Audit",
-  Artifacts: "Artifacts",
-  NotFound: "Not found",
-};
+const pageName = (route: AppRoute): string =>
+  AppRoute.match<string>(route, {
+    Overview: () => "Overview",
+    Log: () => "Log",
+    Entry: () => "Log",
+    Memory: () => "Memory",
+    Usage: () => "Usage",
+    Schedules: () => "Automations",
+    Agent: () => "Skills",
+    Profile: () => "Profile",
+    Runs: () => "Runs",
+    Settings: () => "Settings",
+    Audit: () => "Audit",
+    Artifacts: () => "Artifacts",
+    NotFound: () => "Not found",
+  });
 
 const agentName = (model: Model): string =>
   AsyncData.matchData(channelsRead(model.channels), {
@@ -2336,7 +2337,7 @@ const pageView = (model: Model, h: H): Html =>
   });
 
 export const view = (model: Model, h: H): Document => {
-  const page = PAGE_NAMES[model.route._tag];
+  const page = pageName(model.route);
   const agent = agentName(model);
   return {
     title: agent === "" ? `${page} · Mizook` : `${page} · ${agent} · Mizook`,

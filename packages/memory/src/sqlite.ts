@@ -176,35 +176,45 @@ export const sqliteStore = (sql: SqlDriver): Layer.Layer<Store, StoreError> =>
           } satisfies Snapshot;
         }),
         restore: (snapshot) =>
-          run("restore", async () => {
-            const count =
-              (await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM mem_messages`))[0]?.n ?? 0;
-            if (count > 0) throw new Error("the store is not empty");
-            for (const m of snapshot.messages) {
-              await sql.all(
-                `INSERT INTO mem_messages (i, kind, text, size, date) VALUES (?, ?, ?, ?, ?)`,
-                m.i,
-                m.kind,
-                m.text,
-                m.size,
-                m.date,
-              );
+          Effect.gen(function* () {
+            const count = yield* run(
+              "restore",
+              async () =>
+                (await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM mem_messages`))[0]?.n ?? 0,
+            );
+            if (count > 0) {
+              return yield* new StoreError({
+                operation: "restore",
+                cause: "the store is not empty",
+              });
             }
-            for (const n of snapshot.nodes) {
-              await sql.all(
-                `INSERT OR IGNORE INTO mem_nodes (l, i, text, size) VALUES (?, ?, ?, ?)`,
-                n.l,
-                n.i,
-                n.text,
-                n.size,
-              );
-            }
-            if (snapshot.views) {
-              await sql.all(
-                `INSERT INTO mem_views (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json`,
-                JSON.stringify(snapshot.views),
-              );
-            }
+            yield* run("restore", async () => {
+              for (const m of snapshot.messages) {
+                await sql.all(
+                  `INSERT INTO mem_messages (i, kind, text, size, date) VALUES (?, ?, ?, ?, ?)`,
+                  m.i,
+                  m.kind,
+                  m.text,
+                  m.size,
+                  m.date,
+                );
+              }
+              for (const n of snapshot.nodes) {
+                await sql.all(
+                  `INSERT OR IGNORE INTO mem_nodes (l, i, text, size) VALUES (?, ?, ?, ?)`,
+                  n.l,
+                  n.i,
+                  n.text,
+                  n.size,
+                );
+              }
+              if (snapshot.views) {
+                await sql.all(
+                  `INSERT INTO mem_views (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json`,
+                  JSON.stringify(snapshot.views),
+                );
+              }
+            });
           }),
         saveViews: (views: PersistedViews) =>
           run("saveViews", async () => {

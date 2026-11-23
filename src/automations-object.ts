@@ -68,11 +68,20 @@ export class AutomationsObject extends DurableObject<Env> {
                 }),
             });
             const text = await response.text();
-            if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 300)}`);
-            return `${response.status} ${text.slice(0, 2_000)}`;
+            return { status: response.status, ok: response.ok, text };
           },
           catch: failed(`${method} ${url} failed`),
-        }),
+        }).pipe(
+          Effect.flatMap(({ status, ok, text }) =>
+            ok
+              ? Effect.succeed(`${status} ${text.slice(0, 2_000)}`)
+              : Effect.fail(
+                  new ActionError({
+                    reason: `${method} ${url} failed: ${status} ${text.slice(0, 300)}`,
+                  }),
+                ),
+          ),
+        ),
     });
     const vars = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
     const settings = Settings.layer.pipe(
@@ -100,8 +109,10 @@ export class AutomationsObject extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
-    await this.run(Runner.use((r) => r.wake)).catch((error) =>
-      console.error("automations failed", error),
+    await this.run(
+      Runner.use((r) => r.wake).pipe(
+        Effect.catchCause((cause) => Effect.logError("automations failed", cause)),
+      ),
     );
     await this.rearm();
   }
@@ -118,7 +129,7 @@ export class AutomationsObject extends DurableObject<Env> {
   }
 
   async hookUrl(id: number): Promise<string> {
-    const token = await hookToken(this.env.MIZOOK_WEBHOOK_SECRET, `auto:${id}`);
+    const token = await Effect.runPromise(hookToken(this.env.MIZOOK_WEBHOOK_SECRET, `auto:${id}`));
     return `${this.env.PUBLIC_URL ?? ""}/hook/${id}/${token}`;
   }
 
@@ -159,8 +170,10 @@ export class AutomationsObject extends DurableObject<Env> {
   async test(id: number): Promise<boolean> {
     if (!(await this.get(id))) return false;
     this.ctx.waitUntil(
-      this.run(Runner.use((r) => r.test(id))).catch((error) =>
-        console.error(`test of #${id} failed`, error),
+      this.run(
+        Runner.use((r) => r.test(id)).pipe(
+          Effect.catchCause((cause) => Effect.logError(`test of #${id} failed`, cause)),
+        ),
       ),
     );
     return true;
@@ -170,8 +183,10 @@ export class AutomationsObject extends DurableObject<Env> {
     const a = await this.get(id);
     if (!a || !a.active || a.spec.kind !== "webhook") return false;
     this.ctx.waitUntil(
-      this.run(Runner.use((r) => r.hook(id, body))).catch((error) =>
-        console.error(`webhook #${id} failed`, error),
+      this.run(
+        Runner.use((r) => r.hook(id, body)).pipe(
+          Effect.catchCause((cause) => Effect.logError(`webhook #${id} failed`, cause)),
+        ),
       ),
     );
     return true;

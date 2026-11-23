@@ -93,15 +93,22 @@ export class Media extends Context.Service<
                 new MediaError({ operation: "convert", cause: "file is too large" }),
               );
             }
-            return attempt("convert", async () => {
-              const result = await ai.toMarkdown({
+            return attempt("convert", () =>
+              ai.toMarkdown({
                 name: input.name || "attachment",
                 blob: new Blob([new Uint8Array(input.bytes)], { type: input.contentType }),
-              });
-              if (result.format === "error") throw new Error(result.error);
-              const text = result.data.trim();
-              return text === "" ? undefined : ({ kind: "document", text } satisfies Extracted);
-            });
+              }),
+            ).pipe(
+              Effect.flatMap((result) => {
+                if (result.format === "error") {
+                  return Effect.fail(new MediaError({ operation: "convert", cause: result.error }));
+                }
+                const text = result.data.trim();
+                return Effect.succeed(
+                  text === "" ? undefined : ({ kind: "document", text } satisfies Extracted),
+                );
+              }),
+            );
           }
 
           return Effect.void.pipe(Effect.as(undefined));

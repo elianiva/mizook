@@ -20,6 +20,7 @@ import {
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
+import { Confirmation } from "./confirmation.ts";
 import { PaletteState } from "./palette-machine.ts";
 import { AppRoute } from "./route.ts";
 
@@ -38,8 +39,6 @@ const ArtifactBeingWritten = Schema.Struct({
   kind: Schema.Literals(["markdown", "html"]),
   content: Schema.String,
 });
-
-const ActionAwaitingSecondClick = Schema.Option(Schema.String);
 
 export const Model = Schema.Struct({
   route: AppRoute,
@@ -65,7 +64,7 @@ export const Model = Schema.Struct({
   editor: OpenAgentForm,
   drafts: UnsavedSettingInputs,
   composer: ArtifactBeingWritten,
-  armed: ActionAwaitingSecondClick,
+  armed: Confirmation,
   notice: Schema.Option(Schema.String),
   palette: PaletteState,
   /** Whether shortcut hints read ⌘ or Ctrl. Set once at start. */

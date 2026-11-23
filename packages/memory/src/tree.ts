@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { ZoomError } from "./errors.ts";
 import type { Line } from "./types.ts";
 
 export const span = (l: number): number => 2 ** l;
@@ -11,12 +13,14 @@ export const children = (l: number, i: number): [Line, Line] => [
   { l: l - 1, i: 2 * i + 1 },
 ];
 
-export function parseLabel(id: number, n: number): Line {
+export const parseLabel = (id: number, n: number): Effect.Effect<Line, ZoomError> => {
+  const fail = (reason: string) =>
+    Effect.fail(new ZoomError({ reason: `zoom(${id}, ${n}): ${reason}` }));
   if (!Number.isInteger(id) || !Number.isInteger(n) || id < 0 || n < 1) {
-    throw new RangeError(`zoom(${id}, ${n}): id and n must be non-negative integers, n >= 1`);
+    return fail("id and n must be non-negative integers, n >= 1");
   }
   const l = Math.log2(n);
-  if (!Number.isInteger(l)) throw new RangeError(`zoom(${id}, ${n}): n must be a power of 2`);
-  if (id % n !== 0) throw new RangeError(`zoom(${id}, ${n}): id must be a multiple of n`);
-  return { l, i: id / n };
-}
+  if (!Number.isInteger(l)) return fail("n must be a power of 2");
+  if (id % n !== 0) return fail("id must be a multiple of n");
+  return Effect.succeed({ l, i: id / n });
+};

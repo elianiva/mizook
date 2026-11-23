@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SqlDriver } from "@mizook/memory/sqlite";
-import { Effect } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { AGENT_SLUG, menuWith, RESERVED_COMMANDS } from "./command-list.ts";
 import type { AgentChange, AgentInfo, AgentSpec, Profile, WebThreadInfo } from "./host.ts";
 import type { Env } from "./env.ts";
@@ -37,16 +37,16 @@ type WebThreadRow = {
 
 const COLUMNS = "id, slug, name, role, persona, tools, created, last_active";
 
-const parseStringList = (json: string): string[] | undefined => {
-  try {
-    const parsed = json === "" ? undefined : (JSON.parse(json) as unknown);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
+const decodeJsonArray = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+);
+
+const parseStringList = (json: string): string[] | undefined =>
+  Option.getOrUndefined(
+    Option.map(decodeJsonArray(json), (parsed) =>
+      parsed.filter((item): item is string => typeof item === "string"),
+    ),
+  );
 
 const EVERY_TOOL = undefined;
 
@@ -186,11 +186,15 @@ export class Hub extends DurableObject<Env> {
   private async syncMenu(): Promise<void> {
     if (!this.env.BOT_TOKEN) return;
     const commands = menuWith(this.agents());
-    await fetch(`https://api.telegram.org/bot${this.env.BOT_TOKEN}/setMyCommands`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ commands }),
-    }).catch((error: unknown) => console.error("setMyCommands failed", error));
+    await Effect.runPromise(
+      Effect.tryPromise(() =>
+        fetch(`https://api.telegram.org/bot${this.env.BOT_TOKEN}/setMyCommands`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ commands }),
+        }),
+      ).pipe(Effect.catch((error) => Effect.logError("setMyCommands failed", error))),
+    );
   }
 
   agents(): AgentInfo[] {
@@ -332,9 +336,14 @@ export class Hub extends DurableObject<Env> {
         this.defaultId,
       );
     this.ctx.storage.sql.exec(`DELETE FROM agents WHERE id = ?`, row.id);
-    await (this.env.AgentObject.getByName(gone.doName) as unknown as { destroy(): Promise<void> })
-      .destroy()
-      .catch((error: unknown) => console.error(`destroying ${gone.slug} failed`, error));
+    const target = this.env.AgentObject.getByName(gone.doName) as unknown as {
+      destroy(): Promise<void>;
+    };
+    await Effect.runPromise(
+      Effect.tryPromise(() => target.destroy()).pipe(
+        Effect.catch((error) => Effect.logError(`destroying ${gone.slug} failed`, error)),
+      ),
+    );
     await this.syncMenu();
     return { ok: true, agent: gone };
   }

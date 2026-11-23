@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // The Mount's side of the registry: finding it, and failing loudly when it cannot.
-import { Effect, Exit, Fiber, Stream } from "effect";
+import { Effect, Exit, Fiber, Option, Stream } from "effect";
 import { liveViewStateChanges } from "foldkit/mount";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { Accordion, BindPart, Ui } from "./index.ts";
@@ -63,7 +63,7 @@ test("a lone app binds without an anchor id", async () => {
   await tick();
   expect(app!.trigger.hasAttribute(UNBOUND_ATTRIBUTE)).toBe(false);
   const registry = findRegistry(app!.trigger, "root");
-  expect(registry._tag).toBe("Some");
+  expect(Option.isSome(registry)).toBe(true);
   await Effect.runPromise(Fiber.interrupt(fiber));
 });
 
@@ -74,12 +74,15 @@ test("two apps under one parent stay apart when parts carry their anchor", async
   await tick();
   const regA = findRegistry(a!.trigger, "a");
   const regB = findRegistry(b!.trigger, "b");
-  if (regA._tag === "None" || regB._tag === "None") throw new Error("registry missing");
-  expect(regA.value).not.toBe(regB.value);
-  expect(liveInstance(regA.value, "accordion", "help")).toBeDefined();
-  expect(liveInstance(regB.value, "accordion", "help")).toBeDefined();
-  expect(liveInstance(regA.value, "accordion", "help")).not.toBe(
-    liveInstance(regB.value, "accordion", "help"),
+  const registryA = Option.getOrUndefined(regA)!;
+  const registryB = Option.getOrUndefined(regB)!;
+  expect(registryA).toBeDefined();
+  expect(registryB).toBeDefined();
+  expect(registryA).not.toBe(registryB);
+  expect(liveInstance(registryA, "accordion", "help")).toBeDefined();
+  expect(liveInstance(registryB, "accordion", "help")).toBeDefined();
+  expect(liveInstance(registryA, "accordion", "help")).not.toBe(
+    liveInstance(registryB, "accordion", "help"),
   );
   await Effect.runPromise(Fiber.interrupt(fiberA));
   await Effect.runPromise(Fiber.interrupt(fiberB));
@@ -111,7 +114,7 @@ test("the layer returns the anchor id, so a counter id is usable", async () => {
   await tick();
   for (const app of apps) expect(app.trigger.hasAttribute(UNBOUND_ATTRIBUTE)).toBe(false);
   const registries = apps.map((app) => findRegistry(app.trigger, app.anchorId));
-  expect(new Set(registries.map((r) => (r._tag === "Some" ? r.value : r))).size).toBe(4);
+  expect(new Set(registries.map(Option.getOrUndefined)).size).toBe(4);
   for (const fiber of fibers) await Effect.runPromise(Fiber.interrupt(fiber));
 });
 

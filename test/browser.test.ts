@@ -198,7 +198,9 @@ property(
   "loopback, private, link-local and internal hosts are refused on any scheme, port and path, written dotted, decimal or hex",
   Arbitrary.all({ scheme, host: privateHost, port, path }),
   ({ scheme, host, port, path }) => {
-    expect(() => publicUrl(`${scheme}://${host}${port}${path}`)).toThrow();
+    expect(Effect.runSync(Effect.flip(publicUrl(`${scheme}://${host}${port}${path}`)))._tag).toBe(
+      "BrowserError",
+    );
   },
 );
 
@@ -212,7 +214,7 @@ property(
   }),
   ({ scheme, host: [ip, ip6, domain, kind], port, path }) => {
     const input = `${scheme}://${kind === "ip" ? ip : kind === "ip6" ? ip6 : domain}${port}${path}`;
-    expect(publicUrl(input).href).toBe(new URL(input).href);
+    expect(Effect.runSync(publicUrl(input)).href).toBe(new URL(input).href);
   },
 );
 
@@ -226,8 +228,10 @@ property(
     ),
   }),
   ({ scheme, host, garbage }) => {
-    expect(() => publicUrl(`${scheme}://${host}/`)).toThrow();
-    expect(() => publicUrl(garbage)).toThrow();
+    expect(Effect.runSync(Effect.flip(publicUrl(`${scheme}://${host}/`)))._tag).toBe(
+      "BrowserError",
+    );
+    expect(Effect.runSync(Effect.flip(publicUrl(garbage)))._tag).toBe("BrowserError");
   },
 );
 

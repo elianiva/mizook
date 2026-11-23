@@ -1,3 +1,5 @@
+import { Effect, Option, Schema } from "effect";
+
 /** Cents, unless the amount is below a cent and would read as zero. */
 export const usd = (amount: number): string =>
   `$${amount.toFixed(amount > 0 && amount < 0.01 ? 4 : 2)}`;
@@ -86,9 +88,16 @@ const unrecognizedSpecShownAsIs = (json: string): SpecInfo => ({
   detail: "",
 });
 
-export const describeSpec = (json: string): SpecInfo => {
-  try {
-    const spec = JSON.parse(json) as Record<string, unknown>;
+const SpecJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+
+export const describeSpec = (json: string): SpecInfo =>
+  Option.match(Schema.decodeOption(SpecJson)(json), {
+    onNone: () => unrecognizedSpecShownAsIs(json),
+    onSome: (spec) => describeParsedSpec(json, spec),
+  });
+
+const describeParsedSpec = (json: string, spec: Readonly<Record<string, unknown>>): SpecInfo => {
+  {
     if (spec["kind"] === "cron" && typeof spec["expr"] === "string") {
       const expr = spec["expr"];
       const timezone =
@@ -122,15 +131,13 @@ export const describeSpec = (json: string): SpecInfo => {
         detail: spec["url"],
       };
     }
-  } catch {
-    return unrecognizedSpecShownAsIs(json);
   }
   return unrecognizedSpecShownAsIs(json);
 };
 
-export const inZone = (epochMs: number, ianaTimezone: string): string => {
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
+export const inZone = (epochMs: number, ianaTimezone: string): string =>
+  Effect.try(() =>
+    new Intl.DateTimeFormat("en-GB", {
       timeZone: ianaTimezone,
       weekday: "short",
       day: "numeric",
@@ -140,11 +147,11 @@ export const inZone = (epochMs: number, ianaTimezone: string): string => {
       hour12: false,
     })
       .format(new Date(epochMs))
-      .replace(",", "");
-  } catch {
-    return epochDateTime(epochMs);
-  }
-};
+      .replace(",", ""),
+  ).pipe(
+    Effect.orElseSucceed(() => epochDateTime(epochMs)),
+    Effect.runSync,
+  );
 
 const localParts = (epochMs: number, timeZone: string | undefined) =>
   Object.fromEntries(

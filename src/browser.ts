@@ -69,29 +69,30 @@ const isPrivateAddress = (host: string) => {
   return octets !== undefined && isPrivateIpv4(octets);
 };
 
-export const publicUrl = (input: string): URL => {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new BrowserError({ url: input, reason: "not a URL" });
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new BrowserError({ url: input, reason: "only http and https" });
-  }
-  const host = url.hostname
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.+$/, "");
-  const isPrivateOrLocalHost =
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".internal") ||
-    host.endsWith(".local") ||
-    isPrivateAddress(host);
-  if (isPrivateOrLocalHost) throw new BrowserError({ url: input, reason: "not a public host" });
-  return url;
-};
+export const publicUrl = (input: string): Effect.Effect<URL, BrowserError> =>
+  Effect.gen(function* () {
+    const url = yield* Effect.try({
+      try: () => new URL(input),
+      catch: () => new BrowserError({ url: input, reason: "not a URL" }),
+    });
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return yield* new BrowserError({ url: input, reason: "only http and https" });
+    }
+    const host = url.hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.+$/, "");
+    const isPrivateOrLocalHost =
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host.endsWith(".internal") ||
+      host.endsWith(".local") ||
+      isPrivateAddress(host);
+    if (isPrivateOrLocalHost) {
+      return yield* new BrowserError({ url: input, reason: "not a public host" });
+    }
+    return url;
+  });
 
 const decodeBase64 = (text: string): Uint8Array => {
   const binary = atob(text);
@@ -121,13 +122,7 @@ export class Browser extends Context.Service<
                 reason: "Browser Rendering is not configured",
               });
             }
-            const url = yield* Effect.try({
-              try: () => publicUrl(input),
-              catch: (cause) =>
-                cause instanceof BrowserError
-                  ? cause
-                  : new BrowserError({ url: input, reason: String(cause) }),
-            });
+            const url = yield* publicUrl(input);
             const attempt = <A>(operation: string, f: () => Promise<A>) =>
               Effect.tryPromise({
                 try: f,

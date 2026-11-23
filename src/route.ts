@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 
 const Message = Schema.Struct({
   message_id: Schema.optionalKey(Schema.Finite),
@@ -32,16 +32,17 @@ export interface Routing {
 
 const CHAT_SDK_ACTION_PREFIX = "chat:";
 
+const decodeCallbackAction = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ a: Schema.optional(Schema.Unknown) })),
+);
+
 const agentOfCallback = (data: string | undefined): string | undefined => {
   if (data === undefined) return undefined;
   let action = data;
   if (data.startsWith(CHAT_SDK_ACTION_PREFIX)) {
-    try {
-      const decoded = JSON.parse(data.slice(CHAT_SDK_ACTION_PREFIX.length)) as { a?: unknown };
-      if (typeof decoded.a === "string") action = decoded.a;
-    } catch {
-      return undefined;
-    }
+    const decoded = decodeCallbackAction(data.slice(CHAT_SDK_ACTION_PREFIX.length));
+    if (Option.isNone(decoded)) return undefined;
+    if (typeof decoded.value.a === "string") action = decoded.value.a;
   }
   return /^(?:approve|always|deny):([a-z0-9]+):\d+$/.exec(action)?.[1];
 };
