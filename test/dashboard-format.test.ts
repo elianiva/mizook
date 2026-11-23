@@ -1,6 +1,6 @@
 import { Arbitrary, Schema } from "effect";
-import { expect } from "vite-plus/test";
-import { ago, describeSpec, until } from "../apps/dashboard/src/format.ts";
+import { expect, test } from "vite-plus/test";
+import { ago, describeSpec, localDateTime, until } from "../apps/dashboard/src/format.ts";
 import { property } from "./property.ts";
 
 const int = (minimum: number, maximum: number) =>
@@ -211,3 +211,12 @@ property(
     });
   },
 );
+
+test("local dates shift by the zone's offset and roll over at its midnight", () => {
+  const lateUtc = Date.UTC(2026, 10, 23, 20, 5);
+  expect(localDateTime(lateUtc, "UTC")).toBe("2026-11-23 20:05");
+  expect(localDateTime(lateUtc, "Asia/Jakarta")).toBe("2026-11-24 03:05");
+  expect(localDateTime(lateUtc, "America/Los_Angeles")).toBe("2026-11-23 12:05");
+  expect(localDateTime(Date.UTC(2026, 10, 23, 16, 0), "Asia/Jakarta")).toBe("2026-11-23 23:00");
+  expect(localDateTime(Date.UTC(2026, 10, 23, 17, 0), "Asia/Jakarta")).toBe("2026-11-24 00:00");
+});

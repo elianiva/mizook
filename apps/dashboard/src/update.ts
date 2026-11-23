@@ -1,5 +1,6 @@
 import { Array, Duration, Effect, Option, Record, Schema, Stream, pipe } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
+import * as Dom from "foldkit/dom";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
 import { type Url, toString as urlToString } from "foldkit/url";
@@ -35,6 +36,7 @@ import {
 } from "./api.ts";
 import { Message } from "./message.ts";
 import { Model } from "./model.ts";
+import { GO_KEYS, matches, sections } from "./palette.ts";
 import {
   AppRoute,
   daysOf,
@@ -46,6 +48,27 @@ import {
 } from "./route.ts";
 
 const OVERVIEW_REFRESH = Duration.seconds(10);
+
+const CLOSED_PALETTE = { open: false, query: "", index: 0 };
+
+/** Focuses an element once the next frame has drawn it. */
+const FocusAfterPaint = Command.define("FocusAfterPaint", {
+  args: { selector: Schema.String },
+  messages: [Message.CompletedFocus],
+  execute: ({ selector }) =>
+    Effect.callback<void>((resume) => {
+      requestAnimationFrame(() => resume(Effect.void));
+    }).pipe(
+      Effect.andThen(Dom.focus(selector)),
+      Effect.as(Message.CompletedFocus()),
+      Effect.orElseSucceed(() => Message.CompletedFocus()),
+    ),
+});
+
+const goTo = (model: Model, href: string): UpdateReturn => ({
+  model: { ...model, palette: CLOSED_PALETTE },
+  commands: [NavigateInternal({ url: href })],
+});
 
 export const NavigateInternal = Command.define("NavigateInternal", {
   args: { url: Schema.String },
@@ -351,6 +374,7 @@ const draftsOf = (route: AppRoute) =>
     Usage: () => ({ draftKind: "", draftSearch: "" }),
     Schedules: () => ({ draftKind: "", draftSearch: "" }),
     Agent: () => ({ draftKind: "", draftSearch: "" }),
+    Profile: () => ({ draftKind: "", draftSearch: "" }),
     Runs: () => ({ draftKind: "", draftSearch: "" }),
     Settings: () => ({ draftKind: "", draftSearch: "" }),
     Audit: () => ({ draftKind: "", draftSearch: "" }),
@@ -398,9 +422,9 @@ const loadRoute: Step = (model) =>
         Memory: () => memory.revalidateOrLoad(model, { channel }),
         Usage: ({ days }) => usage.revalidateOrLoad(model, { channel, days: daysOf(days) }),
         Schedules: () => schedules.revalidateOrLoad(model, { channel }),
+        Profile: () => profile.revalidateOrLoad(model),
         Agent: () =>
           Update.combine(model, [
-            (stepModel) => profile.revalidateOrLoad(stepModel),
             (stepModel) => skills.revalidateOrLoad(stepModel, { channel }),
             (stepModel) => intents.revalidateOrLoad(stepModel, { channel }),
             (stepModel) => policies.revalidateOrLoad(stepModel, { channel }),
@@ -455,6 +479,8 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     composer: { name: "", kind: "markdown", content: "" },
     armed: Option.none(),
     notice: Option.none(),
+    palette: CLOSED_PALETTE,
+    apple: typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform),
   });
   return Update.combine(model, [loadChannels, loadRoute]);
 };
@@ -676,6 +702,34 @@ export const update = (model: Model, message: Message) =>
     FailedAction: ({ reason }) =>
       loadRoute(modifyFields(model, { notice: () => Option.some(reason) })),
 
+    PressedPalette: () =>
+      model.palette.open
+        ? { model: { ...model, palette: CLOSED_PALETTE } }
+        : {
+            model: { ...model, palette: { ...CLOSED_PALETTE, open: true } },
+            commands: [FocusAfterPaint({ selector: "#palette-input" })],
+          },
+    ClosedPalette: () => ({ model: { ...model, palette: CLOSED_PALETTE } }),
+    TypedPaletteQuery: ({ value }) => ({
+      model: { ...model, palette: { open: true, query: value, index: 0 } },
+    }),
+    MovedPaletteSelection: ({ by }) => {
+      const count = matches(model, currentChannel(model)).length;
+      if (count === 0) return { model };
+      const index = (((model.palette.index + by) % count) + count) % count;
+      return { model: { ...model, palette: { ...model.palette, index } } };
+    },
+    ChosePalette: ({ index }) => {
+      const chosen = matches(model, currentChannel(model))[index];
+      return chosen === undefined ? { model } : goTo(model, chosen.href);
+    },
+    PressedGo: ({ id }) => {
+      const section = sections(model).find((entry) => entry.id === id);
+      return section === undefined ? { model } : goTo(model, section.href);
+    },
+    PressedSearch: () => ({ model, commands: [FocusAfterPaint({ selector: "#log-search" })] }),
+    CompletedFocus: () => ({ model }),
+
     TickedOverviewRefresh: () =>
       Option.match(currentChannel(model), {
         onNone: () => ({ model }),
@@ -689,6 +743,33 @@ export const update = (model: Model, message: Message) =>
   });
 
 export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
+  keys: entryOf(
+    { isPaletteOpen: Schema.Boolean, isOnLog: Schema.Boolean },
+    {
+      modelToDependencies: (model) => ({
+        isPaletteOpen: model.palette.open,
+        isOnLog: model.route._tag === "Log",
+      }),
+      dependenciesToStream: ({ isPaletteOpen, isOnLog }) =>
+        Dom.streamFromKeyBindings<Message>({
+          bindings: [
+            { keys: "Mod+K", whileTyping: "Allow", mapEvent: () => Message.PressedPalette() },
+            {
+              keys: "Escape",
+              isEnabled: isPaletteOpen,
+              whileTyping: "Allow",
+              mapEvent: () => Message.ClosedPalette(),
+            },
+            { keys: "/", isEnabled: isOnLog, mapEvent: () => Message.PressedSearch() },
+            ...Object.entries(GO_KEYS).map(([id, key]) => ({
+              keys: ["G", key.toUpperCase()] as const,
+              isEnabled: !isPaletteOpen,
+              mapEvent: () => Message.PressedGo({ id }),
+            })),
+          ],
+        }),
+    },
+  ),
   refreshOverview: entryOf(
     { isRefreshActive: Schema.Boolean },
     {

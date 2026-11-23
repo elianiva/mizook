@@ -76,6 +76,14 @@ export const Message = defineMessageUnion({
   SucceededSetting: { key: SettingKey, said: Schema.String },
   FailedAction: { reason: Schema.String },
   TickedOverviewRefresh: {},
+  PressedPalette: {},
+  ClosedPalette: {},
+  TypedPaletteQuery: { value: Schema.String },
+  MovedPaletteSelection: { by: Schema.Finite },
+  ChosePalette: { index: Schema.Finite },
+  PressedGo: { id: Schema.String },
+  PressedSearch: {},
+  CompletedFocus: {},
 });
 
 export type Message = typeof Message.Type;

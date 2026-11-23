@@ -66,6 +66,9 @@ export const Model = Schema.Struct({
   composer: ArtifactBeingWritten,
   armed: ActionAwaitingSecondClick,
   notice: Schema.Option(Schema.String),
+  palette: Schema.Struct({ open: Schema.Boolean, query: Schema.String, index: Schema.Finite }),
+  /** Whether shortcut hints read ⌘ or Ctrl. Set once at start. */
+  apple: Schema.Boolean,
 });
 
 export type Model = typeof Model.Type;

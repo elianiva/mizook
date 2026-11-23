@@ -36,10 +36,10 @@ import {
 import {
   ago,
   count,
-  dateTime,
   describeSpec,
   epochDateTime,
   inZone,
+  localDateTime,
   percent,
   until,
   usd,
@@ -49,24 +49,22 @@ import type { Model } from "./model.ts";
 import {
   AppRoute,
   USAGE_DAYS,
-  agentRouter,
   daysOf,
   entryRouter,
   logRouter,
-  memoryRouter,
   artifactsRouter,
-  auditRouter,
   overviewRouter,
-  runsRouter,
   settingsRouter,
   routeChannel,
   routeHref,
-  schedulesRouter,
   textOf,
   usageRouter,
 } from "./route.ts";
 import { currentChannel } from "./update.ts";
 import { channelsQuery } from "./api.ts";
+import type { GlyphName } from "@mizook/design/icons";
+import { icon } from "./icon.ts";
+import { type Destination, matches, sections } from "./palette.ts";
 
 const channelsRead = channelsQuery.read;
 import { ui } from "./ui.ts";
@@ -113,14 +111,12 @@ const sectionView = (title: string, body: Html, h: H): Html =>
 const titleView = (title: string, actions: ReadonlyArray<Html>, h: H): Html =>
   h.div([h.Class(ui.titleRow)], [h.h1([h.Class(ui.title)], [title]), ...actions]);
 
-const badgeColor = (kind: string): string =>
-  kind === "user"
-    ? "var(--colors-accent)"
-    : kind === "agent"
-      ? "var(--colors-ok)"
-      : kind === "tool"
-        ? "var(--colors-warn)"
-        : "var(--colors-fg-muted)";
+const ACTION_GLYPH: Record<ActionKind, GlyphName> = {
+  approve: "check",
+  deny: "close",
+  cancel: "trash",
+  stop: "stop",
+};
 
 const actionButton = (model: Model, action: ActionKind, id: number, label: string, h: H): Html => {
   const armed = Option.contains(model.armed, `${action}:${id}`);
@@ -130,12 +126,31 @@ const actionButton = (model: Model, action: ActionKind, id: number, label: strin
       h.Class(armed ? ui.buttonSmallArmed : ui.buttonSmall),
       h.OnClick(Message.ClickedAction({ action, id })),
     ],
-    [armed ? `Confirm ${label.toLowerCase()}` : label],
+    [icon(h, ACTION_GLYPH[action], 14), armed ? `Sure? ${label}` : label],
   );
 };
 
+const KIND_GLYPH: Record<string, GlyphName> = {
+  user: "user",
+  agent: "bot",
+  tool: "zap",
+  echo: "arrowLeft",
+  note: "book",
+};
+
+/** Kinds differ by glyph, so color stays for status. Only yours is filled. */
 const kindBadge = (kind: string, h: H): Html =>
-  h.span([h.Class(ui.badge), h.Style({ color: badgeColor(kind) })], [kind]);
+  h.span(
+    [h.Class(kind === "user" ? ui.badgeUser : ui.badge), h.Title(kind)],
+    [icon(h, KIND_GLYPH[kind] ?? "log", 13), kind],
+  );
+
+/** A time in the reader's zone; the UTC original is in the tooltip. */
+const when = (epochMs: number, h: H): Html =>
+  h.time(
+    [h.Attribute("datetime", new Date(epochMs).toISOString()), h.Title(epochDateTime(epochMs))],
+    [localDateTime(epochMs)],
+  );
 
 const th = (label: string, h: H, numeric = false): Html =>
   h.th([h.Class(numeric ? ui.thNum : ui.th), h.Scope("col")], [label]);
@@ -160,7 +175,7 @@ const recentRow = (m: LogMessage, channel: Option.Option<string>, h: H): Html =>
       ),
       h.td([h.Class(ui.td)], [kindBadge(m.kind, h)]),
       h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [m.cut ? `${m.text} …` : m.text])]),
-      h.td([h.Class(ui.tdFitMono)], [dateTime(m.date)]),
+      h.td([h.Class(ui.tdFitMono)], [when(Date.parse(m.date), h)]),
     ],
   );
 
@@ -169,12 +184,12 @@ const channelsTable = (model: Model, h: H): Html =>
     const current = Option.getOrElse(currentChannel(model), () => "");
     return tableView(
       [
-        th("Channel", h),
+        th("Agent", h),
         th("Active", h),
         th("Messages", h, true),
         th("24 h", h, true),
         th("7 d", h, true),
-        th("Waiting", h, true),
+        th("Needs you", h, true),
       ],
       Array.map(rows, (row) =>
         h.keyed("tr")(
@@ -209,7 +224,14 @@ const channelsTable = (model: Model, h: H): Html =>
               [
                 row.pending + row.approvals === 0
                   ? "–"
-                  : `${row.pending} turn${row.pending === 1 ? "" : "s"}, ${row.approvals} ask${row.approvals === 1 ? "" : "s"}`,
+                  : [
+                      row.pending > 0 ? `${row.pending} running` : "",
+                      row.approvals > 0
+                        ? `${row.approvals} approval${row.approvals === 1 ? "" : "s"}`
+                        : "",
+                    ]
+                      .filter((part) => part !== "")
+                      .join(" · "),
               ],
             ),
           ],
@@ -270,7 +292,7 @@ const heroView = (data: OverviewData, budget: number, used: number, h: H): Html 
                         color: delta > 0 ? "var(--colors-warn)" : "var(--colors-ok)",
                       }),
                     ],
-                    [`${delta > 0 ? "▲" : "▼"} ${Math.abs(delta)}% vs yesterday`],
+                    [`${delta > 0 ? "↑" : "↓"} ${Math.abs(delta)}% vs yesterday`],
                   ),
             ],
           ),
@@ -361,7 +383,7 @@ const heroView = (data: OverviewData, budget: number, used: number, h: H): Html 
           h.div(
             [h.Class(ui.miniCard)],
             [
-              h.span([h.Class(ui.statLabel)], ["Schedules"]),
+              h.span([h.Class(ui.statLabel)], ["Automations"]),
               h.span([h.Class(ui.miniValue)], [count(data.schedules)]),
               h.span(
                 [h.Class(`${ui.muted} ${ui.mono}`)],
@@ -375,6 +397,64 @@ const heroView = (data: OverviewData, budget: number, used: number, h: H): Html 
   );
 };
 
+/** What the operator must act on goes first: approvals and running turns. */
+const needsYouView = (model: Model, data: OverviewData, h: H): Html => {
+  const items = [
+    ...Array.map(data.approvals, (approval) =>
+      h.keyed("div")(
+        `approval-${approval.id}`,
+        [h.Class(ui.needItem)],
+        [
+          h.span([h.Class(ui.needIcon)], [icon(h, "shieldCheck", 22)]),
+          h.div(
+            [h.Class(ui.needText)],
+            [
+              h.span(
+                [h.Class(ui.needMeta)],
+                [`#${approval.id}${approval.posted ? "" : " · not posted"}`],
+              ),
+              h.span([], [approval.summary]),
+            ],
+          ),
+          h.div(
+            [h.Class(ui.actions)],
+            [
+              actionButton(model, "approve", approval.id, "Approve", h),
+              actionButton(model, "deny", approval.id, "Deny", h),
+            ],
+          ),
+        ],
+      ),
+    ),
+    ...Array.map(data.turns, (turn) =>
+      h.keyed("div")(
+        `turn-${turn.chatId}`,
+        [h.Class(ui.needItem)],
+        [
+          h.span([h.Class(ui.needIcon)], [icon(h, "pulse", 22)]),
+          h.div(
+            [h.Class(ui.needText)],
+            [h.span([h.Class(ui.needMeta)], [turn.chatId]), h.span([], [turn.text])],
+          ),
+          h.div([h.Class(ui.actions)], [actionButton(model, "stop", 0, "Stop", h)]),
+        ],
+      ),
+    ),
+  ];
+  return items.length === 0
+    ? h.div([h.Class(ui.needQuiet)], [icon(h, "check", 18), "Nothing needs you"])
+    : h.section(
+        [h.Class(ui.needs), h.AriaLabel("Needs you")],
+        [
+          h.h2(
+            [h.Class(ui.needsTitle)],
+            [h.span([h.Class(ui.needsCount)], [String(items.length)]), "Needs you"],
+          ),
+          ...items,
+        ],
+      );
+};
+
 const overviewView = (model: Model, channel: string, h: H): Html =>
   remote(overviewQuery.read(model.overview, { channel }), h, skeletonView(h, 3), (data) => {
     const budget = Number(data.settings["budget"] ?? 0);
@@ -384,65 +464,9 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
       [h.Class(ui.stack)],
       [
         budget > 0 ? budgetAlert(used, maybeChannel, h) : h.empty,
+        needsYouView(model, data, h),
         heroView(data, budget, used, h),
         sectionView("Agents", channelsTable(model, h), h),
-        h.div(
-          [h.Class(ui.columns)],
-          [
-            sectionView(
-              "Running now",
-              Array.match(data.turns, {
-                onEmpty: () => emptyView("Nothing is running.", h),
-                onNonEmpty: (turns) =>
-                  h.div(
-                    [h.Class(ui.list)],
-                    Array.map(turns, (turn) =>
-                      h.keyed("div")(
-                        turn.chatId,
-                        [h.Class(ui.listItem)],
-                        [
-                          h.span([h.Class(ui.text)], [turn.text]),
-                          h.div([h.Class(ui.actions)], [actionButton(model, "stop", 0, "Stop", h)]),
-                        ],
-                      ),
-                    ),
-                  ),
-              }),
-              h,
-            ),
-            sectionView(
-              "Approvals",
-              Array.match(data.approvals, {
-                onEmpty: () => emptyView("Nothing is waiting.", h),
-                onNonEmpty: (approvals) =>
-                  h.div(
-                    [h.Class(ui.list)],
-                    Array.map(approvals, (approval) =>
-                      h.keyed("div")(
-                        String(approval.id),
-                        [h.Class(ui.listItem)],
-                        [
-                          h.span(
-                            [h.Class(`${ui.mono} ${ui.muted}`)],
-                            [`#${approval.id}${approval.posted ? "" : " · not posted"}`],
-                          ),
-                          h.span([h.Class(ui.text)], [approval.summary]),
-                          h.div(
-                            [h.Class(ui.actions)],
-                            [
-                              actionButton(model, "approve", approval.id, "Approve", h),
-                              actionButton(model, "deny", approval.id, "Deny", h),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              }),
-              h,
-            ),
-          ],
-        ),
         sectionView(
           "Recent messages",
           remote(recentQuery.read(model.recent, { channel }), h, skeletonView(h, 1), (rows) =>
@@ -450,7 +474,7 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
               onEmpty: () => emptyView("No messages yet.", h),
               onNonEmpty: (list) =>
                 tableView(
-                  [th("ID", h), th("Kind", h), th("Message", h), th("Date (UTC)", h)],
+                  [th("ID", h), th("Kind", h), th("Message", h), th("Date", h)],
                   Array.map(list, (row) => recentRow(row, maybeChannel, h)),
                   h,
                 ),
@@ -464,34 +488,55 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
 
 const KINDS = ["user", "agent", "tool", "echo", "note"];
 
-const filterView = (model: Model, h: H): Html =>
-  h.form(
-    [h.Class(ui.toolbar), h.OnSubmit(Message.SubmittedFilter())],
+/** Kind is a row of links, search runs on Enter: no Filter button to press. */
+const filterView = (model: Model, h: H): Html => {
+  const channel = routeChannel(model.route);
+  const kindLink = (kind: string, label: Html | string) =>
+    h.a(
+      [
+        h.Class(ui.segment),
+        h.AriaCurrent(model.draftKind === kind ? "true" : "false"),
+        h.Href(
+          logRouter({
+            channel,
+            kind: Option.liftPredicate(kind, (text) => text !== ""),
+            q: Option.liftPredicate(model.draftSearch.trim(), (text) => text !== ""),
+            before: Option.none(),
+          }),
+        ),
+      ],
+      [label],
+    );
+  return h.div(
+    [h.Class(ui.toolbar)],
     [
-      h.select(
+      h.nav(
+        [h.Class(ui.segments), h.AriaLabel("Kind")],
         [
-          h.Class(ui.select),
-          h.AriaLabel("Kind"),
-          h.OnChange((value) => Message.UpdatedKindDraft({ value })),
-        ],
-        [
-          h.option([h.Value(""), h.Selected(model.draftKind === "")], ["All kinds"]),
+          kindLink("", "All"),
           ...Array.map(KINDS, (kind) =>
-            h.option([h.Value(kind), h.Selected(model.draftKind === kind)], [kind]),
+            h.keyed("span")(kind, [], [kindLink(kind, kindBadge(kind, h))]),
           ),
         ],
       ),
-      h.input([
-        h.Class(ui.input),
-        h.Type("search"),
-        h.AriaLabel("Search"),
-        h.Placeholder("Search messages"),
-        h.Value(model.draftSearch),
-        h.OnInput((value) => Message.UpdatedSearchDraft({ value })),
-      ]),
-      h.button([h.Type("submit"), h.Class(ui.buttonPrimary)], ["Filter"]),
+      h.form(
+        [h.Class(ui.searchBox), h.Role("search"), h.OnSubmit(Message.SubmittedFilter())],
+        [
+          icon(h, "search", 16),
+          h.input([
+            h.Class(ui.searchInput),
+            h.Id("log-search"),
+            h.Type("search"),
+            h.AriaLabel("Search"),
+            h.Placeholder("Search  /"),
+            h.Value(model.draftSearch),
+            h.OnInput((value) => Message.UpdatedSearchDraft({ value })),
+          ]),
+        ],
+      ),
     ],
   );
+};
 
 const logRowView = (m: LogMessage, channel: Option.Option<string>, h: H): Html =>
   h.keyed("tr")(
@@ -504,7 +549,7 @@ const logRowView = (m: LogMessage, channel: Option.Option<string>, h: H): Html =
       ),
       h.td([h.Class(ui.td)], [kindBadge(m.kind, h)]),
       h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [m.cut ? `${m.text} …` : m.text])]),
-      h.td([h.Class(ui.tdFitMono)], [dateTime(m.date)]),
+      h.td([h.Class(ui.tdFitMono)], [when(Date.parse(m.date), h)]),
     ],
   );
 
@@ -531,7 +576,7 @@ const logView = (model: Model, channel: string, h: H): Html => {
                 [h.Class(ui.fill)],
                 [
                   tableView(
-                    [th("ID", h), th("Kind", h), th("Message", h), th("Date (UTC)", h)],
+                    [th("ID", h), th("Kind", h), th("Message", h), th("Date", h)],
                     Array.map(rows, (row) => logRowView(row, maybeChannel, h)),
                     h,
                   ),
@@ -596,7 +641,7 @@ const entryView = (model: Model, channel: string, entryId: number, h: H): Html =
               [h.Class(ui.metaRow)],
               [
                 kindBadge(data.kind, h),
-                h.span([h.Class(ui.mono)], [dateTime(data.date)]),
+                h.span([h.Class(ui.mono)], [when(Date.parse(data.date), h)]),
                 h.span([h.Class(ui.mono)], [`${count(data.size)} bytes`]),
               ],
             ),
@@ -1489,7 +1534,7 @@ const intentsBody = (model: Model, channel: string, h: H): Html => {
                     h.td([h.Class(ui.tdMono)], [intent.triggers.join(", ")]),
                     h.td([h.Class(ui.td)], [h.div([h.Class(ui.clamp)], [intent.description])]),
                     h.td([h.Class(ui.tdNum)], [`${intent.fireCount}/${intent.maxFires}`]),
-                    h.td([h.Class(ui.tdFitMono)], [epochDateTime(intent.expires)]),
+                    h.td([h.Class(ui.tdFitMono)], [when(intent.expires, h)]),
                     h.td([h.Class(ui.td)], [agentEdit("intents", String(intent.id), h)]),
                   ],
                 ),
@@ -1557,7 +1602,6 @@ const agentView = (model: Model, channel: string, h: H): Html =>
   h.div(
     [h.Class(ui.stack)],
     [
-      sectionView("Profile", profileBody(model, h), h),
       sectionView("Skills", skillsBody(model, channel, h), h),
       sectionView("Standing intents", intentsBody(model, channel, h), h),
       sectionView("Policies", policiesBody(model, channel, h), h),
@@ -1609,7 +1653,7 @@ const runsView = (model: Model, channel: string, h: H): Html =>
                     ),
                   ],
                 ),
-                h.td([h.Class(ui.tdFitMono)], [epochDateTime(run.started)]),
+                h.td([h.Class(ui.tdFitMono)], [when(run.started, h)]),
                 h.td([h.Class(ui.tdFit)], [duration(run)]),
                 h.td(
                   [h.Class(ui.td)],
@@ -1958,7 +2002,7 @@ const auditView = (model: Model, channel: string, h: H): Html =>
               `${row.at}:${row.action}:${row.target}`,
               [h.Class(ui.row)],
               [
-                h.td([h.Class(ui.tdFitMono)], [epochDateTime(row.at)]),
+                h.td([h.Class(ui.tdFitMono)], [when(row.at, h)]),
                 h.td([h.Class(ui.td)], [row.who]),
                 h.td([h.Class(ui.tdMono)], [row.action]),
                 h.td([h.Class(ui.tdMono)], [row.target === 0 ? "–" : `#${row.target}`]),
@@ -1991,7 +2035,7 @@ const channelSelect = (model: Model, h: H): Html =>
       return h.select(
         [
           h.Class(ui.select),
-          h.AriaLabel("Channel"),
+          h.AriaLabel("Agent"),
           h.OnChange((channel) => Message.SelectedChannel({ channel })),
         ],
         Array.map(channels, (channel) =>
@@ -2004,37 +2048,195 @@ const channelSelect = (model: Model, h: H): Html =>
     },
   });
 
-const tabsView = (model: Model, h: H): Html => {
-  const channel = routeChannel(model.route);
-  const tag = model.route._tag;
-  const tabs: ReadonlyArray<readonly [string, string, boolean]> = [
-    ["Overview", overviewRouter({ channel }), tag === "Overview"],
+/** Destinations grouped in order, keeping the first appearance of each group. */
+const groupsOf = (items: ReadonlyArray<Destination>) =>
+  items.reduce<Array<readonly [string, Array<Destination>]>>((groups, item) => {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last[0] === item.group) last[1].push(item);
+    else groups.push([item.group, [item]]);
+    return groups;
+  }, []);
+
+const modKey = (model: Model): string => (model.apple ? "⌘" : "Ctrl ");
+
+const jumpButton = (model: Model, h: H): Html =>
+  h.button(
     [
-      "Log",
-      logRouter({
-        channel,
-        kind: Option.none(),
-        q: Option.none(),
-        before: Option.none(),
-      }),
-      tag === "Log" || tag === "Entry",
+      h.Type("button"),
+      h.Class(ui.jump),
+      h.AriaKeyshortcuts(model.apple ? "Meta+K" : "Control+K"),
+      h.OnClick(Message.PressedPalette()),
     ],
-    ["Memory", memoryRouter({ channel }), tag === "Memory"],
-    ["Usage", usageRouter({ channel, days: Option.none() }), tag === "Usage"],
-    ["Schedules", schedulesRouter({ channel }), tag === "Schedules"],
-    ["Agent", agentRouter({ channel }), tag === "Agent"],
-    ["Runs", runsRouter({ channel }), tag === "Runs"],
-    ["Settings", settingsRouter({ channel }), tag === "Settings"],
-    ["Artifacts", artifactsRouter({ channel, name: Option.none() }), tag === "Artifacts"],
-    ["Audit", auditRouter({ channel }), tag === "Audit"],
-  ];
-  return h.nav(
-    [h.Class(ui.tabs), h.AriaLabel("Sections")],
-    Array.map(tabs, ([label, href, active]) =>
-      h.a([h.Class(ui.tab), h.Href(href), h.AriaCurrent(active ? "page" : "false")], [label]),
-    ),
+    [
+      icon(h, "search", 14),
+      "Jump to",
+      h.span([h.Class(ui.spacer)]),
+      h.kbd([h.Class(ui.railKey)], [`${modKey(model)}K`]),
+    ],
+  );
+
+/** The ⌘K menu: every section, then every agent, filtered as you type. */
+const paletteView = (model: Model, h: H): Html => {
+  if (!model.palette.open) return h.empty;
+  const found = matches(model, currentChannel(model));
+  const index = Math.min(model.palette.index, Math.max(found.length - 1, 0));
+  const optionId = (at: number) => `palette-option-${at}`;
+  let at = -1;
+  return h.div(
+    [h.Class(ui.paletteLayer)],
+    [
+      h.div([h.Class(ui.paletteBackdrop), h.OnClick(Message.ClosedPalette())], []),
+      h.div(
+        [h.Class(ui.palette), h.Role("dialog"), h.AriaModal(true), h.AriaLabel("Jump to")],
+        [
+          h.div(
+            [h.Class(ui.paletteSearch)],
+            [
+              icon(h, "search", 18),
+              h.input([
+                h.Id("palette-input"),
+                h.Class(ui.paletteInput),
+                h.Type("text"),
+                h.Role("combobox"),
+                h.AriaExpanded(true),
+                h.AriaControls("palette-list"),
+                h.AriaAutocomplete("list"),
+                ...(found.length === 0 ? [] : [h.AriaActiveDescendant(optionId(index))]),
+                h.Placeholder("Jump to a section or agent"),
+                h.Autocomplete("off"),
+                h.Value(model.palette.query),
+                h.OnInput((value) => Message.TypedPaletteQuery({ value })),
+                h.OnKeyDownPreventDefault((key) =>
+                  key === "ArrowDown"
+                    ? Option.some(Message.MovedPaletteSelection({ by: 1 }))
+                    : key === "ArrowUp"
+                      ? Option.some(Message.MovedPaletteSelection({ by: -1 }))
+                      : key === "Enter"
+                        ? Option.some(Message.ChosePalette({ index }))
+                        : Option.none(),
+                ),
+              ]),
+              h.kbd([h.Class(ui.railKey)], ["Esc"]),
+            ],
+          ),
+          found.length === 0
+            ? h.div([h.Class(ui.paletteEmpty)], ["No match"])
+            : h.div(
+                [h.Id("palette-list"), h.Class(ui.paletteList), h.Role("listbox")],
+                Array.map(groupsOf(found), ([group, items]) =>
+                  h.keyed("div")(
+                    group,
+                    [h.Role("group"), h.AriaLabel(group)],
+                    [
+                      h.div([h.Class(ui.railLabel), h.AriaHidden(true)], [group]),
+                      ...items.map((item) => {
+                        at += 1;
+                        const mine = at;
+                        return h.keyed("div")(
+                          item.id,
+                          [
+                            h.Id(optionId(mine)),
+                            h.Class(ui.paletteItem),
+                            h.Role("option"),
+                            h.AriaSelected(mine === index),
+                            h.OnClick(Message.ChosePalette({ index: mine })),
+                          ],
+                          [
+                            icon(h, item.glyph, 16),
+                            h.span([h.Class(ui.spacer)], [item.label]),
+                            ...(item.active ? [h.span([h.Class(ui.paletteHere)], ["Here"])] : []),
+                            ...(item.key === undefined
+                              ? []
+                              : [h.kbd([h.Class(ui.railKey)], [`G ${item.key.toUpperCase()}`])]),
+                          ],
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+        ],
+      ),
+    ],
   );
 };
+
+const railView = (model: Model, h: H): Html =>
+  h.nav(
+    [h.Class(ui.rail), h.AriaLabel("Sections")],
+    [
+      h.div(
+        [h.Class(ui.railTop)],
+        [
+          h.a([h.Class(ui.brand), h.Href("/c")], [h.span([h.Class(ui.mark)]), "Mizook"]),
+          channelSelect(model, h),
+          jumpButton(model, h),
+        ],
+      ),
+      ...Array.map(groupsOf(sections(model)), ([group, items]) =>
+        h.keyed("div")(
+          group,
+          [h.Class(ui.railGroup)],
+          [
+            h.div([h.Class(ui.railLabel)], [group]),
+            ...items.map((item) =>
+              h.keyed("a")(
+                item.id,
+                [
+                  h.Class(ui.railItem),
+                  h.Href(item.href),
+                  h.AriaCurrent(item.active ? "page" : "false"),
+                  ...(item.key === undefined ? [] : [h.AriaKeyshortcuts(`g ${item.key}`)]),
+                ],
+                [
+                  icon(h, item.glyph, 16),
+                  item.label,
+                  ...(item.key === undefined
+                    ? []
+                    : [
+                        h.kbd(
+                          [h.Class(ui.railKey), h.AriaHidden(true)],
+                          [`G ${item.key.toUpperCase()}`],
+                        ),
+                      ]),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      h.a(
+        [h.Class(ui.railFoot), h.Href("/c")],
+        [icon(h, "thread", 16), "Web chat", h.span([h.Class(ui.spacer)]), icon(h, "external", 14)],
+      ),
+    ],
+  );
+
+const PAGE_NAMES: Record<AppRoute["_tag"], string> = {
+  Overview: "Overview",
+  Log: "Log",
+  Entry: "Log",
+  Memory: "Memory",
+  Usage: "Usage",
+  Schedules: "Automations",
+  Agent: "Skills",
+  Profile: "Profile",
+  Runs: "Runs",
+  Settings: "Settings",
+  Audit: "Audit",
+  Artifacts: "Artifacts",
+  NotFound: "Not found",
+};
+
+const agentName = (model: Model): string =>
+  AsyncData.matchData(channelsRead(model.channels), {
+    onEmpty: () => "",
+    onFailure: () => "",
+    onData: (channels) => {
+      const selected = Option.getOrElse(currentChannel(model), () => "");
+      return channels.find((channel) => channel.doName === selected)?.name ?? "";
+    },
+  });
 
 const noticeView = (model: Model, h: H): Html =>
   Option.match(model.notice, {
@@ -2076,10 +2278,18 @@ const pageView = (model: Model, h: H): Html =>
         Schedules: () =>
           h.div(
             [h.Class(ui.page)],
-            [titleView("Schedules", [], h), schedulesView(model, channel, h)],
+            [titleView("Automations", [], h), schedulesView(model, channel, h)],
           ),
         Agent: () =>
-          h.div([h.Class(ui.page)], [titleView("Agent", [], h), agentView(model, channel, h)]),
+          h.div([h.Class(ui.page)], [titleView("Skills", [], h), agentView(model, channel, h)]),
+        Profile: () =>
+          h.div(
+            [h.Class(ui.page)],
+            [
+              titleView("Profile", [], h),
+              sectionView("Shared by every agent", profileBody(model, h), h),
+            ],
+          ),
         Runs: () =>
           h.div([h.Class(ui.page)], [titleView("Runs", [], h), runsView(model, channel, h)]),
         Settings: () =>
@@ -2115,26 +2325,52 @@ const pageView = (model: Model, h: H): Html =>
       }),
   });
 
-export const view = (model: Model, h: H): Document => ({
-  title: "Mizook",
-  body: h.div(
-    [h.Class(ui.root)],
-    [
-      h.header(
-        [h.Class(ui.header)],
-        [
-          h.div(
-            [h.Class(ui.topbar)],
-            [
-              h.div([h.Class(ui.brand)], [h.span([h.Class(ui.mark)]), "mizook"]),
-              h.span([h.Class(ui.slash), h.AriaHidden(true)], ["/"]),
-              channelSelect(model, h),
-            ],
-          ),
-          tabsView(model, h),
-        ],
-      ),
-      h.main([h.Class(ui.main)], [noticeView(model, h), pageView(model, h)]),
-    ],
-  ),
-});
+export const view = (model: Model, h: H): Document => {
+  const page = PAGE_NAMES[model.route._tag];
+  const agent = agentName(model);
+  return {
+    title: agent === "" ? `${page} · Mizook` : `${page} · ${agent} · Mizook`,
+    body: h.div(
+      [h.Class(ui.root)],
+      [
+        railView(model, h),
+        h.div(
+          [h.Class(ui.column)],
+          [
+            h.header(
+              [h.Class(ui.header)],
+              [
+                h.details(
+                  [h.Class(ui.mobileNav)],
+                  [
+                    h.summary(
+                      [h.Class(ui.mobileNavButton), h.AriaLabel("Sections")],
+                      [icon(h, "menu", 20)],
+                    ),
+                    railView(model, h),
+                  ],
+                ),
+                h.span([h.Class(ui.crumb)], [agent]),
+                h.span([h.Class(ui.crumbSlash), h.AriaHidden(true)], ["/"]),
+                h.span([h.Class(ui.crumbPage)], [page]),
+                h.span([h.Class(ui.spacer)]),
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.Class(ui.headerJump),
+                    h.AriaLabel("Jump to"),
+                    h.Title(`Jump to (${modKey(model)}K)`),
+                    h.OnClick(Message.PressedPalette()),
+                  ],
+                  [icon(h, "search", 18)],
+                ),
+              ],
+            ),
+            h.main([h.Class(ui.main)], [noticeView(model, h), pageView(model, h)]),
+          ],
+        ),
+        paletteView(model, h),
+      ],
+    ),
+  };
+};

@@ -1,4 +1,6 @@
-export const usd = (amount: number): string => `$${amount.toFixed(amount < 1 ? 4 : 2)}`;
+/** Cents, unless the amount is below a cent and would read as zero. */
+export const usd = (amount: number): string =>
+  `$${amount.toFixed(amount > 0 && amount < 0.01 ? 4 : 2)}`;
 
 export const count = (value: number): string => value.toLocaleString("en-US");
 
@@ -142,4 +144,25 @@ export const inZone = (epochMs: number, ianaTimezone: string): string => {
   } catch {
     return epochDateTime(epochMs);
   }
+};
+
+const localParts = (epochMs: number, timeZone: string | undefined) =>
+  Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      ...(timeZone !== undefined && { timeZone }),
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(epochMs))
+      .map((part) => [part.type, part.value]),
+  );
+
+/** `2026-11-23 15:34` in the reader's own time zone, or in `timeZone` when given. */
+export const localDateTime = (epochMs: number, timeZone?: string): string => {
+  const p = localParts(epochMs, timeZone);
+  return `${p["year"]}-${p["month"]}-${p["day"]} ${p["hour"]}:${p["minute"]}`;
 };
