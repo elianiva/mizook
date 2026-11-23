@@ -107,6 +107,8 @@ A dashboard lives at `/admin`, per agent: an overview (every agent's spend and w
 
 The web chat lives at `/c`, and its API at `/c/api`. The Worker redirects `/` to `/c`. Its transcript is the `web_messages` table in the web agent's Durable Object, while thread titles and the agent for each thread live in the Hub. Threads are places named `web:<id>`, so one web agent shares its memory across every web thread.
 
+The chat installs as a PWA: `/manifest.webmanifest` names it, and a service worker at `/sw.js` with scope `/c` precaches the shell so an installed copy opens offline. Every chat you open is also saved in the browser's IndexedDB, so the thread list and saved conversations stay readable without a connection; the app refreshes them when the connection returns. Navigations go to the network first so Cloudflare Access can still renew a session; only a failed fetch falls back to the cached shell. A new version takes over on the next launch, after every open copy has closed.
+
 To work on the dashboard, run `pnpm --filter @mizook/dashboard dev`; it proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`). To work on the chat, run `pnpm --filter @mizook/web dev`; it proxies `/c/api` to `CHAT_API` (default `http://localhost:8788`). `pnpm run build` builds both apps and assembles `dist/` as one asset directory.
 
 Alchemy declares both Access applications and their policies (`alchemy.run.ts`), so `alchemy deploy` is the whole setup. Set these first:

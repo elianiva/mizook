@@ -40,7 +40,10 @@ const ANY_ORIGIN_READ_ONLY_CORS = {
 };
 
 const WEB_CONTENT_SECURITY_POLICY =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+const SERVICE_WORKER_PATH = "/sw.js";
+const WEB_MANIFEST_PATH = "/manifest.webmanifest";
 
 const looksLikeAFile = (pathname: string) => /\.[a-z0-9]+$/i.test(pathname);
 
@@ -51,7 +54,15 @@ const serveWebApp = async (request: Request, env: Env, url: URL): Promise<Respon
     isFile ? request : new Request(new URL("/index.html", url), request),
   );
   const response = new Response(asset.body, asset);
-  response.headers.set("content-security-policy", WEB_CONTENT_SECURITY_POLICY);
+  // The service worker follows Access sign-in redirects across origins, which
+  // the document's connect-src policy is not meant to cover.
+  if (url.pathname !== SERVICE_WORKER_PATH) {
+    response.headers.set("content-security-policy", WEB_CONTENT_SECURITY_POLICY);
+  }
+  if (url.pathname === SERVICE_WORKER_PATH) response.headers.set("cache-control", "no-cache");
+  if (url.pathname === WEB_MANIFEST_PATH) {
+    response.headers.set("content-type", "application/manifest+json");
+  }
   response.headers.set("x-content-type-options", "nosniff");
   if (!isFile) response.headers.set("cache-control", "no-store");
   return response;

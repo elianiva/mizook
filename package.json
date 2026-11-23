@@ -15,7 +15,7 @@
     "fmt": "vp check --fix",
     "lint": "vp lint",
     "prepare": "lefthook install",
-    "typecheck": "tsrs --noEmit -p tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.json && effect-tsrs diagnostics --strict --project apps/web/tsconfig.json && tsrs --noEmit -p apps/dashboard/tsconfig.json && effect-tsrs diagnostics --strict --project apps/dashboard/tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json && tsrs --noEmit -p packages/ui/tsconfig.json && effect-tsrs diagnostics --strict --project packages/ui/tsconfig.json && tsrs --noEmit -p packages/design/tsconfig.json"
+    "typecheck": "tsrs --noEmit -p tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.json && effect-tsrs diagnostics --strict --project apps/web/tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.sw.json && tsrs --noEmit -p apps/dashboard/tsconfig.json && effect-tsrs diagnostics --strict --project apps/dashboard/tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json && tsrs --noEmit -p packages/ui/tsconfig.json && effect-tsrs diagnostics --strict --project packages/ui/tsconfig.json && tsrs --noEmit -p packages/design/tsconfig.json"
   },
   "dependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.87",

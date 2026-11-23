@@ -2,7 +2,7 @@ import { AsyncData, Command, Subscription, Update } from "foldkit";
 import { scrollIntoViewAfterPaint } from "foldkit/dom";
 import { load, pushUrl, UrlRequest } from "foldkit/navigation";
 import { toString as urlToString, type Url } from "foldkit/url";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Schema, Stream } from "effect";
 import {
   Dialog,
   Drawer,
@@ -24,10 +24,13 @@ import {
   renameThread,
   sendMessage,
   stopThread,
+  Bootstrap as BootstrapSchema,
+  ThreadState as ThreadStateSchema,
   type Bootstrap,
   type ThreadState,
   type ThreadSummary,
 } from "./api.ts";
+import * as cache from "./cache.ts";
 import { kit } from "./kit.ts";
 import { Message } from "./message.ts";
 import { Model } from "./model.ts";
@@ -143,6 +146,38 @@ const ArchiveThread = Command.define("ArchiveThread", {
     ),
 });
 
+const RestoreBootstrap = Command.define("RestoreBootstrap", {
+  messages: [Message.RestoredBootstrap],
+  execute: cache.readBootstrap.pipe(Effect.map((data) => Message.RestoredBootstrap({ data }))),
+});
+
+const RestoreThread = Command.define("RestoreThread", {
+  args: { threadId: Schema.String },
+  messages: [Message.RestoredThread],
+  execute: ({ threadId }) =>
+    cache
+      .readThread(threadId)
+      .pipe(Effect.map((state) => Message.RestoredThread({ threadId, state }))),
+});
+
+const SaveBootstrap = Command.define("SaveBootstrap", {
+  args: { data: BootstrapSchema },
+  messages: [Message.CompletedSave],
+  execute: ({ data }) => cache.saveBootstrap(data).pipe(Effect.as(Message.CompletedSave())),
+});
+
+const SaveThread = Command.define("SaveThread", {
+  args: { state: ThreadStateSchema },
+  messages: [Message.CompletedSave],
+  execute: ({ state }) => cache.saveThread(state).pipe(Effect.as(Message.CompletedSave())),
+});
+
+const ForgetThread = Command.define("ForgetThread", {
+  args: { id: Schema.String },
+  messages: [Message.CompletedSave],
+  execute: ({ id }) => cache.forgetThread(id).pipe(Effect.as(Message.CompletedSave())),
+});
+
 const ScrollToBottom = Command.define("ScrollToBottom", {
   messages: [Message.CompletedScroll],
   execute: scrollIntoViewAfterPaint("#messages-end").pipe(
@@ -256,16 +291,19 @@ export const init = (flags: Flags, url: Url) => {
     sending: false,
     stopping: false,
     notice: Option.none(),
+    offline: typeof navigator !== "undefined" && !navigator.onLine,
+    bootstrapSaved: false,
+    threadSaved: false,
     armedArchive: Option.none(),
     renameThreadId: Option.none(),
     pollAfter: 0,
   });
-  const commands: Array<ReturnType<typeof LoadBootstrap> | ReturnType<typeof LoadThread>> = [
-    LoadBootstrap(),
-  ];
+  const commands: Array<Command.Command<Message>> = [RestoreBootstrap(), LoadBootstrap()];
   Option.match(routeThread(route), {
     onNone: () => undefined,
-    onSome: (threadId) => commands.push(LoadThread({ threadId, after: 0 })),
+    onSome: (threadId) => {
+      commands.push(RestoreThread({ threadId }), LoadThread({ threadId, after: 0 }));
+    },
   });
   return { model, commands };
 };
@@ -308,6 +346,32 @@ const withNotice = (model: Model, notice: string): Model => ({
   armedArchive: Option.none(),
 });
 
+const applyBootstrap = (model: Model, data: Bootstrap): UpdateReturn => {
+  const bootstrap = AsyncData.Success({ data });
+  const current = Option.match(AsyncData.getData(model.thread), {
+    onNone: () => undefined,
+    onSome: (state) => state.thread.agent.slug,
+  });
+  const agent = setAgent(
+    { ...model, bootstrap },
+    data.agents.map((entry) => ({ value: entry.slug, label: entry.name })),
+    current ?? data.defaultAgent.slug,
+  );
+  return { model: { ...model, bootstrap, ui: agent.ui }, commands: agent.commands };
+};
+
+const saveBootstrapCommands = (data: AsyncData.AsyncData<Bootstrap, string>) =>
+  Option.match(AsyncData.getData(data), {
+    onNone: () => [],
+    onSome: (bootstrap) => [SaveBootstrap({ data: bootstrap })],
+  });
+
+const saveThreadCommands = (data: AsyncData.AsyncData<ThreadState, string>) =>
+  Option.match(AsyncData.getData(data), {
+    onNone: () => [],
+    onSome: (state) => [SaveThread({ state })],
+  });
+
 export const update = (model: Model, message: Message): UpdateReturn =>
   Message.match<UpdateReturn>(message, {
     ClickedLink: ({ request }) =>
@@ -333,6 +397,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             thread: AsyncData.Idle(),
             pollAfter: 0,
             notice: Option.none(),
+            threadSaved: false,
             armedArchive: Option.none(),
           },
         };
@@ -345,9 +410,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           thread: loaded ? model.thread : AsyncData.Idle(),
           pollAfter: loaded ? model.pollAfter : 0,
           notice: Option.none(),
+          threadSaved: loaded ? model.threadSaved : false,
           armedArchive: Option.none(),
         },
-        commands: loaded ? [] : [LoadThread({ threadId: active.value, after: 0 })],
+        commands: loaded
+          ? []
+          : [
+              RestoreThread({ threadId: active.value }),
+              LoadThread({ threadId: active.value, after: 0 }),
+            ],
       };
     },
 
@@ -355,48 +426,84 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     CompletedScroll: () => ({ model }),
 
     LoadedBootstrap: ({ data }) => {
-      const bootstrap = AsyncData.Success({ data });
-      const current = Option.match(AsyncData.getData(model.thread), {
-        onNone: () => undefined,
-        onSome: (state) => state.thread.agent.slug,
-      });
-      const agent = setAgent(
-        { ...model, bootstrap },
-        data.agents.map((entry) => ({ value: entry.slug, label: entry.name })),
-        current ?? data.defaultAgent.slug,
-      );
+      const applied = applyBootstrap(model, data);
       return {
-        model: { ...model, bootstrap, ui: agent.ui },
-        commands: agent.commands,
+        ...applied,
+        model: { ...applied.model, bootstrapSaved: false },
+        commands: [...(applied.commands ?? []), SaveBootstrap({ data })],
       };
     },
-    FailedBootstrap: ({ reason }) => ({
-      model: { ...model, bootstrap: AsyncData.Failure({ error: reason }) },
-    }),
+    FailedBootstrap: ({ reason }) =>
+      Option.isSome(AsyncData.getData(model.bootstrap))
+        ? { model: { ...model, bootstrapSaved: true } }
+        : { model: { ...model, bootstrap: AsyncData.Failure({ error: reason }) } },
+    RestoredBootstrap: ({ data }) =>
+      Option.match(data, {
+        onNone: () => ({ model }),
+        onSome: (bootstrap) => {
+          if (Option.isSome(AsyncData.getData(model.bootstrap))) return { model };
+          const applied = applyBootstrap(model, bootstrap);
+          return {
+            ...applied,
+            model: { ...applied.model, bootstrapSaved: AsyncData.isFailure(model.bootstrap) },
+          };
+        },
+      }),
 
-    LoadedThread: ({ threadId, state }) =>
-      Option.contains(activeThread(model), threadId)
-        ? {
-            model: {
-              ...model,
-              thread: AsyncData.Success({ data: state }),
-              pollAfter: lastIdOf(state.messages),
-              notice: Option.none(),
-            },
-            commands: state.running
-              ? [PollThread({ threadId, after: lastIdOf(state.messages) }), ScrollToBottom()]
-              : [ScrollToBottom()],
-          }
-        : { model },
-    FailedThread: ({ threadId, reason }) =>
-      Option.contains(activeThread(model), threadId)
-        ? {
-            model: {
-              ...model,
-              thread: AsyncData.Failure({ error: reason }),
-            },
-          }
-        : { model },
+    LoadedThread: ({ threadId, state }) => {
+      if (!Option.contains(activeThread(model), threadId)) return { model };
+      const current = Option.match(AsyncData.getData(model.thread), {
+        onNone: () => undefined,
+        onSome: (value) => value,
+      });
+      const merged =
+        current !== undefined && current.thread.id === threadId
+          ? mergeState(current, state)
+          : state;
+      const after = lastIdOf(merged.messages);
+      return {
+        model: {
+          ...model,
+          thread: AsyncData.Success({ data: merged }),
+          pollAfter: after,
+          notice: Option.none(),
+          threadSaved: false,
+        },
+        commands: [
+          ...(merged.running ? [PollThread({ threadId, after })] : []),
+          SaveThread({ state: merged }),
+          ScrollToBottom(),
+        ],
+      };
+    },
+    FailedThread: ({ threadId, reason }) => {
+      if (!Option.contains(activeThread(model), threadId)) return { model };
+      return Option.match(AsyncData.getData(model.thread), {
+        onNone: () => ({ model: { ...model, thread: AsyncData.Failure({ error: reason }) } }),
+        onSome: (current) =>
+          current.thread.id === threadId
+            ? { model: { ...model, threadSaved: true } }
+            : { model: { ...model, thread: AsyncData.Failure({ error: reason }) } },
+      });
+    },
+    RestoredThread: ({ threadId, state }) =>
+      Option.match(state, {
+        onNone: () => ({ model }),
+        onSome: (threadState) =>
+          Option.contains(activeThread(model), threadId) &&
+          Option.isNone(AsyncData.getData(model.thread)) &&
+          threadState.thread.id === threadId
+            ? {
+                model: {
+                  ...model,
+                  thread: AsyncData.Success({ data: threadState }),
+                  pollAfter: lastIdOf(threadState.messages),
+                  threadSaved: AsyncData.isFailure(model.thread),
+                },
+                commands: [ScrollToBottom()],
+              }
+            : { model },
+      }),
 
     PolledThread: ({ threadId, state }) =>
       Option.match(AsyncData.getData(model.thread), {
@@ -410,18 +517,34 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               ...model,
               thread: AsyncData.Success({ data: merged }),
               pollAfter: after,
+              threadSaved: false,
             },
-            commands: merged.running
-              ? [PollThread({ threadId, after }), ScrollToBottom()]
-              : [ScrollToBottom()],
+            commands: [
+              ...(merged.running ? [PollThread({ threadId, after })] : []),
+              SaveThread({ state: merged }),
+              ScrollToBottom(),
+            ],
           };
         },
       }),
-    FailedPoll: ({ threadId, reason }) =>
+    FailedPoll: ({ threadId }) =>
       Option.contains(activeThread(model), threadId) &&
       Option.isSome(AsyncData.getData(model.thread))
-        ? { model: withNotice(model, reason) }
+        ? { model: { ...model, threadSaved: true } }
         : { model },
+
+    CompletedSave: () => ({ model }),
+    WentOffline: () => ({ model: { ...model, offline: true } }),
+    WentOnline: () => ({
+      model: { ...model, offline: false },
+      commands: [
+        LoadBootstrap(),
+        ...Option.match(activeThread(model), {
+          onNone: () => [],
+          onSome: (threadId) => [LoadThread({ threadId, after: 0 })],
+        }),
+      ],
+    }),
 
     CreatedThread: ({ thread, text, requestId }) => {
       const route = AppRoute.Thread({ threadId: thread.id });
@@ -431,6 +554,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         running: false,
         approvals: [],
       };
+      const bootstrap = bootstrapWith(model.bootstrap, (data) => ({
+        ...data,
+        threads: [thread, ...data.threads],
+      }));
       return {
         model: {
           ...model,
@@ -439,14 +566,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           sending: true,
           notice: Option.none(),
           pollAfter: 0,
-          bootstrap: bootstrapWith(model.bootstrap, (data) => ({
-            ...data,
-            threads: [thread, ...data.threads],
-          })),
+          threadSaved: false,
+          bootstrap,
         },
         commands: [
           NavigateInternal({ url: routeHref(route) }),
           SendMessage({ threadId: thread.id, text, requestId }),
+          SaveThread({ state }),
+          ...saveBootstrapCommands(bootstrap),
         ],
       };
     },
@@ -470,13 +597,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         messages,
         running: true,
       };
+      const bootstrap = bootstrapWith(model.bootstrap, (data) => upsertThread(data, result.thread));
       const cleared = clearComposer({
         ...model,
         thread: AsyncData.Success({ data: state }),
         sending: false,
         pollAfter: result.messageId,
         notice: Option.none(),
-        bootstrap: bootstrapWith(model.bootstrap, (data) => upsertThread(data, result.thread)),
+        bootstrap,
       });
       return {
         model: {
@@ -486,11 +614,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           sending: false,
           pollAfter: result.messageId,
           notice: Option.none(),
-          bootstrap: bootstrapWith(model.bootstrap, (data) => upsertThread(data, result.thread)),
+          threadSaved: false,
+          bootstrap,
         },
         commands: [
           ...cleared.commands,
           PollThread({ threadId, after: result.messageId }),
+          SaveThread({ state }),
+          ...saveBootstrapCommands(bootstrap),
           ScrollToBottom(),
         ],
       };
@@ -529,18 +660,24 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     Renamed: ({ thread }) => {
       const closed = closeRename(model);
+      const bootstrap = bootstrapWith(model.bootstrap, (data) => upsertThread(data, thread));
+      const threadState = threadStateWith(model.thread, (state) =>
+        state.thread.id === thread.id ? { ...state, thread } : state,
+      );
       return {
         model: {
           ...model,
           ui: closed.ui,
           renameThreadId: Option.none(),
           notice: Option.none(),
-          bootstrap: bootstrapWith(model.bootstrap, (data) => upsertThread(data, thread)),
-          thread: threadStateWith(model.thread, (state) =>
-            state.thread.id === thread.id ? { ...state, thread } : state,
-          ),
+          bootstrap,
+          thread: threadState,
         },
-        commands: closed.commands,
+        commands: [
+          ...closed.commands,
+          ...saveBootstrapCommands(bootstrap),
+          ...saveThreadCommands(threadState),
+        ],
       };
     },
     FailedRename: ({ reason }) => ({ model: withNotice(model, reason) }),
@@ -549,20 +686,26 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const active = activeThread(model);
       const wasActive = Option.contains(active, id);
       const route = AppRoute.Home();
+      const bootstrap = bootstrapWith(model.bootstrap, (data) => ({
+        ...data,
+        threads: data.threads.filter((thread) => thread.id !== id),
+      }));
       return {
         model: {
           ...model,
           route: wasActive ? route : model.route,
           thread: wasActive ? AsyncData.Idle() : model.thread,
           pollAfter: wasActive ? 0 : model.pollAfter,
+          threadSaved: wasActive ? false : model.threadSaved,
           armedArchive: Option.none(),
           notice: Option.some("Chat archived."),
-          bootstrap: bootstrapWith(model.bootstrap, (data) => ({
-            ...data,
-            threads: data.threads.filter((thread) => thread.id !== id),
-          })),
+          bootstrap,
         },
-        commands: wasActive ? [NavigateInternal({ url: routeHref(route) })] : [],
+        commands: [
+          ...(wasActive ? [NavigateInternal({ url: routeHref(route) })] : []),
+          ...saveBootstrapCommands(bootstrap),
+          ForgetThread({ id }),
+        ],
       };
     },
     FailedArchive: ({ reason }) => ({ model: withNotice(model, reason) }),
@@ -575,6 +718,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         thread: AsyncData.Idle(),
         pollAfter: 0,
         notice: Option.none(),
+        threadSaved: false,
         armedArchive: Option.none(),
       };
       const drawer = setDrawer(next, false);
@@ -582,6 +726,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         model: { ...next, ui: drawer.ui },
         commands: [
           NavigateInternal({ url: routeHref(route) }),
+          RestoreThread({ threadId: id }),
           LoadThread({ threadId: id, after: 0 }),
           ...drawer.commands,
         ],
@@ -597,6 +742,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         sending: false,
         stopping: false,
         notice: Option.none(),
+        threadSaved: false,
         armedArchive: Option.none(),
         renameThreadId: Option.none(),
       };
@@ -741,4 +887,11 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     },
   });
 
-export const subscriptions = Subscription.make<Model, Message>()(() => ({}));
+export const subscriptions = Subscription.make<Model, Message>()(() => ({
+  connection: Subscription.persistentEntry(
+    Stream.merge(
+      Stream.fromEventListener(window, "online").pipe(Stream.map(() => Message.WentOnline())),
+      Stream.fromEventListener(window, "offline").pipe(Stream.map(() => Message.WentOffline())),
+    ),
+  ),
+}));

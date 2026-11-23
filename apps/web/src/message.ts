@@ -14,10 +14,15 @@ export const Message = defineMessageUnion({
 
   LoadedBootstrap: { data: Bootstrap },
   FailedBootstrap: { reason: Schema.String },
+  RestoredBootstrap: { data: Schema.Option(Bootstrap) },
   LoadedThread: { threadId: Schema.String, state: ThreadState },
   FailedThread: { threadId: Schema.String, reason: Schema.String },
+  RestoredThread: { threadId: Schema.String, state: Schema.Option(ThreadState) },
   PolledThread: { threadId: Schema.String, state: ThreadState },
   FailedPoll: { threadId: Schema.String, reason: Schema.String },
+  CompletedSave: {},
+  WentOffline: {},
+  WentOnline: {},
 
   CreatedThread: {
     thread: ThreadSummary,

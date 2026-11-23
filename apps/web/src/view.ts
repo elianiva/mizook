@@ -73,7 +73,7 @@ const headerTitle = (model: Model): string =>
     Home: () => "New chat",
     Thread: ({ threadId }) =>
       Option.match(AsyncData.getData(model.thread), {
-        onNone: () => (threadId === "" ? "Chat" : "Loading"),
+        onNone: () => (threadId === "" || AsyncData.isFailure(model.thread) ? "Chat" : "Loading"),
         onSome: (state) => state.thread.title,
       }),
     NotFound: () => "Not found",
@@ -180,6 +180,46 @@ const noticeView = (model: Model, h: H): Html =>
         ],
       ),
   });
+
+const savedText = (model: Model): string | undefined => {
+  const hasData =
+    model.route._tag === "Home"
+      ? Option.isSome(AsyncData.getData(model.bootstrap))
+      : model.route._tag === "Thread"
+        ? Option.isSome(AsyncData.getData(model.thread))
+        : false;
+  const messages = model.route._tag === "Thread";
+  if (model.offline) {
+    if (!hasData) return "Offline";
+    return messages ? "Offline · saved messages" : "Offline · saved chats";
+  }
+  const saved =
+    model.route._tag === "Home"
+      ? model.bootstrapSaved
+      : model.route._tag === "Thread"
+        ? model.threadSaved
+        : false;
+  return saved ? (messages ? "Saved messages" : "Saved chats") : undefined;
+};
+
+const savedBar = (model: Model, h: H): Html => {
+  const text = savedText(model);
+  if (text === undefined) return null;
+  return h.div(
+    [h.Class(ui.savedBar), h.Role("status")],
+    [
+      h.span([], [text]),
+      ...(model.offline
+        ? []
+        : [
+            h.button(
+              [h.Type("button"), h.Class(ui.savedAction), h.OnClick(Message.ClickedRetry())],
+              ["Retry"],
+            ),
+          ]),
+    ],
+  );
+};
 
 const agentRoleLabel = (thread: ThreadSummary): string =>
   thread.agent.slug === "web" ? "Web" : thread.agent.name;
@@ -483,6 +523,32 @@ const promptButton = (h: H, text: string): Html =>
     [h.span([], [text]), h.span([h.Class(ui.promptArrow)], ["→"])],
   );
 
+const homeContent = (model: Model, h: H, config: PartsConfig<Message>): Html =>
+  AsyncData.matchData(model.bootstrap, {
+    onEmpty: () => emptyState(model, h, config),
+    onFailure: (error) =>
+      h.section(
+        [h.Class(ui.empty)],
+        [
+          h.div(
+            [h.Class(ui.emptyInner)],
+            [
+              h.span([h.Class(ui.emptyMark)], []),
+              h.h1([h.Class(ui.emptyTitle)], ["The chat is unavailable"]),
+              h.div(
+                [h.Class(ui.errorBox), h.Role("alert")],
+                [
+                  h.span([], [error]),
+                  nativeButton(h, "Retry", Message.ClickedRetry(), ui.button({ size: "sm" })),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    onData: () => emptyState(model, h, config),
+  });
+
 const threadContent = (model: Model, h: H): Html =>
   AsyncData.matchData(model.thread, {
     onEmpty: () =>
@@ -703,7 +769,7 @@ export const view = (model: Model, h: H): Document => {
   const config = configOf(model);
   const content =
     model.route._tag === "Home"
-      ? emptyState(model, h, config)
+      ? homeContent(model, h, config)
       : model.route._tag === "Thread"
         ? threadContent(model, h)
         : h.section(
@@ -735,7 +801,10 @@ export const view = (model: Model, h: H): Document => {
       [h.Class(ui.root)],
       [
         sidebarBody(model, h, false),
-        h.main([h.Class(ui.main)], [header(model, h, config), content, composer(model, h, config)]),
+        h.main(
+          [h.Class(ui.main)],
+          [header(model, h, config), savedBar(model, h), content, composer(model, h, config)],
+        ),
         drawerLayer(model, h, config),
         renameDialog(model, h, config),
       ],

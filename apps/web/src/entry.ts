@@ -3,6 +3,7 @@ import { Runtime } from "foldkit";
 
 import { kit } from "./kit.ts";
 import { Flags, Message, Model, init, subscriptions, update, view } from "./main.ts";
+import { startServiceWorker } from "./pwa.ts";
 import "./styles.css";
 
 const container = document.getElementById("root");
@@ -26,3 +27,4 @@ const application = Runtime.makeApplication({
 });
 
 Runtime.run(application, { flags: Effect.succeed({ anchorId: ui.anchorId }) });
+startServiceWorker();

@@ -86,7 +86,14 @@ const request = <A, I>(
       if (!response.ok) throw new Error(await errorOf(response));
       return (await response.json()) as unknown;
     },
-    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+    catch: (cause) =>
+      typeof navigator !== "undefined" && !navigator.onLine
+        ? "You are offline. Reconnect, then retry."
+        : cause instanceof TypeError
+          ? "The chat server is unreachable. Retry in a moment."
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
   }).pipe(
     Effect.flatMap((body) =>
       Schema.decodeUnknownEffect(schema)(body).pipe(
