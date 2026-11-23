@@ -83,10 +83,13 @@ export const layer = Layer.effect(
     // Built in this layer's scope: the lease and its IndexedDB connections must
     // outlive this effect, or the first write after startup finds them closed.
     const services = yield* Layer.build(Layer.mergeAll(actor, persistence, transport));
-    const client = yield* Client.make(WebChatClient, {
-      persistence: { mode: "persistent" },
-    }).pipe(Effect.provide(services));
-    const lease = yield* client.open(WebChat.address(WebChatSource)).pipe(Effect.provide(services));
+    const openLease = (mode: "persistent" | "volatile") =>
+      Client.make(WebChatClient, { persistence: { mode } }).pipe(
+        Effect.flatMap((client) => client.open(WebChat.address(WebChatSource))),
+        Effect.provide(services),
+      );
+    // Another tab holds this actor's persisted copy, so this one runs live without saving.
+    const lease = yield* openLease("persistent").pipe(Effect.catch(() => openLease("volatile")));
     const changes = lease.changes.pipe(
       Stream.map(toView),
       Stream.catchCause(() => Stream.empty),
