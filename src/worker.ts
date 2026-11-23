@@ -54,9 +54,8 @@ const looksLikeAFile = (pathname: string) => /\.[a-z0-9]+$/i.test(pathname);
 const serveWebApp = async (request: Request, env: Env, url: URL): Promise<Response> => {
   if (!env.ASSETS) return new Response("The web app is not built", { status: 503 });
   const isFile = looksLikeAFile(url.pathname);
-  const asset = await env.ASSETS.fetch(
-    isFile ? request : new Request(new URL("/index.html", url), request),
-  );
+  // The asset layer redirects /index.html to the root, so ask for the root.
+  const asset = await env.ASSETS.fetch(isFile ? request : new Request(new URL("/", url), request));
   const response = new Response(asset.body, asset);
   // The service worker follows Access sign-in redirects across origins, which
   // the document's connect-src policy is not meant to cover.
