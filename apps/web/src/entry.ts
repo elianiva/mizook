@@ -1,9 +1,10 @@
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { Runtime } from "foldkit";
 
 import { kit } from "./kit.ts";
 import { Flags, Message, Model, init, subscriptions, update, view } from "./main.ts";
 import { startServiceWorker } from "./pwa.ts";
+import { layer as chatSyncLayer } from "./sync.ts";
 import "./styles.css";
 
 const container = document.getElementById("root");
@@ -18,7 +19,7 @@ const application = Runtime.makeApplication({
   view,
   subscriptions,
   container,
-  resources: ui.layer,
+  resources: Layer.merge(ui.layer, chatSyncLayer),
   routing: {
     onUrlRequest: (request) => Message.ClickedLink({ request }),
     onUrlChange: (url) => Message.ChangedUrl({ url }),

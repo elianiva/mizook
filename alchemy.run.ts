@@ -6,6 +6,7 @@ import * as Redacted from "effect/Redacted";
 import type { AgentObject } from "./src/agent-object.ts";
 import type { AutomationsObject } from "./src/automations-object.ts";
 import type { Hub } from "./src/hub.ts";
+import type { WebChatObject } from "./src/web-chat-object.ts";
 
 const emptyMeansDefault = (name: string) => Config.String(name).pipe(Config.withDefault(""));
 
@@ -62,6 +63,9 @@ export default Alchemy.Stack(
       env: {
         AgentObject: Cloudflare.DurableObject<AgentObject>("AgentObject"),
         Hub: Cloudflare.DurableObject<Hub>("Hub"),
+        WebChat: Cloudflare.DurableObject<WebChatObject>("WebChatObject", {
+          className: "WebChatObject",
+        }),
         Automations: Cloudflare.DurableObject<AutomationsObject>("Automations", {
           className: "AutomationsObject",
         }),

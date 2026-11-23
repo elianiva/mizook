@@ -3,7 +3,7 @@ import pandacss from "@pandacss/vite";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
-const WORKER_API_PATH = "/c/api";
+const WORKER_SYNC_PATH = "/c/sync";
 const LOCAL_WORKER_URL = "http://localhost:8788";
 const APP_SCOPE = "/c";
 
@@ -30,6 +30,12 @@ export default defineConfig({
   resolve: { dedupe: ["effect", "foldkit"] },
   server: {
     ...(process.env["VITE_ALLOWED_HOSTS"] !== undefined && { allowedHosts: true as const }),
-    proxy: { [WORKER_API_PATH]: process.env["CHAT_API"] ?? LOCAL_WORKER_URL },
+    proxy: {
+      [WORKER_SYNC_PATH]: {
+        target: process.env["CHAT_API"] ?? LOCAL_WORKER_URL,
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   },
 });

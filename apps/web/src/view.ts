@@ -193,13 +193,7 @@ const savedText = (model: Model): string | undefined => {
     if (!hasData) return "Offline";
     return messages ? "Offline · saved messages" : "Offline · saved chats";
   }
-  const saved =
-    model.route._tag === "Home"
-      ? model.bootstrapSaved
-      : model.route._tag === "Thread"
-        ? model.threadSaved
-        : false;
-  return saved ? (messages ? "Saved messages" : "Saved chats") : undefined;
+  return model.saved && hasData ? (messages ? "Saved messages" : "Saved chats") : undefined;
 };
 
 const savedBar = (model: Model, h: H): Html => {

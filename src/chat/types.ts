@@ -8,12 +8,7 @@ export interface WebMessage {
 }
 
 export type WebTurnResult =
-  | {
-      readonly ok: true;
-      readonly folded: boolean;
-      readonly messageId: number;
-      readonly at: number;
-    }
+  | { readonly ok: true; readonly folded: boolean }
   | { readonly ok: false; readonly reason: string };
 
 export interface WebApproval {
@@ -23,8 +18,11 @@ export interface WebApproval {
   readonly created: number;
 }
 
-export interface WebState {
-  readonly messages: ReadonlyArray<WebMessage>;
+export interface WebStatus {
   readonly running: boolean;
   readonly approvals: ReadonlyArray<WebApproval>;
+}
+
+export interface WebState extends WebStatus {
+  readonly messages: ReadonlyArray<WebMessage>;
 }

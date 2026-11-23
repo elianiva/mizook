@@ -9,9 +9,14 @@
     "build": "panda codegen && vite build"
   },
   "dependencies": {
+    "@mizook/chat-sync": "workspace:*",
     "@mizook/design": "workspace:*",
     "@mizook/ui": "workspace:*",
     "@openuidev/lang-core": "1.1.1",
+    "@yielded/sync": "0.1.0-beta.5",
+    "@yielded/sync-local-indexeddb": "0.1.0-beta.5",
+    "@yielded/sync-persistence": "0.1.0-beta.5",
+    "@yielded/sync-platform-browser": "0.1.0-beta.5",
     "effect": "4.1.4",
     "foldkit": "0.171.0",
     "marked": "18.2.1"

@@ -14,7 +14,6 @@ import {
   type AgentSpec,
   type AutomationsApi,
   type Profile,
-  type WebThreadInfo,
 } from "./host.ts";
 import type { Skill, Skills } from "./skills.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
@@ -25,7 +24,7 @@ import { Commands } from "./commands.ts";
 import { State } from "./state.ts";
 import { Approvals } from "./approvals.ts";
 import { WebThreads } from "./chat/threads.ts";
-import type { WebState, WebTurnResult } from "./chat/types.ts";
+import type { WebState, WebStatus, WebTurnResult } from "./chat/types.ts";
 import * as read from "./admin/read.ts";
 import { edit as applyEdit, type EditOutcome } from "./admin/edit.ts";
 
@@ -53,13 +52,6 @@ export interface HubApi {
   bind(place: string, key: string | undefined): Promise<AgentInfo | undefined>;
   placeName(place: string): Promise<string | undefined>;
   setPlaceName(place: string, name: string): Promise<void>;
-  touchWebThread(place: string, preview: string): Promise<void>;
-  webThreads(): Promise<WebThreadInfo[]>;
-  webThread(id: string): Promise<WebThreadInfo | undefined>;
-  createWebThread(agentKey: string | undefined): Promise<WebThreadInfo | undefined>;
-  renameWebThread(id: string, title: string): Promise<WebThreadInfo | undefined>;
-  archiveWebThread(id: string): Promise<boolean>;
-  webDefaultAgent(): Promise<AgentInfo>;
   profile(): Promise<Profile>;
   setProfile(about: string | undefined, rules: string[] | undefined): Promise<Profile>;
 }
@@ -186,14 +178,6 @@ export class AgentObject extends DurableObject<Env> {
           Effect.orElseSucceed(() => shortPlace(place)),
         ),
       namePlace: (place, name) => Effect.promise(() => hub().setPlaceName(place, name)),
-      touchWebThread: (place, preview) =>
-        Effect.tryPromise({
-          try: () => hub().touchWebThread(place, preview),
-          catch: () => undefined,
-        }).pipe(
-          Effect.orElseSucceed(() => undefined),
-          Effect.asVoid,
-        ),
       createAgent: (spec) => Effect.promise(() => hub().createAgent(spec)),
       updateAgent: (key, patch) => Effect.promise(() => hub().updateAgent(key, patch)),
       deleteAgent: (key) => Effect.promise(() => hub().deleteAgent(key)),
@@ -270,10 +254,15 @@ export class AgentObject extends DurableObject<Env> {
     return reply;
   }
 
-  async webTurn(place: string, text: string, requestId: string): Promise<WebTurnResult> {
+  async webTurn(
+    place: string,
+    text: string,
+    requestId: string,
+    where: string,
+  ): Promise<WebTurnResult> {
     try {
       const result = await this.runtime.runPromise(
-        Bot.use((bot) => bot.beginWebTurn(place, text, requestId)),
+        Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where)),
       );
       await this.rearmAlarm();
       return result;
@@ -283,9 +272,8 @@ export class AgentObject extends DurableObject<Env> {
     }
   }
 
-  async webState(place: string, after = 0): Promise<WebState> {
-    const [messages, running, approvals] = await Promise.all([
-      this.runtime.runPromise(WebThreads.use((threads) => threads.messages(place, after))),
+  async webStatus(place: string): Promise<WebStatus> {
+    const [running, approvals] = await Promise.all([
       this.runtime.runPromise(
         Agent.use((agent) =>
           Effect.map(agent.pending, (turns) => turns.some((turn) => turn.chatId === place)),
@@ -294,7 +282,6 @@ export class AgentObject extends DurableObject<Env> {
       this.runtime.runPromise(Approvals.use((pending) => pending.unposted(place))),
     ]);
     return {
-      messages,
       running,
       approvals: approvals.map(({ id, summary, match, created }) => ({
         id,
@@ -303,6 +290,14 @@ export class AgentObject extends DurableObject<Env> {
         created,
       })),
     };
+  }
+
+  async webState(place: string, after = 0): Promise<WebState> {
+    const [messages, status] = await Promise.all([
+      this.runtime.runPromise(WebThreads.use((threads) => threads.messages(place, after))),
+      this.webStatus(place),
+    ]);
+    return { messages, ...status };
   }
 
   async webStop(place: string): Promise<boolean> {
@@ -393,8 +388,8 @@ export class AgentObject extends DurableObject<Env> {
     const done = await this.runtime.runPromise(
       Effect.gen(function* () {
         const bot = yield* Bot;
-        if (action === "approve" || action === "deny") {
-          const pending = yield* bot.approve(id, action === "approve");
+        if (action === "approve" || action === "deny" || action === "always") {
+          const pending = yield* bot.approve(id, action !== "deny", action === "always");
           if (!pending) return { ok: false, after: undefined };
           return { ok: true, after: pending.resume };
         }

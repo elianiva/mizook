@@ -6,13 +6,11 @@ import { registerRoute } from "workbox-routing";
 declare const self: ServiceWorkerGlobalScope;
 
 const APP_PATH = "/c";
-const APP_API_PATH = "/c/api";
 const OFFLINE_SHELL = "/index.html";
 
 const isAppNavigation = ({ request, url }: { request: Request; url: URL }): boolean =>
   request.mode === "navigate" &&
-  (url.pathname === APP_PATH || url.pathname.startsWith(`${APP_PATH}/`)) &&
-  !url.pathname.startsWith(`${APP_API_PATH}/`);
+  (url.pathname === APP_PATH || url.pathname.startsWith(`${APP_PATH}/`));
 
 const shellWhenOffline = async (): Promise<Response> =>
   (await matchPrecache(OFFLINE_SHELL)) ?? Response.error();

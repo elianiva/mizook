@@ -4,7 +4,8 @@ import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 import { Message as UiMessage } from "@mizook/ui";
 
-import { Bootstrap, SendReplySchema, ThreadState, ThreadSummary } from "./api.ts";
+import { ThreadSummary } from "./api.ts";
+import { SyncView } from "./sync.ts";
 
 export const Message = defineMessageUnion({
   ClickedLink: { request: UrlRequest },
@@ -12,25 +13,14 @@ export const Message = defineMessageUnion({
   CompletedNavigation: {},
   CompletedScroll: {},
 
-  LoadedBootstrap: { data: Bootstrap },
-  FailedBootstrap: { reason: Schema.String },
-  RestoredBootstrap: { data: Schema.Option(Bootstrap) },
-  LoadedThread: { threadId: Schema.String, state: ThreadState },
-  FailedThread: { threadId: Schema.String, reason: Schema.String },
-  RestoredThread: { threadId: Schema.String, state: Schema.Option(ThreadState) },
-  PolledThread: { threadId: Schema.String, state: ThreadState },
-  FailedPoll: { threadId: Schema.String, reason: Schema.String },
-  CompletedSave: {},
-  WentOffline: {},
-  WentOnline: {},
+  Synced: { view: SyncView },
+  RefreshTick: {},
+  Refreshed: {},
+  FailedRefresh: { reason: Schema.String },
+  Recovered: {},
+  FailedRecover: { reason: Schema.String },
 
-  CreatedThread: {
-    thread: ThreadSummary,
-    text: Schema.String,
-    requestId: Schema.String,
-  },
-  FailedCreate: { reason: Schema.String },
-  SentMessage: { threadId: Schema.String, text: Schema.String, result: SendReplySchema },
+  SentMessage: { threadId: Schema.String, text: Schema.String },
   FailedSend: { reason: Schema.String },
   Stopped: { ok: Schema.Boolean },
   FailedStop: { reason: Schema.String },
@@ -40,6 +30,9 @@ export const Message = defineMessageUnion({
   FailedRename: { reason: Schema.String },
   Archived: { id: Schema.String },
   FailedArchive: { reason: Schema.String },
+
+  WentOffline: {},
+  WentOnline: {},
 
   ClickedThread: { id: Schema.String },
   ClickedNewChat: {},

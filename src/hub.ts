@@ -248,64 +248,6 @@ export class Hub extends DurableObject<Env> {
     return row && this.webThreadInfo(row);
   }
 
-  createWebThread(agentKey: string | undefined): WebThreadInfo | undefined {
-    const agent = agentKey === undefined ? this.webDefaultAgent() : this.agent(agentKey);
-    if (agent === undefined) return undefined;
-    const id = randomId();
-    const place = `web:${id}`;
-    const now = Date.now();
-    this.ctx.storage.sql.exec(
-      `INSERT INTO web_threads (id, agent_id, title, preview, created, updated)
-       VALUES (?, ?, 'New chat', '', ?, ?)`,
-      id,
-      agent.id,
-      now,
-      now,
-    );
-    this.bind(place, agent.id);
-    this.setPlaceName(place, "New chat");
-    return this.webThread(id);
-  }
-
-  renameWebThread(id: string, title: string): WebThreadInfo | undefined {
-    const clean = title.replace(/\s+/g, " ").trim().slice(0, 120);
-    if (clean === "" || this.webThreadRow(id) === undefined) return undefined;
-    this.ctx.storage.sql.exec(
-      `UPDATE web_threads SET title = ?, updated = ? WHERE id = ?`,
-      clean,
-      Date.now(),
-      id,
-    );
-    this.setPlaceName(`web:${id}`, clean);
-    return this.webThread(id);
-  }
-
-  archiveWebThread(id: string): boolean {
-    if (this.webThreadRow(id) === undefined) return false;
-    this.ctx.storage.sql.exec(
-      `UPDATE web_threads SET archived = 1, updated = ? WHERE id = ?`,
-      Date.now(),
-      id,
-    );
-    return true;
-  }
-
-  touchWebThread(place: string, preview: string): void {
-    const id = place.replace(/^web:/, "");
-    const row = this.webThreadRow(id);
-    if (row === undefined) return;
-    const clean = preview.replace(/\s+/g, " ").trim().slice(0, 160);
-    const title = row.title === "New chat" && clean !== "" ? clean.slice(0, 60) : row.title;
-    this.ctx.storage.sql.exec(
-      `UPDATE web_threads SET title = ?, preview = ?, updated = ? WHERE id = ?`,
-      title,
-      clean,
-      Date.now(),
-      id,
-    );
-    if (title !== row.title) this.setPlaceName(place, title);
-  }
-
   private badSpec(spec: Partial<AgentSpec>, id?: string): string | undefined {
     if (spec.slug !== undefined) {
       if (!AGENT_SLUG.test(spec.slug))

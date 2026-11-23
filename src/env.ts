@@ -1,10 +1,12 @@
 import type { AgentObject } from "./agent-object.ts";
 import type { AutomationsObject } from "./automations-object.ts";
 import type { Hub } from "./hub.ts";
+import type { WebChatObject } from "./web-chat-object.ts";
 
 export interface Env {
   AgentObject: DurableObjectNamespace<AgentObject>;
   Hub: DurableObjectNamespace<Hub>;
+  WebChat: DurableObjectNamespace<WebChatObject>;
   Automations: DurableObjectNamespace<AutomationsObject>;
   EXECUTOR_URL?: string;
   EXECUTOR_TOKEN?: string;

@@ -13,7 +13,17 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "plugins": [{ "name": "@effect/language-service" }]
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "overrides": [
+          {
+            "include": ["src/**/*.ts"],
+            "options": { "allowedUnstableApis": ["effect/socket"] }
+          }
+        ]
+      }
+    ]
   },
   "include": ["src", "panda.config.ts", "vite.config.ts"],
   "exclude": ["src/sw.ts"]

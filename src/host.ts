@@ -67,7 +67,6 @@ export class Host extends Context.Service<
     bind(place: string, slug: string | undefined): Effect.Effect<AgentInfo | undefined>;
     placeLabel(place: string): Effect.Effect<string>;
     namePlace(place: string, name: string): Effect.Effect<void>;
-    touchWebThread(place: string, preview: string): Effect.Effect<void>;
     createAgent(spec: AgentSpec): Effect.Effect<AgentChange>;
     updateAgent(key: string, patch: Partial<AgentSpec>): Effect.Effect<AgentChange>;
     deleteAgent(key: string): Effect.Effect<AgentChange>;

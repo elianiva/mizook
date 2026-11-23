@@ -1,8 +1,7 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "../errors.ts";
-import { Host } from "../host.ts";
-import type { WebMessage, WebMessageRole } from "./types.ts";
+import type { WebMessage } from "./types.ts";
 
 const Row = Schema.Struct({
   id: Schema.Finite,
@@ -20,21 +19,14 @@ const toMessage = (row: typeof Row.Type): WebMessage => ({
 });
 
 const MAX_MESSAGES = 200;
-const PREVIEW_CHARS = 160;
 
 /**
- * The web transcript is a projection of what the agent said in a place, not
- * the agent's memory. The memory is shared by every place, and agent bubbles
- * are not tagged with one, so the log cannot reconstruct a thread.
+ * The legacy web transcript. New web messages live in the web chat source, so
+ * this table is read once during the source's first initialization.
  */
 export class WebThreads extends Context.Service<
   WebThreads,
   {
-    append(
-      place: string,
-      role: WebMessageRole,
-      text: string,
-    ): Effect.Effect<WebMessage, StateError>;
     messages(
       place: string,
       after: number,
@@ -46,7 +38,6 @@ export class WebThreads extends Context.Service<
     Layer.effect(
       WebThreads,
       Effect.gen(function* () {
-        const host = yield* Host;
         const run = <A>(operation: string, f: () => A | Promise<A>) =>
           Effect.tryPromise({
             try: async () => f(),
@@ -68,38 +59,6 @@ export class WebThreads extends Context.Service<
         });
 
         return WebThreads.of({
-          append: (place, role, text) =>
-            Effect.gen(function* () {
-              const at = Date.now();
-              const rows = yield* run("append web message", () =>
-                sql.all(
-                  `INSERT INTO web_messages (place, role, text, at) VALUES (?, ?, ?, ?)
-                   RETURNING id, role, text, at`,
-                  place,
-                  role,
-                  text,
-                  at,
-                ),
-              );
-              const message = yield* decodeRows(rows).pipe(
-                Effect.mapError(
-                  (cause) => new StateError({ operation: "append web message", cause }),
-                ),
-              );
-              const found = message[0];
-              if (!found) {
-                return yield* new StateError({
-                  operation: "append web message",
-                  cause: "the insert returned no row",
-                });
-              }
-              yield* host
-                .touchWebThread(place, previewOf(text))
-                .pipe(
-                  Effect.catchCause((cause) => Effect.logWarning("thread preview failed", cause)),
-                );
-              return toMessage(found);
-            }),
           messages: (place, after, limit = MAX_MESSAGES) =>
             run("web messages", () =>
               sql.all(
@@ -122,17 +81,3 @@ export class WebThreads extends Context.Service<
       }),
     );
 }
-
-/**
- * An openui-lang program is drawn, not read, so the preview names its first
- * component instead of showing its code, even when the block is cut off.
- */
-const previewOf = (text: string): string =>
-  text
-    .replace(/(```|~~~)openui-lang\b[\s\S]*?(\1|$)/g, (block) => {
-      const names = [...block.matchAll(/^\s*\w+\s*=\s*([A-Z]\w*)\(/gm)].map((match) => match[1]);
-      return ` ${names.find((name) => name !== "Stack") ?? ""} `;
-    })
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, PREVIEW_CHARS);

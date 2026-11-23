@@ -1,4 +1,7 @@
 import { Effect } from "effect";
+import { WebChat } from "@mizook/chat-sync";
+import { ProtocolError } from "@yielded/sync";
+import { Cloudflare } from "@yielded/sync-platform-cloudflare";
 import type { Env } from "./env.ts";
 import { artifactHeaders, renderArtifact } from "./artifact-render.ts";
 import { DATA_KEY, dataKey, dataPrefix, MAX_KEYS } from "./artifact-data.ts";
@@ -6,11 +9,12 @@ import { hookTokenValid } from "./hooks.ts";
 import { routeOf } from "./route.ts";
 import type { HubApi } from "./agent-object.ts";
 import { handleAdmin } from "./admin/handler.ts";
-import { handleChat } from "./chat/handler.ts";
+import { accessWho, verifierFor } from "./admin/access.ts";
 
 export { AgentObject } from "./agent-object.ts";
 export { Hub } from "./hub.ts";
 export { AutomationsObject } from "./automations-object.ts";
+export { WebChatObject } from "./web-chat-object.ts";
 
 const secretsEqualInConstantTime = async (a: string, b: string): Promise<boolean> => {
   const encoder = new TextEncoder();
@@ -40,7 +44,7 @@ const ANY_ORIGIN_READ_ONLY_CORS = {
 };
 
 const WEB_CONTENT_SECURITY_POLICY =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const SERVICE_WORKER_PATH = "/sw.js";
 const WEB_MANIFEST_PATH = "/manifest.webmanifest";
@@ -64,9 +68,44 @@ const serveWebApp = async (request: Request, env: Env, url: URL): Promise<Respon
     response.headers.set("content-type", "application/manifest+json");
   }
   response.headers.set("x-content-type-options", "nosniff");
-  if (!isFile) response.headers.set("cache-control", "no-store");
+  if (!isFile) {
+    response.headers.set("cache-control", "no-store");
+    const actor = await accessWho(request, env, env.CHAT_ACCESS_AUD);
+    if (actor !== undefined) {
+      const secure = url.protocol === "https:" ? "; Secure" : "";
+      response.headers.append(
+        "set-cookie",
+        `mizook_actor=${encodeURIComponent(actor)}; Path=/; Max-Age=86400; SameSite=Lax${secure}`,
+      );
+    }
+  }
   return response;
 };
+
+const webChatHandler = (env: Env) =>
+  Cloudflare.handler(WebChat, {
+    authenticate: (request) =>
+      Effect.gen(function* () {
+        if (verifierFor(env, env.CHAT_ACCESS_AUD) === undefined)
+          return yield* new ProtocolError({
+            reason: "Unavailable",
+            message: "The web chat is not configured.",
+          });
+        const actor = yield* Effect.promise(() => accessWho(request, env, env.CHAT_ACCESS_AUD));
+        if (actor === undefined)
+          return yield* new ProtocolError({
+            reason: "Unauthenticated",
+            message: "Your session expired. Reload the page.",
+          });
+        return {
+          principal: actor,
+          actorId: actor,
+          expiresAtMillis: Date.now() + 24 * 3_600_000,
+        };
+      }),
+    objectName: () => "web-chat",
+    fetch: (name, request) => Effect.promise(() => env.WebChat.getByName(name).fetch(request)),
+  });
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -78,7 +117,8 @@ export default {
     }
 
     if (pathname === "/admin" || pathname.startsWith("/admin/")) return handleAdmin(request, env);
-    if (pathname === "/c/api" || pathname.startsWith("/c/api/")) return handleChat(request, env);
+    if (pathname === "/c/sync" || pathname.startsWith("/c/sync/"))
+      return Effect.runPromise(webChatHandler(env)(request));
 
     if (pathname === "/telegram/webhook" && request.method === "POST") {
       const secretSentByTelegram = request.headers.get("x-telegram-bot-api-secret-token") ?? "";

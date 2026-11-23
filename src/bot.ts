@@ -18,14 +18,14 @@ import { chunk } from "./chunk.ts";
 import { Settings } from "./config.ts";
 import { TelegramError, type StateError } from "./errors.ts";
 import { Outbox } from "./outbox.ts";
-import { Approvals } from "./approvals.ts";
+import { Approvals, type Approval } from "./approvals.ts";
 import { MEDIA_LABEL, Media } from "./media.ts";
 import { Policies } from "./policies.ts";
 import { Executor } from "./executor.ts";
 import { Blobs } from "./blobs.ts";
 import { Commands } from "./commands.ts";
 import { COMMANDS } from "./command-list.ts";
-import { WebThreads } from "./chat/threads.ts";
+import { WebChatClient } from "./chat/web-chat-client.ts";
 import type { WebTurnResult } from "./chat/types.ts";
 import { Host } from "./host.ts";
 import { Usage } from "./usage.ts";
@@ -63,6 +63,7 @@ export class Bot extends Context.Service<
       place: string,
       text: string,
       requestId: string,
+      where: string,
     ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError>;
     postTo(place: string, text: string): Effect.Effect<void, StateError | TelegramError>;
     approve(
@@ -88,7 +89,7 @@ export class Bot extends Context.Service<
       const blobs = yield* Blobs;
       const usage = yield* Usage;
       const host = yield* Host;
-      const webThreads = yield* WebThreads;
+      const webChat = yield* WebChatClient;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
 
@@ -138,9 +139,16 @@ export class Bot extends Context.Service<
           catch: (cause) => new TelegramError({ operation: "post", cause }),
         });
 
+      const sourceApproval = ({ id, summary, match, created }: Approval) => ({
+        id,
+        summary,
+        match,
+        created,
+      });
+
       const deliver = (threadId: string, text: string) =>
         isWebPlace(threadId)
-          ? webThreads.append(threadId, "agent", text).pipe(
+          ? webChat.appendAgent(threadId, text).pipe(
               Effect.tapError((error) => Effect.logError("web bubble failed", error)),
               Effect.ignore,
             )
@@ -170,8 +178,12 @@ export class Bot extends Context.Service<
       const buttonIdNamingThisAgent = (verb: string, id: number) => `${verb}:${host.self.id}:${id}`;
       const postApprovalCards = (threadId: string) =>
         Effect.gen(function* () {
-          if (isWebPlace(threadId)) return;
-          for (const a of yield* approvals.unposted(threadId)) {
+          const pending = yield* approvals.unposted(threadId);
+          if (isWebPlace(threadId)) {
+            yield* webChat.setStatus(threadId, true, pending.map(sourceApproval));
+            return;
+          }
+          for (const a of pending) {
             yield* Effect.tryPromise({
               try: async () => {
                 await connectAdapters();
@@ -217,6 +229,10 @@ export class Bot extends Context.Service<
           const reply = yield* agent.finish(chatId);
           if (reply.trim() !== "") yield* deliver(threadId, reply);
           yield* postApprovalCards(threadId);
+          if (isWebPlace(threadId)) {
+            const pending = yield* approvals.unposted(threadId);
+            yield* webChat.setStatus(threadId, false, pending.map(sourceApproval));
+          }
           return reply;
         }).pipe(Effect.scoped);
 
@@ -402,6 +418,7 @@ export class Bot extends Context.Service<
         place: string,
         text: string,
         requestId: string,
+        where: string,
       ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError> =>
         Effect.gen(function* () {
           if (settings.budgetDaily > 0) {
@@ -412,45 +429,31 @@ export class Bot extends Context.Service<
                 reason: `Daily budget reached (${spent.toFixed(2)} of ${settings.budgetDaily}). Raise it with /budget.`,
               };
           }
-          const message = yield* webThreads.append(place, "user", text);
           const started = yield* agent.begin({
             chatId: place,
             threadId: place,
             text,
-            where: yield* host.placeLabel(place),
+            where,
             requestId: `${place}:${requestId}`,
             source: "user",
           });
-          if (started === "folded")
-            return {
-              ok: true as const,
-              folded: true,
-              messageId: message.id,
-              at: message.at,
-            };
+          if (started === "folded") return { ok: true as const, folded: true };
           yield* Effect.forkDetach(
             Effect.scoped(Effect.andThen(holdChat(place), waitForAnswerAndPost(place, place))).pipe(
               Effect.catchCause((cause) =>
                 Effect.logError("web turn failed", cause).pipe(
                   Effect.andThen(
-                    webThreads
-                      .append(
-                        place,
-                        "agent",
-                        "Something went wrong on my side. I'll try to finish that.",
-                      )
-                      .pipe(Effect.ignore),
+                    deliver(
+                      place,
+                      "Something went wrong on my side. I'll try to finish that.",
+                    ).pipe(Effect.ignore),
                   ),
+                  Effect.andThen(webChat.setStatus(place, false, []).pipe(Effect.ignore)),
                 ),
               ),
             ),
           );
-          return {
-            ok: true as const,
-            folded: false,
-            messageId: message.id,
-            at: message.at,
-          };
+          return { ok: true as const, folded: false };
         });
 
       const nextWake = Effect.map(agent.pending, (pending) =>
