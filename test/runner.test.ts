@@ -1,6 +1,6 @@
 import { Arbitrary, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
-import { expect } from "vite-plus/test";
+import { expect, test } from "vite-plus/test";
 import { Automations } from "../src/automations.ts";
 import { ActionError } from "../src/errors.ts";
 import { Runner, Targets } from "../src/runner.ts";
@@ -135,6 +135,34 @@ property(
     );
   },
 );
+
+test("a webhook body keeps every dollar sequence and null in its payload", async () => {
+  const { run, calls } = setup();
+  const payload = "zero:\u0000 dollars:$$ match:$& before:$` after:$' end";
+  await Effect.runPromise(
+    run(
+      Effect.gen(function* () {
+        const runner = yield* Runner;
+        const hook = yield* runner.create(
+          { kind: "webhook" },
+          {
+            kind: "webhook",
+            url: "https://x.test/in",
+            method: "POST",
+            body: '{"msg":"{{payload}}"}',
+          },
+        );
+        expect(yield* runner.hook(hook.id, payload)).toEqual({
+          status: "succeeded",
+          output: "200 ok",
+        });
+      }),
+    ),
+  );
+  expect(JSON.parse(calls[0]![3]!)).toEqual({
+    msg: `The webhook was called with:\n${payload}`,
+  });
+});
 
 property(
   "a turn or post for an agent that does not exist is refused up front, naming the agent",

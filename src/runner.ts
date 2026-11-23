@@ -108,7 +108,7 @@ export class Runner extends Context.Service<
               return { status: "succeeded", output: action.text } as const;
             case "webhook": {
               const escaped = JSON.stringify(triggerPayload ?? "").slice(1, -1);
-              const body = action.body?.replaceAll("{{payload}}", escaped);
+              const body = action.body?.replaceAll("{{payload}}", () => escaped);
               const answer = yield* targets.call(action.url, action.method, body);
               return { status: "succeeded", output: answer } as const;
             }
