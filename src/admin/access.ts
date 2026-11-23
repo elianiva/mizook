@@ -1,4 +1,6 @@
 import { Effect, Schema } from "effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import type { Env } from "../env.ts";
 import { AccessDenied } from "../errors.ts";
 
@@ -55,7 +57,13 @@ const PINNED_ALGORITHM_NEVER_FROM_TOKEN = "RS256";
 
 export const makeVerifier = (
   config: AccessConfig,
-  fetchKeys: (url: string) => Promise<unknown> = async (url) => (await fetch(url)).json(),
+  fetchKeys: (url: string) => Promise<unknown> = (url) =>
+    Effect.runPromise(
+      HttpClient.get(url).pipe(
+        Effect.flatMap((response) => response.json),
+        Effect.provide(FetchHttpClient.layer),
+      ),
+    ),
   now: () => number = Date.now,
 ): Verifier => {
   const issuer = `https://${config.teamDomain.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;

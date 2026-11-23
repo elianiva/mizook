@@ -1,10 +1,15 @@
-import { Data, Duration, Effect } from "effect";
+import { Data, Duration, Effect, Layer, Predicate, Schema } from "effect";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
-export interface TelegramReply {
-  readonly ok: boolean;
-  readonly description?: string;
-  readonly parameters?: { readonly retry_after?: number };
-}
+const TelegramReplySchema = Schema.Struct({
+  ok: Schema.Boolean,
+  description: Schema.optionalKey(Schema.String),
+  parameters: Schema.optionalKey(Schema.Struct({ retry_after: Schema.optionalKey(Schema.Finite) })),
+});
+export type TelegramReply = typeof TelegramReplySchema.Type;
 
 const DEFAULT_ATTEMPTS = 5;
 const FIRST_RETRY_DELAY_MS = 1_000;
@@ -42,20 +47,25 @@ type Attempt =
   | { readonly done: true; readonly reply: TelegramReply }
   | { readonly done: false; readonly reply: TelegramReply; readonly reason: string };
 
+/** The failure's own message: the underlying fetch error when the transport failed. */
+const networkReason = (error: Error): string =>
+  HttpClientError.isHttpClientError(error) && Predicate.isError(error.reason.cause)
+    ? error.reason.cause.message
+    : error.message;
+
 const sendOnce = (token: string, method: string, body: unknown) =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal,
-      });
-      return { status: response.status, reply: (await response.json()) as TelegramReply };
-    },
-    catch: (cause) =>
-      new TelegramNetworkError({ reason: cause instanceof Error ? cause.message : String(cause) }),
-  }).pipe(
+  HttpClient.execute(
+    HttpClientRequest.post(`https://api.telegram.org/bot${token}/${method}`).pipe(
+      HttpClientRequest.bodyJsonUnsafe(body),
+    ),
+  ).pipe(
+    Effect.flatMap((response) =>
+      response.json.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(TelegramReplySchema)),
+        Effect.map((reply) => ({ status: response.status, reply })),
+      ),
+    ),
+    Effect.mapError((cause) => new TelegramNetworkError({ reason: networkReason(cause) })),
     Effect.map(({ status, reply }): Attempt => {
       if (reply.ok || !isRateLimitedOrServerError(status)) return { done: true, reply };
       return { done: false, reply, reason: reply.description ?? `HTTP ${status}` };
@@ -70,6 +80,7 @@ export const callTelegramEffect = (
   options: {
     readonly attempts?: number;
     readonly sleep?: (ms: number) => Effect.Effect<void>;
+    readonly fetch?: typeof globalThis.fetch;
   } = {},
 ): Effect.Effect<TelegramReply, TelegramCallError> => {
   const attempts = options.attempts ?? DEFAULT_ATTEMPTS;
@@ -78,7 +89,7 @@ export const callTelegramEffect = (
   const run = (
     attempt: number,
     lastFailure: string,
-  ): Effect.Effect<TelegramReply, TelegramCallError> =>
+  ): Effect.Effect<TelegramReply, TelegramCallError, HttpClient.HttpClient> =>
     attempt > attempts
       ? Effect.fail(new TelegramCallError({ method, attempts, reason: lastFailure }))
       : sendOnce(token, method, body).pipe(
@@ -93,7 +104,13 @@ export const callTelegramEffect = (
           }),
         );
 
-  return run(1, "no attempt");
+  const http =
+    options.fetch === undefined
+      ? FetchHttpClient.layer
+      : FetchHttpClient.layer.pipe(
+          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, options.fetch)),
+        );
+  return run(1, "no attempt").pipe(Effect.provide(http));
 };
 
 export const callTelegram = (
@@ -103,12 +120,14 @@ export const callTelegram = (
   options: {
     readonly attempts?: number;
     readonly sleep?: (ms: number) => Promise<void>;
+    readonly fetch?: typeof globalThis.fetch;
   } = {},
 ): Promise<TelegramReply> => {
   const { sleep } = options;
   return Effect.runPromise(
     callTelegramEffect(token, method, body, {
       ...(options.attempts !== undefined && { attempts: options.attempts }),
+      ...(options.fetch !== undefined && { fetch: options.fetch }),
       ...(sleep !== undefined && { sleep: (ms) => Effect.promise(() => sleep(ms)) }),
     }),
   );

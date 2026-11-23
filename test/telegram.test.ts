@@ -1,9 +1,7 @@
 import { Arbitrary, Effect, Schema } from "effect";
-import { afterEach, expect, vi } from "vite-plus/test";
+import { expect } from "vite-plus/test";
 import { callTelegram, type TelegramReply } from "../scripts/telegram.ts";
 import { property } from "./property.ts";
-
-afterEach(() => vi.unstubAllGlobals());
 
 const int = (minimum: number, maximum: number) =>
   Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum, maximum })));
@@ -93,17 +91,21 @@ property(
   ({ outcomes, attempts, token, method, body }) =>
     Effect.promise(async () => {
       const requests: Array<{ url: string; body: unknown }> = [];
-      vi.stubGlobal("fetch", async (url: string, init: { body: string }) => {
-        requests.push({ url, body: JSON.parse(init.body) });
+      const fetch = async (url: URL | string, init: { body: Uint8Array }) => {
+        requests.push({
+          url: String(url),
+          body: JSON.parse(new TextDecoder().decode(init.body)),
+        });
         const o: Outcome = outcomes[requests.length - 1] ?? { ...outcomes[0]!, kind: "ok" };
         if (o.kind === "network") throw new TypeError("fetch failed");
         const { status, body: payload } = reply(o);
         return Response.json(payload, { status });
-      });
+      };
       const sleeps: number[] = [];
       const expected = expectedRun(outcomes, attempts);
       const outcomeOfCall = await callTelegram(token, method, body, {
         attempts,
+        fetch: fetch as unknown as typeof globalThis.fetch,
         sleep: async (ms) => void sleeps.push(ms),
       }).then(
         (value) => ({ reply: value }),

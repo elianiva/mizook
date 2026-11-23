@@ -1,4 +1,8 @@
-import { Data, Effect, Option, Predicate, Schema } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { Query } from "foldkit/experimental";
 
 export const Channel = Schema.Struct({
@@ -159,20 +163,17 @@ class ApiError extends Data.TaggedError("ApiError")<{ readonly reason: string }>
   }
 }
 
-const reasonOf = (cause: unknown): string =>
-  Predicate.isError(cause) ? cause.message : String(cause);
+const isSuccess = (response: HttpClientResponse.HttpClientResponse): boolean =>
+  response.status >= 200 && response.status < 300;
 
-const sendRequest = (input: string, init?: RequestInit) =>
-  Effect.tryPromise({
-    try: (signal) => fetch(input, { ...init, signal }),
-    catch: (cause) => new ApiError({ reason: reasonOf(cause) }),
-  });
+const sendRequest = (request: HttpClientRequest.HttpClientRequest) =>
+  HttpClient.execute(request).pipe(
+    Effect.mapError((cause) => new ApiError({ reason: cause.message })),
+    Effect.provide(FetchHttpClient.layer),
+  );
 
-const readJson = (response: Response) =>
-  Effect.tryPromise({
-    try: () => response.json() as Promise<unknown>,
-    catch: (cause) => new ApiError({ reason: reasonOf(cause) }),
-  });
+const readJson = (response: HttpClientResponse.HttpClientResponse) =>
+  response.json.pipe(Effect.mapError((cause) => new ApiError({ reason: cause.message })));
 
 const fetchJson = <A, I>(
   schema: Schema.Codec<A, I>,
@@ -186,8 +187,10 @@ const fetchJson = <A, I>(
         .map(([key, value]) => [key, String(value)]),
     ).toString();
     const url = query === "" ? `/admin/api/${path}` : `/admin/api/${path}?${query}`;
-    const response = yield* sendRequest(url, { headers: { accept: "application/json" } });
-    if (!response.ok) {
+    const response = yield* sendRequest(
+      HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson),
+    );
+    if (!isSuccess(response)) {
       return yield* new ApiError({
         reason: response.status === 404 ? "Not found" : `Request failed (${response.status})`,
       });
@@ -397,16 +400,14 @@ const postSameOrigin = (
   body?: unknown,
 ): Effect.Effect<unknown, string> =>
   Effect.gen(function* () {
-    const response = yield* sendRequest(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
-      method: "POST",
-      headers: {
-        ...CSRF_HEADER,
-        "content-type": "application/json",
-      },
-      ...(body !== undefined && { body: JSON.stringify(body) }),
+    const post = HttpClientRequest.post(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
+      headers: { ...CSRF_HEADER, "content-type": "application/json" },
     });
+    const response = yield* sendRequest(
+      body === undefined ? post : HttpClientRequest.bodyJsonUnsafe(post, body),
+    );
     const reply: unknown = yield* readJson(response).pipe(Effect.orElseSucceed(() => ({})));
-    if (!response.ok) {
+    if (!isSuccess(response)) {
       const serverError = Option.map(Schema.decodeUnknownOption(ErrorReply)(reply), (r) => r.error);
       return yield* new ApiError({
         reason:

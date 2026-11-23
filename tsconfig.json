@@ -16,7 +16,7 @@
         "name": "@effect/language-service",
         "overrides": [
           {
-            "include": ["src/**/*.ts"],
+            "include": ["src/**/*.ts", "scripts/**/*.ts"],
             "options": {
               "allowedUnstableApis": ["effect/http"]
             }

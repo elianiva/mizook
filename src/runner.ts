@@ -23,7 +23,11 @@ export class Targets extends Context.Service<
       requestId: string,
     ): Effect.Effect<string, ActionError>;
     post(agent: string, place: string, text: string): Effect.Effect<void, ActionError>;
-    call(url: string, method: string, body: string | undefined): Effect.Effect<string, ActionError>;
+    call(
+      url: string,
+      method: "GET" | "POST" | "PUT",
+      body: string | undefined,
+    ): Effect.Effect<string, ActionError>;
   }
 >()("mizook/Targets") {}
 

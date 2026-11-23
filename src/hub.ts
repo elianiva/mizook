@@ -1,6 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Effect, Option, Schema } from "effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { AGENT_SLUG, menuWith, RESERVED_COMMANDS } from "./command-list.ts";
 import type { AgentChange, AgentInfo, AgentSpec, Profile, WebThreadInfo } from "./host.ts";
 import type { Env } from "./env.ts";
@@ -187,13 +190,14 @@ export class Hub extends DurableObject<Env> {
     if (!this.env.BOT_TOKEN) return;
     const commands = menuWith(this.agents());
     await Effect.runPromise(
-      Effect.tryPromise(() =>
-        fetch(`https://api.telegram.org/bot${this.env.BOT_TOKEN}/setMyCommands`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ commands }),
-        }),
-      ).pipe(Effect.catch((error) => Effect.logError("setMyCommands failed", error))),
+      HttpClient.execute(
+        HttpClientRequest.post(
+          `https://api.telegram.org/bot${this.env.BOT_TOKEN}/setMyCommands`,
+        ).pipe(HttpClientRequest.bodyJsonUnsafe({ commands })),
+      ).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.catch((error) => Effect.logError("setMyCommands failed", error)),
+      ),
     );
   }
 

@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
 import { Automations, type Automation } from "./automations.ts";
 import { Settings } from "./config.ts";
@@ -57,23 +59,22 @@ export class AutomationsObject extends DurableObject<Env> {
           catch: failed("posting failed"),
         }),
       call: (url, method, body) =>
-        Effect.tryPromise({
-          try: async () => {
-            const response = await fetch(url, {
-              method,
-              ...(body !== undefined &&
-                method !== "GET" && {
-                  body,
-                  headers: { "content-type": "application/json" },
-                }),
-            });
-            const text = await response.text();
-            return { status: response.status, ok: response.ok, text };
-          },
-          catch: failed(`${method} ${url} failed`),
-        }).pipe(
-          Effect.flatMap(({ status, ok, text }) =>
-            ok
+        HttpClient.execute(
+          body !== undefined && method !== "GET"
+            ? HttpClientRequest.bodyText(
+                HttpClientRequest.make(method)(url),
+                body,
+                "application/json",
+              )
+            : HttpClientRequest.make(method)(url),
+        ).pipe(
+          Effect.flatMap((response) =>
+            Effect.map(response.text, (text) => ({ status: response.status, text })),
+          ),
+          Effect.mapError(failed(`${method} ${url} failed`)),
+          Effect.provide(FetchHttpClient.layer),
+          Effect.flatMap(({ status, text }) =>
+            status >= 200 && status < 300
               ? Effect.succeed(`${status} ${text.slice(0, 2_000)}`)
               : Effect.fail(
                   new ActionError({
