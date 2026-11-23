@@ -14,7 +14,7 @@ import { Skills } from "./skills.ts";
 import { askTools } from "./tools.ts";
 import { Outbox } from "./outbox.ts";
 import { Usage } from "./usage.ts";
-import { State, type PendingTurn } from "./state.ts";
+import { State, type PendingTurn, type ThreadLine } from "./state.ts";
 
 export type AgentError = DurableError | StoreError | StateError;
 
@@ -42,6 +42,27 @@ const profileText = (profile: Profile): string =>
 
 const taggedWithPlace = (incoming: Incoming): string =>
   incoming.where === undefined ? incoming.text : `[in ${incoming.where}] ${incoming.text}`;
+
+/** A web thread is its own conversation: its turn sees that thread, and memory only when searched. */
+const isWebThread = (place: string): boolean => place.startsWith("web:");
+
+const THREAD_BYTES = 32_000;
+
+const threadText = (lines: ReadonlyArray<ThreadLine>): string => {
+  const encoder = new TextEncoder();
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const line of lines.toReversed()) {
+    const entry = `${line.role}: ${line.text}`;
+    bytes += encoder.encode(entry).length;
+    if (bytes > THREAD_BYTES && kept.length > 0) break;
+    kept.push(entry);
+  }
+  return kept.length === 0 ? "" : `<thread>\n${kept.toReversed().join("\n\n")}\n</thread>`;
+};
+
+const WEB_THREAD_NOTE =
+  "This is a web thread. The <thread> above is everything said here; your memory of the rest of the chat is not shown. Search it with tools.memory.search only when the user refers to something outside this thread.";
 
 const JOIN_RUNNING_TURN = "steer";
 const MAX_ASK_STEPS = 8;
@@ -144,7 +165,14 @@ export class Agent extends Context.Service<
           return entries;
         });
 
-      const logTranscript = Effect.fnUntraced(function* (entries: readonly EntryRecord[]) {
+      const logTranscript = Effect.fnUntraced(function* (
+        place: string,
+        entries: readonly EntryRecord[],
+      ) {
+        const said = (text: string) =>
+          isWebThread(place)
+            ? state.say(place, "agent", text).pipe(Effect.andThen(memory.append("agent", text)))
+            : memory.append("agent", text);
         for (const entry of entries) {
           const message = entry.model?.[0];
           if (entry.kind === "pi.assistant" && message?.role === "assistant") {
@@ -153,7 +181,7 @@ export class Agent extends Context.Service<
             const flush = Effect.suspend(() => {
               const text = reply.trim();
               reply = "";
-              return text === "" ? Effect.void : memory.append("agent", text);
+              return text === "" ? Effect.void : said(text);
             });
             for (const block of message.content) {
               if (block.type === "text") reply += block.text;
@@ -163,7 +191,7 @@ export class Agent extends Context.Service<
                   ? block.arguments.messages.filter((m): m is string => typeof m === "string")
                   : [];
                 for (const text of sentToUserCountsAsReply) {
-                  yield* memory.append("agent", text.trim());
+                  yield* said(text.trim());
                 }
               } else if (block.type === "toolCall") {
                 yield* flush;
@@ -187,6 +215,8 @@ export class Agent extends Context.Service<
         if (running) {
           const conversation = yield* conversationOf(running);
           yield* memory.append("user", said);
+          if (isWebThread(incoming.chatId))
+            yield* state.say(incoming.chatId, "user", incoming.text);
           const submission = yield* call("submit", () =>
             conversation.submit(
               {
@@ -207,15 +237,25 @@ export class Agent extends Context.Service<
 
         const matchesIntents = (incoming.source ?? "user") === "user";
         const woke = matchesIntents ? yield* intents.match(incoming.text, yield* nowDate) : [];
+        const isolated = isWebThread(incoming.chatId);
         const turnContext = [
           `Now: ${yield* now}`,
           profileText(yield* host.profile),
           skillCatalogue(yield* skills.index, yield* globalSkillsOrNone),
           intentText(woke),
+          isolated ? WEB_THREAD_NOTE : "",
         ]
           .filter((part) => part !== "")
           .join("\n\n");
-        const turn = yield* memory.beginTurn(said, { context: turnContext });
+        let turnText: string;
+        if (isolated) {
+          const earlier = threadText(yield* state.thread(incoming.chatId));
+          yield* state.say(incoming.chatId, "user", incoming.text);
+          yield* memory.append("user", said);
+          turnText = [earlier, turnContext, said].filter((part) => part !== "").join("\n\n");
+        } else {
+          turnText = (yield* memory.beginTurn(said, { context: turnContext })).text;
+        }
         const conversation = yield* call("createConversation", () =>
           harness.createConversation(
             {
@@ -228,7 +268,7 @@ export class Agent extends Context.Service<
             context,
           ),
         );
-        turnInputs.set(conversation.id, turn.text);
+        turnInputs.set(conversation.id, turnText);
         const pendingTurn: PendingTurn = {
           chatId: incoming.chatId,
           threadId: incoming.threadId,
@@ -289,7 +329,7 @@ export class Agent extends Context.Service<
         const entries = yield* allEntriesOf(conversation);
         const turn = (yield* state.turn(chatId)) ?? first;
         if (!turn.logged) {
-          yield* logTranscript(entries);
+          yield* logTranscript(chatId, entries);
           yield* state.putTurn({ ...turn, logged: true });
         }
         turnInputs.delete(conversation.id);

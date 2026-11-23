@@ -1,6 +1,6 @@
 import { Arbitrary, Effect, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
-import { expect } from "vite-plus/test";
+import { expect, test } from "vite-plus/test";
 import { State } from "../src/state.ts";
 import { property } from "./property.ts";
 
@@ -58,3 +58,25 @@ property(
     ),
   { runs: 40 },
 );
+
+test("a place's thread holds only what was said there, oldest first, newest 100 kept", () =>
+  Effect.runPromise(
+    withState(
+      Effect.gen(function* () {
+        const state = yield* State;
+        yield* state.say("web:a", "user", "hey");
+        yield* state.say("web:b", "user", "elsewhere");
+        yield* state.say("web:a", "agent", "hi");
+        expect(yield* state.thread("web:a")).toEqual([
+          { role: "user", text: "hey" },
+          { role: "agent", text: "hi" },
+        ]);
+        for (let i = 0; i < 120; i++) yield* state.say("web:c", "user", `m${i}`);
+        const kept = yield* state.thread("web:c");
+        expect(kept).toHaveLength(100);
+        expect(kept[0]?.text).toBe("m20");
+        expect(kept.at(-1)?.text).toBe("m119");
+        expect(yield* state.thread("web:b")).toEqual([{ role: "user", text: "elsewhere" }]);
+      }),
+    ),
+  ));
