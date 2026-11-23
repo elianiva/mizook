@@ -176,10 +176,21 @@ const Recover = Command.define("Recover", {
 
 const ScrollToBottom = Command.define("ScrollToBottom", {
   messages: [Message.CompletedScroll],
-  execute: scrollIntoViewAfterPaint("#messages-end").pipe(
+  // The latest question goes to the top, so its answer reads from the start.
+  execute: scrollIntoViewAfterPaint("#latest", { block: "start" }).pipe(
     Effect.as(Message.CompletedScroll()),
     Effect.catchCause(() => Effect.succeed(Message.CompletedScroll())),
   ),
+});
+
+const CopyText = Command.define("CopyText", {
+  args: { id: Schema.Finite, text: Schema.String },
+  messages: [Message.Copied, Message.FailedSend],
+  execute: ({ id, text }) =>
+    Effect.tryPromise(() => navigator.clipboard.writeText(text)).pipe(
+      Effect.as(Message.Copied({ id })),
+      Effect.orElseSucceed(() => Message.FailedSend({ reason: "Could not copy." })),
+    ),
 });
 
 const uiCommands = (commands: ReadonlyArray<ReturnType<typeof syncUiState>>) =>
@@ -354,6 +365,7 @@ export const init = (flags: Flags, url: Url) => {
     saved: false,
     armedArchive: Option.none(),
     renameThreadId: Option.none(),
+    copied: Option.none(),
   });
   return { model, commands: [] };
 };
@@ -669,6 +681,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const sent = update({ ...model, ui: filled.ui }, Message.ClickedSend());
       return { model: sent.model, commands: [...filled.commands, ...(sent.commands ?? [])] };
     },
+
+    ClickedLatest: () => ({ model, commands: [ScrollToBottom()] }),
+
+    ClickedCopy: ({ id, text }) => ({ model, commands: [CopyText({ id, text })] }),
+
+    Copied: ({ id }) => ({ model: { ...model, copied: Option.some(id) } }),
 
     ClickedDismissNotice: () => ({
       model: { ...model, notice: Option.none(), armedArchive: Option.none() },

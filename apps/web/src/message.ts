@@ -50,6 +50,9 @@ export const Message = defineMessageUnion({
   ClickedPrompt: { text: Schema.String },
   ClickedChoice: { text: Schema.String },
   ClickedDismissNotice: {},
+  ClickedLatest: {},
+  ClickedCopy: { id: Schema.Finite, text: Schema.String },
+  Copied: { id: Schema.Finite },
   GotUiMessage: { message: UiMessage },
 });
 

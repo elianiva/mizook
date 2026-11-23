@@ -31,3 +31,12 @@ export const previewText = (text: string): string =>
     .replace(/^\s{0,3}(?:[-+*]|\d+[.)])\s+/gm, "")
     .replace(/\s+/g, " ")
     .trim();
+
+/** The thread list's group for a time: today, yesterday, or earlier. */
+export const dayGroup = (at: number, now = Date.now()): "Today" | "Yesterday" | "Earlier" => {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const today = start.getTime();
+  if (at >= today) return "Today";
+  return at >= today - 86_400_000 ? "Yesterday" : "Earlier";
+};

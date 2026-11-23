@@ -23,6 +23,7 @@ export const Model = Schema.Struct({
   saved: Schema.Boolean,
   armedArchive: Schema.Option(Schema.String),
   renameThreadId: Schema.Option(Schema.String),
+  copied: Schema.Option(Schema.Finite),
 });
 
 export type Model = typeof Model.Type;

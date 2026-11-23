@@ -419,7 +419,7 @@ export type BreakpointsValue = CssGlobals | TokenValue<"breakpoints"> | CssVars 
 
 export type BrightnessValue = string | number | CssVars | AnyString
 
-export type ColorPaletteValue = "accent" | "amber" | "bg" | "bgHover" | "bgSubtle" | "black" | "blue" | "border" | "borderStrong" | "current" | "cyan" | "danger" | "emerald" | "fg" | "fgFaint" | "fgMuted" | "fuchsia" | "gray" | "green" | "indigo" | "lime" | "mauve" | "mist" | "neutral" | "ok" | "olive" | "orange" | "pink" | "purple" | "red" | "rose" | "sky" | "slate" | "stone" | "taupe" | "teal" | "transparent" | "violet" | "warn" | "white" | "yellow" | "zinc" | CssVars | AnyString | AnyNumber
+export type ColorPaletteValue = "accent" | "accentHover" | "accentSubtle" | "amber" | "bg" | "bgHover" | "bgSubtle" | "black" | "blue" | "border" | "borderStrong" | "current" | "cyan" | "danger" | "dangerSubtle" | "emerald" | "fg" | "fgFaint" | "fgMuted" | "fuchsia" | "gray" | "green" | "heading" | "indigo" | "lime" | "mauve" | "mist" | "neutral" | "ok" | "olive" | "orange" | "pink" | "purple" | "red" | "rose" | "sky" | "slate" | "stone" | "taupe" | "teal" | "transparent" | "violet" | "warn" | "white" | "yellow" | "zinc" | CssVars | AnyString | AnyNumber
 
 export type ColorsValue = CssColorGlobals | TokenValue<"colors"> | CssVars | AnyString | AnyNumber
 
@@ -505,7 +505,7 @@ export type InlineSizeValue = CssDimensionGlobals | TokenValue<"sizes"> | "1/12"
 
 export type InvertValue = string | number | CssVars | AnyString
 
-export type KeyframesValue = "bounce" | "fadeIn" | "ping" | "popIn" | "pulse" | "slideIn" | "spin" | CssVars | AnyString | AnyNumber
+export type KeyframesValue = "blink" | "bounce" | "fadeIn" | "ping" | "popIn" | "pulse" | "riseIn" | "slideIn" | "spin" | CssVars | AnyString | AnyNumber
 
 export type LetterSpacingsValue = CssGlobals | TokenValue<"letterSpacings"> | CssVars | AnyString | AnyNumber
 
@@ -629,7 +629,7 @@ export type TextDecorationValue = string | number | CssVars | AnyString
 
 export type TextGradientValue = "to-b" | "to-bl" | "to-br" | "to-l" | "to-r" | "to-t" | "to-tl" | "to-tr" | CssVars | AnyString | AnyNumber
 
-export type TextStyleValue = "2xl" | "3xl" | "4xl" | "5xl" | "6xl" | "7xl" | "8xl" | "9xl" | "lg" | "md" | "sm" | "xl" | "xs" | CssVars | AnyString | AnyNumber
+export type TextStyleValue = "2xl" | "3xl" | "4xl" | "5xl" | "6xl" | "7xl" | "8xl" | "9xl" | "caps" | "display" | "lg" | "md" | "meta" | "sm" | "xl" | "xs" | CssVars | AnyString | AnyNumber
 
 export type TransformOriginValue = string | number | CssVars | AnyString
 
