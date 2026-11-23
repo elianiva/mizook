@@ -15,7 +15,7 @@ import {
 } from "@mizook/chat-sync";
 import { Server } from "@yielded/sync/server";
 import { ProtocolError } from "@yielded/sync";
-import { Effect, Schema } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import type { Env } from "../env.ts";
 import type { AgentInfo, WebThreadInfo } from "../host.ts";
 import type { WebState, WebStatus, WebTurnResult } from "./types.ts";
@@ -96,8 +96,6 @@ const approvalsOf = (status: WebStatus): ReadonlyArray<Approval> =>
 const same = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
 
-const event = <const E extends ChatEvent>(value: E): E => value;
-
 const threadOf = (state: ServerState, threadId: string): ThreadSummary | undefined =>
   state.chat.threads.find((thread) => thread.id === threadId);
 
@@ -163,7 +161,7 @@ const create = (state: ServerState, payload: { readonly id: string; readonly age
     const chat = withThread(state.chat, thread);
     return Server.commit({
       state: { ...state, chat },
-      events: [event({ _tag: "Thread", thread })],
+      events: [ChatEvent.cases.Thread.make({ thread })],
       result: { thread },
     });
   });
@@ -208,10 +206,9 @@ const send = (
     return Server.commit({
       state: { chat, nextMessageId: state.nextMessageId + 1 },
       events: [
-        event({ _tag: "Thread", thread: updated }),
-        event({ _tag: "Message", threadId: thread.id, message }),
-        event({
-          _tag: "Status",
+        ChatEvent.cases.Thread.make({ thread: updated }),
+        ChatEvent.cases.Message.make({ threadId: thread.id, message }),
+        ChatEvent.cases.Status.make({
           threadId: thread.id,
           running: true,
           approvals: transcript.approvals,
@@ -236,8 +233,7 @@ const stop = (env: Env, state: ServerState, payload: { readonly threadId: string
         chat: withTranscript(state.chat, thread.id, { ...transcript, running: false }),
       },
       events: [
-        event({
-          _tag: "Status",
+        ChatEvent.cases.Status.make({
           threadId: thread.id,
           running: false,
           approvals: transcript.approvals,
@@ -275,7 +271,7 @@ const approve = (
           approvals,
         }),
       },
-      events: [event({ _tag: "Status", threadId: thread.id, running: true, approvals })],
+      events: [ChatEvent.cases.Status.make({ threadId: thread.id, running: true, approvals })],
       result: { ok: true },
     });
   });
@@ -292,7 +288,7 @@ const rename = (
     const updated: ThreadSummary = { ...thread, title, updated: Date.now() };
     return Server.commit({
       state: { ...state, chat: withThread(state.chat, updated) },
-      events: [event({ _tag: "Thread", thread: updated })],
+      events: [ChatEvent.cases.Thread.make({ thread: updated })],
       result: { thread: updated },
     });
   });
@@ -304,7 +300,7 @@ const archive = (state: ServerState, payload: { readonly threadId: string }) =>
     const updated: ThreadSummary = { ...thread, archived: true, updated: Date.now() };
     return Server.commit({
       state: { ...state, chat: withThread(state.chat, updated) },
-      events: [event({ _tag: "Thread", thread: updated })],
+      events: [ChatEvent.cases.Thread.make({ thread: updated })],
       result: undefined,
     });
   });
@@ -331,12 +327,7 @@ const refresh = (env: Env, state: ServerState, payload: { readonly threadId?: st
           }),
         },
         events: [
-          event({
-            _tag: "Status",
-            threadId: thread.id,
-            running: status.running,
-            approvals,
-          }),
+          ChatEvent.cases.Status.make({ threadId: thread.id, running: status.running, approvals }),
         ],
         result: undefined,
       });
@@ -352,7 +343,7 @@ const refresh = (env: Env, state: ServerState, payload: { readonly threadId?: st
     if (!same(nextAgents, state.chat.agents) || !same(nextDefault, state.chat.defaultAgent))
       events = [
         ...events,
-        event({ _tag: "Agents", agents: nextAgents, defaultAgent: nextDefault }),
+        ChatEvent.cases.Agents.make({ agents: nextAgents, defaultAgent: nextDefault }),
       ];
     const nextThreads = state.chat.threads.map((thread) => {
       const agent = nextAgents.find((candidate) => candidate.id === thread.agent.id);
@@ -363,7 +354,7 @@ const refresh = (env: Env, state: ServerState, payload: { readonly threadId?: st
         archived: thread.archived || agent === undefined,
       };
       if (!same(nextThread, thread))
-        events = [...events, event({ _tag: "Thread", thread: nextThread })];
+        events = [...events, ChatEvent.cases.Thread.make({ thread: nextThread })];
       return nextThread;
     });
     return Server.commit({
@@ -413,8 +404,8 @@ const appendAgent = (
         nextMessageId: state.nextMessageId + 1,
       },
       events: [
-        event({ _tag: "Thread", thread: updated }),
-        event({ _tag: "Message", threadId: thread.id, message }),
+        ChatEvent.cases.Thread.make({ thread: updated }),
+        ChatEvent.cases.Message.make({ threadId: thread.id, message }),
       ],
       result: { message },
     });
@@ -444,8 +435,7 @@ const setStatus = (
         }),
       },
       events: [
-        event({
-          _tag: "Status",
+        ChatEvent.cases.Status.make({
           threadId: thread.id,
           running: payload.running,
           approvals: payload.approvals,
@@ -465,7 +455,8 @@ export const makeWebChatServer = (env: Env): Server.Definition<typeof WebChat.sp
     snapshot: (state) => state.chat,
     authorize: ({ principal, operation }) =>
       Effect.suspend(() => {
-        if (operation._tag !== "action" && operation._tag !== "result") return Effect.void;
+        if (!Predicate.isTagged(operation, "action") && !Predicate.isTagged(operation, "result"))
+          return Effect.void;
         const internalOnly = INTERNAL_ACTIONS.has(operation.action);
         if (internalOnly && principal !== INTERNAL_PRINCIPAL)
           return Effect.fail(

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { Settings } from "./config.ts";
@@ -43,21 +43,18 @@ export const parseRpcBody = (body: string): unknown => {
 
 const MAX_PAUSE_SUMMARY_CHARS = 1_500;
 const Paused = Schema.Struct({ executionId: Schema.String });
-const decodePaused = Schema.decodeUnknownOption(Paused);
+const decodePaused = Schema.decodeUnknownOption(Schema.fromJsonString(Paused));
 
 export const pausedExecution = (
   text: string,
-): { readonly executionId: string; readonly summary: string } | undefined => {
-  const json = Effect.runSync(
-    Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => undefined }).pipe(
-      Effect.orElseSucceed(() => undefined),
-    ),
-  );
-  const resumable = decodePaused(json);
-  return resumable._tag === "Some"
-    ? { executionId: resumable.value.executionId, summary: text.slice(0, MAX_PAUSE_SUMMARY_CHARS) }
-    : undefined;
-};
+): { readonly executionId: string; readonly summary: string } | undefined =>
+  Option.match(decodePaused(text), {
+    onNone: () => undefined,
+    onSome: ({ executionId }) => ({
+      executionId,
+      summary: text.slice(0, MAX_PAUSE_SUMMARY_CHARS),
+    }),
+  });
 
 export class Executor extends Context.Service<
   Executor,

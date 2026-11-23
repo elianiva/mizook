@@ -85,22 +85,12 @@ export const ThreadState = Schema.Struct({
 });
 export type ThreadState = typeof ThreadState.Type;
 
-const ThreadEvent = Schema.TaggedStruct("Thread", { thread: ThreadSummary });
-const MessageEvent = Schema.TaggedStruct("Message", {
-  threadId: Schema.String,
-  message: ChatMessage,
+export const ChatEvent = Schema.TaggedUnion({
+  Thread: { thread: ThreadSummary },
+  Message: { threadId: Schema.String, message: ChatMessage },
+  Status: { threadId: Schema.String, running: Schema.Boolean, approvals: Schema.Array(Approval) },
+  Agents: { agents: Schema.Array(Agent), defaultAgent: DefaultAgent },
 });
-const StatusEvent = Schema.TaggedStruct("Status", {
-  threadId: Schema.String,
-  running: Schema.Boolean,
-  approvals: Schema.Array(Approval),
-});
-const AgentsEvent = Schema.TaggedStruct("Agents", {
-  agents: Schema.Array(Agent),
-  defaultAgent: DefaultAgent,
-});
-
-export const ChatEvent = Schema.Union([ThreadEvent, MessageEvent, StatusEvent, AgentsEvent]);
 export type ChatEvent = typeof ChatEvent.Type;
 
 const ActionError = Schema.Struct({ reason: Schema.String });
@@ -233,30 +223,25 @@ export const withTranscript = (
   transcripts: { ...state.transcripts, [threadId]: transcript },
 });
 
-export const applyEvent = (state: ChatState, event: ChatEvent): ChatState => {
-  switch (event._tag) {
-    case "Thread":
-      return withThread(state, event.thread);
-    case "Message": {
-      const transcript = state.transcripts[event.threadId] ?? emptyTranscript;
-      if (transcript.messages.some((message) => message.id === event.message.id)) return state;
-      return withTranscript(state, event.threadId, {
+export const applyEvent = (state: ChatState, event: ChatEvent): ChatState =>
+  ChatEvent.match(event, {
+    Thread: ({ thread }) => withThread(state, thread),
+    Message: ({ threadId, message }) => {
+      const transcript = state.transcripts[threadId] ?? emptyTranscript;
+      if (transcript.messages.some((existing) => existing.id === message.id)) return state;
+      return withTranscript(state, threadId, {
         ...transcript,
-        messages: [...transcript.messages, event.message],
+        messages: [...transcript.messages, message],
       });
-    }
-    case "Status": {
-      const transcript = state.transcripts[event.threadId] ?? emptyTranscript;
-      return withTranscript(state, event.threadId, {
-        ...transcript,
-        running: event.running,
-        approvals: event.approvals,
-      });
-    }
-    case "Agents":
-      return { ...state, agents: event.agents, defaultAgent: event.defaultAgent };
-  }
-};
+    },
+    Status: ({ threadId, running, approvals }) =>
+      withTranscript(state, threadId, {
+        ...(state.transcripts[threadId] ?? emptyTranscript),
+        running,
+        approvals,
+      }),
+    Agents: ({ agents, defaultAgent }) => ({ ...state, agents, defaultAgent }),
+  });
 
 const optimistic = {
   create: (state: ChatState, payload: { readonly id: string; readonly agent?: string }) => {

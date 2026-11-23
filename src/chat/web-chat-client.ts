@@ -1,6 +1,6 @@
 import { WebChat, type Approval } from "@mizook/chat-sync";
 import { Cloudflare } from "@yielded/sync-platform-cloudflare";
-import { Context, Effect, Layer, Schedule } from "effect";
+import { Context, Effect, Layer, Predicate, Schedule } from "effect";
 import { StateError } from "../errors.ts";
 import type { Env } from "../env.ts";
 import { INTERNAL_PRINCIPAL } from "./web-chat-source.ts";
@@ -39,49 +39,34 @@ export class WebChatClient extends Context.Service<
           fetch: (request) =>
             Effect.promise(() => env.WebChat.getByName("web-chat").fetch(request)),
         });
+        const execute = <A extends Parameters<typeof client.execute>[0]>(
+          operation: string,
+          action: A,
+          payload: Parameters<typeof client.execute<A>>[1]["payload"],
+        ) =>
+          client
+            .execute(action, { commandId: crypto.randomUUID(), admittedGeneration: null, payload })
+            .pipe(
+              Effect.retry(Schedule.recurs(3)),
+              Effect.mapError((cause) => new StateError({ operation, cause })),
+              Effect.flatMap((outcome) =>
+                Predicate.isTagged(outcome, "Rejected")
+                  ? Effect.fail(new StateError({ operation, cause: outcome.error.reason }))
+                  : Effect.void,
+              ),
+            );
         return WebChatClient.of({
           appendAgent: (place, text) =>
-            Effect.gen(function* () {
-              const outcome = yield* client
-                .execute(WebChat.actions.appendAgent, {
-                  commandId: crypto.randomUUID(),
-                  admittedGeneration: null,
-                  payload: { threadId: threadIdOf(place), text },
-                })
-                .pipe(Effect.retry(Schedule.recurs(3)));
-              if (outcome._tag === "Rejected")
-                return yield* new StateError({
-                  operation: "append a web message",
-                  cause: outcome.error.reason,
-                });
-            }).pipe(
-              Effect.mapError((cause) =>
-                cause instanceof StateError
-                  ? cause
-                  : new StateError({ operation: "append a web message", cause }),
-              ),
-            ),
+            execute("append a web message", WebChat.actions.appendAgent, {
+              threadId: threadIdOf(place),
+              text,
+            }),
           setStatus: (place, running, approvals) =>
-            Effect.gen(function* () {
-              const outcome = yield* client
-                .execute(WebChat.actions.setStatus, {
-                  commandId: crypto.randomUUID(),
-                  admittedGeneration: null,
-                  payload: { threadId: threadIdOf(place), running, approvals },
-                })
-                .pipe(Effect.retry(Schedule.recurs(3)));
-              if (outcome._tag === "Rejected")
-                return yield* new StateError({
-                  operation: "publish the web turn status",
-                  cause: outcome.error.reason,
-                });
-            }).pipe(
-              Effect.mapError((cause) =>
-                cause instanceof StateError
-                  ? cause
-                  : new StateError({ operation: "publish the web turn status", cause }),
-              ),
-            ),
+            execute("publish the web turn status", WebChat.actions.setStatus, {
+              threadId: threadIdOf(place),
+              running,
+              approvals,
+            }),
         });
       }),
     );

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { WebChat } from "@mizook/chat-sync";
 import { ProtocolError } from "@yielded/sync";
 import { Cloudflare } from "@yielded/sync-platform-cloudflare";
@@ -126,7 +126,7 @@ export default {
       }
       const body = await request.text();
       const routing = await Effect.runPromise(Effect.option(routeOf(body)));
-      if (routing._tag === "None") return new Response("Bad request", { status: 400 });
+      if (Option.isNone(routing)) return new Response("Bad request", { status: 400 });
       const { place, command, agentId } = routing.value;
       const hub = env.Hub.getByName("hub") as unknown as HubApi;
       const agentForUpdate = await hub.route(place, command, agentId);
