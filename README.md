@@ -101,15 +101,77 @@ Each name may be a secret or a variable; the workflow reads both.
 
 The deploy job points Telegram at the Worker after each deploy. To do it by hand: `vp run webhook https://mzk.elianiva.com`.
 
-## Dashboard and web chat
+## Dashboard
 
-A dashboard lives at `/admin`, per agent: an overview (every agent's spend and what waits on you, the running turn, approvals, recent messages, a budget warning), the log, the memory view, usage (per day, model, kind and tool), the automations that act for it, settings, and an audit of what was done from it. It can answer an approval, cancel an automation and stop the running turn, each after a second click, and it edits an agent's model, budget, time zone and instructions through the same code as the slash commands. Writes need the Access token, a same-origin post with an `x-mizook-csrf` header, and are logged in the agent's `app_audit` table. It is a Foldkit app in `apps/dashboard`, styled with Panda, and the Worker serves its build as static assets next to a JSON API at `/admin/api`.
+The dashboard at `/admin` is the operator's view of each agent. It reads only `/admin/api`, a JSON API that the Worker serves next to the dashboard's static build. Most pages are per agent, and the agent menu keeps the section you are on while you switch.
+
+### Overview
+
+![The Overview page: needs you, spend, agents and recent messages](docs/screenshots/overview.png)
+
+Overview answers two questions first: what needs you, and what it costs. Approvals and running turns sit in the "Needs you" panel with Approve, Deny and Stop. Below it are spend today with a 14-day sparkline, the daily budget meter, message and memory counts, the compression ratio, the next automation, a table of every agent, and the most recent messages.
+
+### Log
+
+![The Log page with kind filters and search](docs/screenshots/log.png)
+
+The log holds the whole chat, word for word. Filter by kind (user, agent, tool, echo or note), search the text, and open a row for the full message. A tool call and its result are separate rows, so a program that makes ten calls is easy to follow.
+
+### Memory
+
+![The Memory page: coverage map and the lines the agent reads](docs/screenshots/memory.png)
+
+The memory page shows how the chat becomes a handful of lines. It reports the view against the 128 KB budget and gives the compression ratio, then maps the whole chat from oldest to newest, colored by depth. The list below shows each line the agent reads, its message range, and the original words at depth 0. Higher levels say how many messages they cover.
+
+### Usage
+
+![The Usage page: spend chart, daily table, models and tools](docs/screenshots/usage.png)
+
+Usage shows calls, input, output, cache hits and cost for 7, 30 or 90 days. A bar chart plots spend per day with the peak, then tables break the same range down by day, model, tool and message kind.
+
+### Automations
+
+![The Automations page with countdowns and trigger details](docs/screenshots/automations.png)
+
+Automations are listed soonest first. Each card shows the countdown, the trigger kind and cadence, the prompt, the raw spec, and a Cancel action. The Runs page keeps the last 25 executions with their status, duration and error. Each agent is capped at 20 automation turns an hour.
+
+### Agents
+
+![The Agents page: one card per agent with role and tools](docs/screenshots/agents.png)
+
+Each agent gets a card with its name, `/slug`, role, model, tool count and a `default` badge. New agent is the primary action in the title row. The editor sets the name, command, role, model, persona, and the only tools the agent may use. An empty tool list gives it every tool. Deleting an agent asks for a second click, and the default agent cannot be deleted.
+
+### Skills, intents and policies
+
+![The Skills page: skills, standing intents and executor policies](docs/screenshots/skills.png)
+
+One page holds the three things an agent learns. Skills list when to use them, whether they are pinned, how often they ran and when they last ran. Standing intents show their state, trigger words, fire count and expiry. Policies set `allow`, `ask` or `deny` for a tool match. Each table has an editor for its rows.
+
+### Artifacts
+
+![The Artifacts page: publish form and artifact cards](docs/screenshots/artifacts.png)
+
+Publish Markdown or HTML from the page, then manage every artifact the agent owns. A card shows the kind, version, content type, update time, link and visibility. Public artifacts open at their URL, private ones keep the link closed, and Source shows the stored text. Versions live in R2.
+
+### Settings, profile and audit
+
+Settings edits the agent's model, daily budget, time zone and extra instructions through the same code as the slash commands. Profile holds the about-you text and the rules every agent shares. Audit lists each write made from the dashboard with the person, action, target and result.
+
+Dashboard writes update the page before the request lands and roll back if the API rejects it. Every POST is same-origin and carries an `x-mizook-csrf` header, the Worker checks the Access token on every admin request, and writes are recorded in the agent's `app_audit` table. The app is Foldkit with Panda's `css()`: warm paper, dark ink, a magenta accent, square corners and hairline borders. It follows the system light or dark theme, and the rail becomes a menu on narrow screens.
+
+`Ctrl K` (or `⌘K`) opens a jump menu for every section and every agent. `g` followed by `o` (overview), `l` (log), `m` (memory), `u` (usage), `a` (automations), `r` (runs), `k` (skills), `e` (agents), `s` (settings), `f` (artifacts), `t` (audit) or `p` (profile) goes there directly.
+
+To work on the dashboard, run `pnpm --filter @mizook/dashboard dev`. It proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`).
+
+## Web chat
 
 The web chat lives at `/c`. The Worker redirects `/` to `/c`. One `WebChat` Durable Object owns the thread list and every transcript. The browser keeps a replica in IndexedDB and talks to that source over an Effect RPC WebSocket at `/c/sync`. The agent appends its bubbles and turn status through the same source actions, so the order the browser reads is the order the agent wrote. The old `web_messages` and `web_threads` tables are read once when the source initializes. Threads are places named `web:<id>`, so one web agent shares its memory across every web thread.
 
 The chat installs as a PWA: `/manifest.webmanifest` names it, and a service worker at `/sw.js` with scope `/c` precaches the shell, so an installed copy opens offline. The synced replica lives in IndexedDB, so the saved thread list and conversations stay readable without a connection and queued actions run when the connection returns. Navigations go to the network first so Cloudflare Access can still renew a session. Only a failed fetch falls back to the cached shell. A new version takes over on the next launch, after every open copy has closed.
 
-To work on the dashboard, run `pnpm --filter @mizook/dashboard dev`; it proxies `/admin/api` to `ADMIN_API` (default `http://localhost:8788`). To work on the chat, run `pnpm --filter @mizook/web dev`; it proxies `/c/sync` to `CHAT_API` (default `http://localhost:8788`), including the WebSocket. `pnpm run build` builds both apps and assembles `dist/` as one asset directory.
+To work on the chat, run `pnpm --filter @mizook/web dev`. It proxies `/c/sync` to `CHAT_API` (default `http://localhost:8788`), including the WebSocket. `pnpm run build` builds both apps and assembles `dist/` as one asset directory.
+
+## Access
 
 Alchemy declares both Access applications and their policies (`alchemy.run.ts`), so `alchemy deploy` is the whole setup. Set these first:
 
