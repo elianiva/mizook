@@ -4,7 +4,8 @@ const pair = (light: string, dark: string) => ({ value: { base: light, _dark: da
 
 /**
  * The one look: warm paper, dark ink, a magenta accent, square corners, and
- * Google Sans for text with IBM Plex Mono for figures and metadata.
+ * Google Sans for text with IBM Plex Mono for figures and metadata. Flat like a
+ * blueprint: hairline frames, crosshair corners, no shadows, one filled cell.
  */
 export const mizookPreset = definePreset({
   name: "mizook",
@@ -53,6 +54,107 @@ export const mizookPreset = definePreset({
         fadeIn: { from: { opacity: "0" } },
         popIn: { from: { opacity: "0", scale: "0.96" } },
         slideIn: { from: { translate: "-100% 0" } },
+        riseIn: { from: { opacity: "0", translate: "0 4px" } },
+        blink: { "50%": { opacity: "0.25" } },
+      },
+      textStyles: {
+        // Page names: heavy uppercase with a little air, like the site's headings.
+        display: {
+          value: {
+            fontFamily: "sans",
+            fontWeight: 800,
+            letterSpacing: "0.025em",
+            lineHeight: "1.1",
+            textTransform: "uppercase",
+            fontVariantNumeric: "tabular-nums",
+          },
+        },
+        // Gutter labels: small mono capitals spaced wide.
+        caps: {
+          value: {
+            fontFamily: "mono",
+            fontSize: "11px",
+            fontWeight: 400,
+            letterSpacing: "0.18em",
+            lineHeight: "1.2",
+            textTransform: "uppercase",
+          },
+        },
+        meta: {
+          value: {
+            fontFamily: "mono",
+            fontSize: "xs",
+            fontVariantNumeric: "tabular-nums",
+            letterSpacing: "0",
+          },
+        },
+      },
+      recipes: {
+        /**
+         * Every button: flat and square. `primary` is the one filled magenta
+         * cell on a screen; `line` is a hairline cell; `ghost` has no edge.
+         */
+        button: {
+          className: "btn",
+          base: {
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
+            flexShrink: 0,
+            border: "1px solid transparent",
+            backgroundColor: "transparent",
+            color: "fg",
+            fontFamily: "mono",
+            fontSize: "xs",
+            letterSpacing: "caps",
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+            userSelect: "none",
+            transitionProperty: "color, background-color, border-color",
+            transitionDuration: "120ms",
+            transitionTimingFunction: "out",
+            "& svg": { flexShrink: 0 },
+            _disabled: { opacity: "0.4", cursor: "not-allowed" },
+          },
+          variants: {
+            tone: {
+              primary: {
+                backgroundColor: "accent",
+                borderColor: "accent",
+                color: "white",
+                _hover: { backgroundColor: "accentHover", borderColor: "accentHover" },
+                _disabled: { _hover: { backgroundColor: "accent" } },
+              },
+              line: {
+                borderColor: "border",
+                backgroundColor: "bg",
+                _hover: {
+                  borderColor: "borderStrong",
+                  backgroundColor: "bgSubtle",
+                  color: "accent",
+                },
+              },
+              ghost: {
+                color: "fgMuted",
+                _hover: { backgroundColor: "bgHover", color: "accent" },
+              },
+              danger: {
+                borderColor: "border",
+                color: "danger",
+                _hover: { borderColor: "danger", backgroundColor: "dangerSubtle" },
+              },
+            },
+            size: {
+              md: { height: "40px", paddingInline: "14px" },
+              sm: { height: "32px", paddingInline: "10px" },
+              icon: { width: "40px", height: "40px", padding: "0" },
+              iconSm: { width: "32px", height: "32px", padding: "0" },
+            },
+          },
+          defaultVariants: { tone: "line", size: "md" },
+        },
       },
       tokens: {
         fonts: {
@@ -67,6 +169,9 @@ export const mizookPreset = definePreset({
           xl: { value: "19px" },
           "2xl": { value: "26px" },
           "3xl": { value: "30px" },
+          "4xl": { value: "40px" },
+          "5xl": { value: "56px" },
+          "6xl": { value: "80px" },
         },
         letterSpacings: {
           tight: { value: "-0.02em" },
@@ -84,14 +189,18 @@ export const mizookPreset = definePreset({
           bgSubtle: pair("#fff1f5", "#1f1416"),
           bgHover: pair("#ffe8f0", "#2a1a1f"),
           border: pair("#fbdbe8", "#3a2530"),
-          borderStrong: pair("#f4a9c6", "#6b3d52"),
+          borderStrong: pair("#f6a9cb", "#6b3d52"),
           fg: pair("#431407", "#fbe8ee"),
           fgMuted: pair("#8a6a78", "#b99aa8"),
           fgFaint: pair("#b08f9d", "#80636f"),
-          accent: pair("#c0175f", "#f472b6"),
+          accent: pair("#e60076", "#f472b6"),
           ok: pair("#15803d", "#62c073"),
           warn: pair("#b45309", "#f5a623"),
           danger: pair("#dc2626", "#ff6166"),
+          accentHover: pair("#c4005f", "#f9a8d4"),
+          accentSubtle: pair("#fdf2f8", "#2a1520"),
+          heading: pair("#500724", "#fce7f3"),
+          dangerSubtle: pair("#fef2f2", "#2a1414"),
         },
       },
     },

@@ -9,7 +9,8 @@
   "type": "module",
   "exports": {
     "./preset": "./src/preset.ts",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./icons": "./src/icons.ts"
   },
   "dependencies": {
     "@fontsource-variable/google-sans": "^5.3.2",
