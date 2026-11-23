@@ -14,6 +14,8 @@ import {
   artifactsQuery,
   type ArtifactRow,
   AgentKind,
+  type AgentRow,
+  agentsQuery,
   IntentRow,
   PolicyRow,
   RunRow,
@@ -63,6 +65,7 @@ import {
 import { currentChannel } from "./update.ts";
 import { channelsQuery } from "./api.ts";
 import type { GlyphName } from "@mizook/design/icons";
+import { AGENT_SLUG, agentFormReady, type AgentForm } from "./forms.ts";
 import { icon } from "./icon.ts";
 import { type Destination, matches, sections } from "./palette.ts";
 import { NavState } from "./nav.ts";
@@ -1610,6 +1613,208 @@ const agentView = (model: Model, channel: string, h: H): Html =>
     ],
   );
 
+const managerText = (key: string, label: string, value: string, h: H, placeholder: string): Html =>
+  agentField(
+    label,
+    h.input([
+      h.Class(`${ui.input} ${ui.fullWidth}`),
+      h.Type("text"),
+      h.AriaLabel(label),
+      h.Placeholder(placeholder),
+      h.Value(value),
+      h.OnInput((next) => Message.UpdatedAgentManageField({ key, value: next })),
+    ]),
+    h,
+  );
+
+const managerTextarea = (
+  key: string,
+  label: string,
+  value: string,
+  h: H,
+  placeholder: string,
+  tall = false,
+): Html =>
+  agentField(
+    label,
+    h.textarea([
+      h.Class(ui.textarea),
+      ...(tall ? [h.Style({ minHeight: "200px" })] : []),
+      h.AriaLabel(label),
+      h.Placeholder(placeholder),
+      h.Value(value),
+      h.OnInput((next) => Message.UpdatedAgentManageField({ key, value: next })),
+    ]),
+    h,
+  );
+
+const agentManagerForm = (
+  model: Model,
+  form: AgentForm,
+  row: Option.Option<AgentRow>,
+  h: H,
+): Html => {
+  const fields = form.fields;
+  const isNew = form.slug === "";
+  const ready = agentFormReady(form);
+  const isDefault = Option.exists(row, (agent) => agent.isDefault);
+  const armed = isArmed(model.armed, `agent-delete:${form.slug}`);
+  const slug = (fields["slug"] ?? "").trim();
+  return h.div(
+    [h.Class(ui.stack)],
+    [
+      h.div(
+        [h.Class(ui.form)],
+        [
+          managerText("name", "Name", fields["name"] ?? "", h, "Fact-checker"),
+          managerText("slug", "Command", fields["slug"] ?? "", h, "factchecker"),
+          slug !== "" && !AGENT_SLUG.test(slug)
+            ? h.p(
+                [h.Class(ui.danger)],
+                ["Lowercase letters, digits and _, 2 to 32, starting with a letter."],
+              )
+            : h.empty,
+          managerTextarea(
+            "role",
+            "Role",
+            fields["role"] ?? "",
+            h,
+            "What this agent is for. Added to its instructions.",
+            true,
+          ),
+          managerText("model", "Model", fields["model"] ?? "", h, "default"),
+          managerTextarea(
+            "persona",
+            "Persona",
+            fields["persona"] ?? "",
+            h,
+            "Empty uses the shared persona.",
+          ),
+          managerTextarea(
+            "tools",
+            "Only these tools",
+            fields["tools"] ?? "",
+            h,
+            "One path or namespace per line, like gmail or executor.search. Empty gives every tool.",
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class(ui.actions)],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              h.Class(ready ? ui.buttonPrimary : ui.button),
+              h.Disabled(!ready),
+              h.OnClick(Message.ClickedAgentManageSave()),
+            ],
+            [isNew ? "Create agent" : "Save"],
+          ),
+          ...(isNew || isDefault
+            ? []
+            : [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.Class(ui.buttonDanger),
+                    h.OnClick(Message.ClickedAgentManageDelete({ slug: form.slug })),
+                  ],
+                  [armed ? "Confirm: delete it and its memory" : "Delete agent"],
+                ),
+              ]),
+          h.button(
+            [h.Type("button"), h.Class(ui.button), h.OnClick(Message.ClickedAgentManageClose())],
+            ["Close"],
+          ),
+        ],
+      ),
+    ],
+  );
+};
+
+const agentCard = (row: AgentRow, h: H): Html =>
+  h.keyed("div")(
+    row.slug,
+    [h.Class(ui.card)],
+    [
+      h.div(
+        [h.Class(ui.cardBody)],
+        [
+          h.div(
+            [h.Class(ui.cardHead)],
+            [
+              h.span([h.Class(ui.strong)], [row.name]),
+              h.span([h.Class(`${ui.muted} ${ui.mono}`)], [`/${row.slug}`]),
+              row.isDefault ? h.span([h.Class(ui.badge)], ["default"]) : h.empty,
+            ],
+          ),
+          h.div(
+            [h.Class(ui.clamp3)],
+            [row.role.trim() === "" ? "No role. It answers as the default persona." : row.role],
+          ),
+          h.div(
+            [h.Class(ui.cardFoot)],
+            [
+              h.span(
+                [h.Class(`${ui.muted} ${ui.mono}`)],
+                [
+                  `${row.model === "" ? "default model" : row.model} · ${
+                    row.tools === null ? "every tool" : `${row.tools.length} tools`
+                  }`,
+                ],
+              ),
+              h.button(
+                [
+                  h.Type("button"),
+                  h.Class(ui.buttonSmall),
+                  h.OnClick(Message.ClickedAgentManage({ slug: row.slug })),
+                ],
+                ["Edit"],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+
+const agentsView = (model: Model, h: H): Html =>
+  remote(agentsQuery.read(model.agents), h, skeletonView(h, 2), (rows) =>
+    Option.match(model.agentForm, {
+      onSome: (form) =>
+        agentManagerForm(
+          model,
+          form,
+          Array.findFirst(rows, (agent) => agent.slug === form.slug),
+          h,
+        ),
+      onNone: () =>
+        h.div(
+          [h.Class(ui.stack)],
+          [
+            h.div(
+              [h.Class(ui.toolbar)],
+              [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.Class(ui.buttonSmall),
+                    h.OnClick(Message.ClickedAgentManage({ slug: "" })),
+                  ],
+                  ["New agent"],
+                ),
+              ],
+            ),
+            h.div(
+              [h.Class(ui.cards)],
+              Array.map(rows, (row) => agentCard(row, h)),
+            ),
+          ],
+        ),
+    }),
+  );
+
 const runStatusColor = (status: string): string =>
   status === "succeeded"
     ? "var(--colors-ok)"
@@ -2232,6 +2437,7 @@ const pageName = (route: AppRoute): string =>
     Usage: () => "Usage",
     Schedules: () => "Automations",
     Agent: () => "Skills",
+    Agents: () => "Agents",
     Profile: () => "Profile",
     Runs: () => "Runs",
     Settings: () => "Settings",
@@ -2294,6 +2500,7 @@ const pageView = (model: Model, h: H): Html =>
           ),
         Agent: () =>
           h.div([h.Class(ui.page)], [titleView("Skills", [], h), agentView(model, channel, h)]),
+        Agents: () => h.div([h.Class(ui.page)], [titleView("Agents", [], h), agentsView(model, h)]),
         Profile: () =>
           h.div(
             [h.Class(ui.page)],

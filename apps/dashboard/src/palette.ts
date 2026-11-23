@@ -8,6 +8,7 @@ import type { AppRoute } from "./route.ts";
 import { PaletteState } from "./palette-machine.ts";
 import {
   agentRouter,
+  agentsRouter,
   artifactsRouter,
   auditRouter,
   logRouter,
@@ -44,6 +45,7 @@ export const GO_KEYS: Readonly<Record<string, string>> = {
   automations: "a",
   runs: "r",
   skills: "k",
+  agents: "e",
   settings: "s",
   artifacts: "f",
   audit: "t",
@@ -80,6 +82,7 @@ export const sections = (model: Model): ReadonlyArray<Destination> => {
     section("Watch", "bars", "Usage", usageRouter({ channel, days: none }), on("Usage")),
     section("Automate", "clock", "Automations", schedulesRouter({ channel }), on("Schedules")),
     section("Automate", "pulse", "Runs", runsRouter({ channel }), on("Runs")),
+    section("Configure", "bot", "Agents", agentsRouter({ channel }), on("Agents")),
     section("Configure", "book", "Skills", agentRouter({ channel }), on("Agent")),
     section("Configure", "sliders", "Settings", settingsRouter({ channel }), on("Settings")),
     section(

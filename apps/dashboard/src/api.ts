@@ -203,6 +203,9 @@ const fetchJson = <A, I>(
 
 const channelArgs = { channel: Schema.String };
 
+/** Keyed by channel alone, so an optimistic write can name the entry it patches. */
+export const channelKey = ({ channel }: { readonly channel: string }): string => channel;
+
 export const channelsQuery = Query.define({
   name: "Channels",
   data: Schema.Array(Channel),
@@ -213,6 +216,7 @@ export const channelsQuery = Query.define({
 export const overviewQuery = Query.define({
   name: "Overview",
   args: channelArgs,
+  toKey: channelKey,
   data: Overview,
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Overview, "overview", { c: channel }),
@@ -254,6 +258,7 @@ export const usageQuery = Query.define({
 export const schedulesQuery = Query.define({
   name: "Schedules",
   args: channelArgs,
+  toKey: channelKey,
   data: Schema.Array(ScheduleRow),
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(ScheduleRow), "schedules", { c: channel }),
@@ -269,6 +274,7 @@ export const profileQuery = Query.define({
 export const skillsQuery = Query.define({
   name: "Skills",
   args: channelArgs,
+  toKey: channelKey,
   data: Schema.Array(SkillRow),
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(SkillRow), "skills", { c: channel }),
@@ -277,6 +283,7 @@ export const skillsQuery = Query.define({
 export const intentsQuery = Query.define({
   name: "Intents",
   args: channelArgs,
+  toKey: channelKey,
   data: Schema.Array(IntentRow),
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(IntentRow), "intents", { c: channel }),
@@ -285,6 +292,7 @@ export const intentsQuery = Query.define({
 export const policiesQuery = Query.define({
   name: "Policies",
   args: channelArgs,
+  toKey: channelKey,
   data: Schema.Array(PolicyRow),
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(PolicyRow), "policies", { c: channel }),
@@ -338,6 +346,7 @@ export const ArtifactSource = Schema.Struct({
 export const artifactsQuery = Query.define({
   name: "Artifacts",
   args: channelArgs,
+  toKey: channelKey,
   data: Schema.Array(ArtifactRow),
   error: Schema.String,
   execute: ({ channel }) => fetchJson(Schema.Array(ArtifactRow), "artifacts", { c: channel }),
@@ -349,6 +358,27 @@ export const artifactQuery = Query.define({
   data: ArtifactSource,
   error: Schema.String,
   execute: ({ channel, name }) => fetchJson(ArtifactSource, "artifact", { c: channel, name }),
+});
+
+export const AgentRow = Schema.Struct({
+  doName: Schema.String,
+  slug: Schema.String,
+  name: Schema.String,
+  role: Schema.String,
+  persona: Schema.String,
+  tools: Schema.NullOr(Schema.Array(Schema.String)),
+  isDefault: Schema.Boolean,
+  model: Schema.String,
+  created: Schema.Finite,
+  lastActive: Schema.Finite,
+});
+export type AgentRow = typeof AgentRow.Type;
+
+export const agentsQuery = Query.define({
+  name: "Agents",
+  data: Schema.Array(AgentRow),
+  error: Schema.String,
+  execute: fetchJson(Schema.Array(AgentRow), "agents", {}),
 });
 
 export const summaryQuery = Query.define({
@@ -396,11 +426,12 @@ const ErrorReply = Schema.Struct({ error: Schema.String });
 
 const postSameOrigin = (
   path: string,
-  channel: string,
+  channel: string | undefined,
   body?: unknown,
 ): Effect.Effect<unknown, string> =>
   Effect.gen(function* () {
-    const post = HttpClientRequest.post(`/admin/api/${path}?c=${encodeURIComponent(channel)}`, {
+    const scope = channel === undefined ? "" : `?c=${encodeURIComponent(channel)}`;
+    const post = HttpClientRequest.post(`/admin/api/${path}${scope}`, {
       headers: { ...CSRF_HEADER, "content-type": "application/json" },
     });
     const response = yield* sendRequest(
@@ -460,3 +491,28 @@ export const postAgent = (channel: string, edit: AgentEdit): Effect.Effect<strin
   const { kind, ...body } = edit;
   return postSameOrigin(kind, channel, body).pipe(Effect.map(channelReplyOf));
 };
+
+/** What the Agents form sends. `tools: null` is every tool. */
+export const AgentManagement = Schema.Struct({
+  slug: Schema.String,
+  name: Schema.String,
+  role: Schema.String,
+  persona: Schema.String,
+  model: Schema.String,
+  tools: Schema.NullOr(Schema.Array(Schema.String)),
+});
+export type AgentManagement = typeof AgentManagement.Type;
+
+export const AgentOp = Schema.Literals(["create", "update", "delete"]);
+export type AgentOp = typeof AgentOp.Type;
+
+export const postManagedAgent = (
+  op: AgentOp,
+  slug: string,
+  body: AgentManagement | undefined,
+): Effect.Effect<string, string> =>
+  postSameOrigin(
+    op === "create" ? "agents" : `agents/${encodeURIComponent(slug)}/${op}`,
+    undefined,
+    body ?? {},
+  ).pipe(Effect.map(channelReplyOf));

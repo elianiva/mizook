@@ -11,11 +11,25 @@ import {
   ActionKind,
   AgentEdit,
   AgentKind,
+  AgentManagement,
+  AgentOp,
+  AgentRow,
+  Channel,
+  agentsQuery,
+  channelKey,
+  IntentRow,
+  Overview,
+  PolicyRow,
+  Profile,
+  ScheduleRow,
+  SkillRow,
+  ArtifactRow,
   ArtifactAction,
   artifactQuery,
   artifactsQuery,
   postAgent,
   postArtifact,
+  postManagedAgent,
   postNewArtifact,
   SettingKey,
   auditQuery,
@@ -36,7 +50,9 @@ import {
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
+import { AgentForm, OpenAgentForm, emptyAgentForm, agentFormReady, managementOf } from "./forms.ts";
 import { Message } from "./message.ts";
+import { patch, patchKeyed } from "./optimistic.ts";
 import { Model } from "./model.ts";
 import { NavState } from "./nav.ts";
 import { Confirmation, isArmed } from "./confirmation.ts";
@@ -126,37 +142,58 @@ const PostNewArtifact = Command.define("PostNewArtifact", {
     kind: Schema.String,
     content: Schema.String,
   },
-  messages: [Message.SucceededPublish, Message.FailedAction],
+  messages: [Message.SucceededPublish, Message.FailedPublish],
   execute: ({ channel, name, kind, content }) =>
     postNewArtifact(channel, { name, kind, content }).pipe(
       Effect.map((url) => Message.SucceededPublish({ url })),
-      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+      Effect.catch((reason) =>
+        Effect.succeed(Message.FailedPublish({ reason, name, kind, content })),
+      ),
     ),
 });
 
 const SaveSetting = Command.define("SaveSetting", {
   args: { channel: Schema.String, key: SettingKey, value: Schema.String },
-  messages: [Message.SucceededSetting, Message.FailedAction],
+  messages: [Message.SucceededAction, Message.FailedSetting],
   execute: ({ channel, key, value }) =>
     postSetting(channel, key, value).pipe(
-      Effect.map((said) => Message.SucceededSetting({ key, said })),
-      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+      Effect.as(Message.SucceededAction()),
+      Effect.catch((reason) => Effect.succeed(Message.FailedSetting({ reason, key, value }))),
     ),
 });
 
 const PostAgent = Command.define("PostAgent", {
-  args: { channel: Schema.String, edit: AgentEdit },
-  messages: [Message.SucceededAgentEdit, Message.FailedAction],
-  execute: ({ channel, edit }) =>
+  args: { channel: Schema.String, edit: AgentEdit, editor: OpenAgentForm },
+  messages: [Message.SucceededAction, Message.FailedAgentEdit],
+  execute: ({ channel, edit, editor }) =>
     postAgent(channel, edit).pipe(
-      Effect.map((said) => Message.SucceededAgentEdit({ said })),
-      Effect.catch((reason) => Effect.succeed(Message.FailedAction({ reason }))),
+      Effect.as(Message.SucceededAction()),
+      Effect.catch((reason) => Effect.succeed(Message.FailedAgentEdit({ reason, editor }))),
+    ),
+});
+
+const PostManagedAgent = Command.define("PostManagedAgent", {
+  args: {
+    op: AgentOp,
+    slug: Schema.String,
+    body: Schema.NullOr(AgentManagement),
+    form: Schema.Option(AgentForm),
+  },
+  messages: [Message.SucceededAction, Message.FailedAgentManage],
+  execute: ({ op, slug, body, form }) =>
+    postManagedAgent(op, slug, body ?? undefined).pipe(
+      Effect.as(Message.SucceededAction()),
+      Effect.catch((reason) => Effect.succeed(Message.FailedAgentManage({ reason, form }))),
     ),
 });
 
 const channels = channelsQuery.lift<Model, Message>({
   parentField: "channels",
   toParentMessage: (message) => Message.GotChannelsMessage({ message }),
+});
+const agents = agentsQuery.lift<Model, Message>({
+  parentField: "agents",
+  toParentMessage: (message) => Message.GotAgentsMessage({ message }),
 });
 const overview = overviewQuery.lift<Model, Message>({
   parentField: "overview",
@@ -391,6 +428,7 @@ const draftsOf = (route: AppRoute) =>
     Usage: () => ({ draftKind: "", draftSearch: "" }),
     Schedules: () => ({ draftKind: "", draftSearch: "" }),
     Agent: () => ({ draftKind: "", draftSearch: "" }),
+    Agents: () => ({ draftKind: "", draftSearch: "" }),
     Profile: () => ({ draftKind: "", draftSearch: "" }),
     Runs: () => ({ draftKind: "", draftSearch: "" }),
     Settings: () => ({ draftKind: "", draftSearch: "" }),
@@ -409,6 +447,7 @@ const setRoute =
         nav: () => NavState.Closed(),
         armed: () => Confirmation.Resting(),
         editor: () => Option.none(),
+        agentForm: () => Option.none(),
         notice: () => Option.none(),
         draftKind: () => drafts.draftKind,
         draftSearch: () => drafts.draftSearch,
@@ -447,6 +486,7 @@ const loadRoute: Step = (model) =>
             (stepModel) => intents.revalidateOrLoad(stepModel, { channel }),
             (stepModel) => policies.revalidateOrLoad(stepModel, { channel }),
           ]),
+        Agents: () => agents.revalidateOrLoad(model),
         Runs: () => runs.revalidateOrLoad(model, { channel }),
         Settings: () => overview.revalidateOrLoad(model, { channel }),
         Audit: () => audit.revalidateOrLoad(model, { channel }),
@@ -463,6 +503,200 @@ const loadRoute: Step = (model) =>
       }),
   });
 
+type OverviewData = typeof Overview.Type;
+type SkillData = typeof SkillRow.Type;
+type IntentData = typeof IntentRow.Type;
+type PolicyData = typeof PolicyRow.Type;
+type ScheduleData = typeof ScheduleRow.Type;
+type ArtifactData = typeof ArtifactRow.Type;
+type ProfileData = typeof Profile.Type;
+type ChannelData = typeof Channel.Type;
+
+/**
+ * Optimistic writes: each helper changes what the page shows before the server answers.
+ * The command that follows refetches either way, so the server's answer settles the value
+ * and a refused write rolls back on its own.
+ */
+const onOverview = (model: Model, channel: string, change: (o: OverviewData) => OverviewData) =>
+  modifyFields(model, {
+    overview: (query) => patchKeyed<OverviewData>()(query, channelKey({ channel }), change),
+  });
+const onSchedules = (
+  model: Model,
+  channel: string,
+  change: (rows: ReadonlyArray<ScheduleData>) => ReadonlyArray<ScheduleData>,
+) =>
+  modifyFields(model, {
+    schedules: (query) =>
+      patchKeyed<ReadonlyArray<ScheduleData>>()(query, channelKey({ channel }), change),
+  });
+const onArtifacts = (
+  model: Model,
+  channel: string,
+  change: (rows: ReadonlyArray<ArtifactData>) => ReadonlyArray<ArtifactData>,
+) =>
+  modifyFields(model, {
+    artifacts: (query) =>
+      patchKeyed<ReadonlyArray<ArtifactData>>()(query, channelKey({ channel }), change),
+  });
+const onAgents = (
+  model: Model,
+  change: (rows: ReadonlyArray<AgentRow>) => ReadonlyArray<AgentRow>,
+) => modifyFields(model, { agents: (query) => patch<ReadonlyArray<AgentRow>>()(query, change) });
+const onChannels = (
+  model: Model,
+  change: (rows: ReadonlyArray<ChannelData>) => ReadonlyArray<ChannelData>,
+) =>
+  modifyFields(model, {
+    channels: (query) => patch<ReadonlyArray<ChannelData>>()(query, change),
+  });
+
+const withAction = (model: Model, channel: string, action: ActionKind, id: number): Model => {
+  if (action === "approve" || action === "deny")
+    return onOverview(model, channel, (o) => ({
+      ...o,
+      approvals: o.approvals.filter((approval) => approval.id !== id),
+    }));
+  if (action === "stop") return onOverview(model, channel, (o) => ({ ...o, turns: [] }));
+  return onOverview(
+    onSchedules(model, channel, (rows) => rows.filter((row) => row.id !== id)),
+    channel,
+    (o) => ({ ...o, schedules: Math.max(0, o.schedules - 1) }),
+  );
+};
+
+const withSetting = (model: Model, channel: string, key: SettingKey, value: string): Model =>
+  onOverview(model, channel, (o) => ({
+    ...o,
+    settings:
+      value.trim() === ""
+        ? Record.remove(o.settings, key)
+        : Record.set(o.settings, key, value.trim()),
+  }));
+
+const withArtifact = (model: Model, channel: string, name: string, action: ArtifactAction): Model =>
+  onArtifacts(model, channel, (rows) =>
+    action === "delete"
+      ? rows.filter((row) => row.name !== name)
+      : rows.map((row) => (row.name === name ? { ...row, visibility: action } : row)),
+  );
+
+const withEdit = (model: Model, channel: string, edit: AgentEdit): Model => {
+  const key = channelKey({ channel });
+  switch (edit.kind) {
+    case "profile":
+      return modifyFields(model, {
+        profile: (query) =>
+          patch<ProfileData>()(query, () => ({
+            about: edit.about ?? "",
+            rules: edit.rules ?? [],
+          })),
+      });
+    case "skills": {
+      const name = edit.name ?? "";
+      return modifyFields(model, {
+        skills: (query) =>
+          patchKeyed<ReadonlyArray<SkillData>>()(query, key, (rows) =>
+            edit.action === "delete"
+              ? rows.filter((row) => row.name !== name)
+              : rows.some((row) => row.name === name)
+                ? rows.map((row) =>
+                    row.name === name
+                      ? { ...row, description: edit.description ?? "", body: edit.body ?? "" }
+                      : row,
+                  )
+                : [
+                    ...rows,
+                    {
+                      name,
+                      description: edit.description ?? "",
+                      body: edit.body ?? "",
+                      pinned: false,
+                      useCount: 0,
+                      usedAt: null,
+                      updated: Date.now(),
+                    },
+                  ],
+          ),
+      });
+    }
+    case "intents":
+      return modifyFields(model, {
+        intents: (query) =>
+          patchKeyed<ReadonlyArray<IntentData>>()(query, key, (rows) =>
+            edit.action === "cancel"
+              ? rows.map((row) => (row.id === edit.id ? { ...row, state: "cancelled" } : row))
+              : rows.map((row) =>
+                  row.id === edit.id
+                    ? {
+                        ...row,
+                        description: edit.description ?? row.description,
+                        triggers: edit.triggers ?? row.triggers,
+                        expires: edit.expires ?? row.expires,
+                        maxFires: edit.maxFires ?? row.maxFires,
+                        cooldown:
+                          edit.cooldownHours === undefined
+                            ? row.cooldown
+                            : edit.cooldownHours * 3_600_000,
+                      }
+                    : row,
+                ),
+          ),
+      });
+    case "policies":
+      return modifyFields(model, {
+        policies: (query) =>
+          patchKeyed<ReadonlyArray<PolicyData>>()(query, key, (rows) =>
+            edit.action === "remove"
+              ? rows.filter((row) => row.id !== edit.id)
+              : rows.map((row) =>
+                  row.id === edit.id
+                    ? {
+                        ...row,
+                        match: edit.match ?? row.match,
+                        decision: edit.decision ?? row.decision,
+                      }
+                    : row,
+                ),
+          ),
+      });
+  }
+};
+
+const agentFields = (row: AgentRow): { readonly [key: string]: string } => ({
+  slug: row.slug,
+  name: row.name,
+  role: row.role,
+  persona: row.persona,
+  model: row.model,
+  tools: (row.tools ?? []).join("\n"),
+});
+
+const openAgentManager = (model: Model, slug: string): UpdateReturn => {
+  if (slug === "")
+    return { model: modifyFields(model, { agentForm: () => Option.some(emptyAgentForm()) }) };
+  const row = Option.flatMap(AsyncData.getData(agentsQuery.read(model.agents)), (rows) =>
+    Array.findFirst(rows, (agent) => agent.slug === slug),
+  );
+  return {
+    model: modifyFields(model, {
+      agentForm: () =>
+        Option.map(row, (agent): AgentForm => ({ slug: agent.slug, fields: agentFields(agent) })),
+      armed: () => Confirmation.Resting(),
+      notice: () => Option.none(),
+    }),
+  };
+};
+
+/** Agents feed the rail, the jump menu and the summary table, so a change refreshes them all. */
+const refreshAgents: Step = (model) =>
+  Update.combine(model, [
+    (stepModel) => agents.revalidate(stepModel),
+    (stepModel) => channels.revalidate(stepModel),
+    (stepModel) => summary.revalidate(stepModel),
+    loadRoute,
+  ]);
+
 const navigate = (model: Model, route: AppRoute): UpdateReturn => ({
   model,
   commands: [NavigateInternal({ url: routeHref(route) })],
@@ -474,6 +708,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
   const model = Model.make({
     route,
     channels: channelsQuery.init(),
+    agents: agentsQuery.init(),
     overview: overviewQuery.init(),
     log: logQuery.init(),
     entry: entryQuery.init(),
@@ -493,6 +728,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url: Url) =
     artifact: artifactQuery.init(),
     recent: recentQuery.init(),
     editor: Option.none(),
+    agentForm: Option.none(),
     drafts: {},
     composer: { name: "", kind: "markdown", content: "" },
     armed: Confirmation.Resting(),
@@ -547,6 +783,7 @@ const step = (model: Model, message: Message): UpdateReturn =>
     ChangedUrl: ({ url }) =>
       Update.combine(model, [setRoute(urlToAppRoute(url)), loadChannels, loadRoute]),
 
+    GotAgentsMessage: ({ message }) => agents.fold(model, message),
     GotChannelsMessage: ({ message }) =>
       Update.combine(model, [(stepModel) => channels.fold(stepModel, message), loadRoute]),
     GotOverviewMessage: ({ message }) => overview.fold(model, message),
@@ -591,8 +828,11 @@ const step = (model: Model, message: Message): UpdateReturn =>
           return Option.match(currentChannel(model), {
             onNone: () => ({ model }),
             onSome: (channel) => ({
-              model: modifyFields(model, { notice: () => Option.none() }),
-              commands: [PostAgent({ channel, edit })],
+              model: modifyFields(withEdit(model, channel, edit), {
+                editor: () => Option.none(),
+                notice: () => Option.none(),
+              }),
+              commands: [PostAgent({ channel, edit, editor: model.editor })],
             }),
           });
         },
@@ -612,18 +852,121 @@ const step = (model: Model, message: Message): UpdateReturn =>
       return Option.match(currentChannel(model), {
         onNone: () => ({ model }),
         onSome: (channel) => ({
-          model: modifyFields(model, { armed: () => Confirmation.Resting() }),
-          commands: [PostAgent({ channel, edit })],
+          model: modifyFields(withEdit(model, channel, edit), {
+            armed: () => Confirmation.Resting(),
+            editor: () => Option.none(),
+          }),
+          commands: [PostAgent({ channel, edit, editor: model.editor })],
         }),
       });
     },
-    SucceededAgentEdit: ({ said }) =>
-      loadRoute(
-        modifyFields(model, {
-          editor: () => Option.none(),
+    FailedAgentEdit: ({ reason, editor }) =>
+      loadRoute(modifyFields(model, { editor: () => editor, notice: () => Option.some(reason) })),
+
+    ClickedAgentManage: ({ slug }) => openAgentManager(model, slug),
+    UpdatedAgentManageField: ({ key, value }) => ({
+      model: modifyFields(model, {
+        agentForm: (form) =>
+          Option.map(form, (open) => ({ ...open, fields: { ...open.fields, [key]: value } })),
+      }),
+    }),
+    ClickedAgentManageClose: () => ({
+      model: modifyFields(model, {
+        agentForm: () => Option.none(),
+        armed: () => Confirmation.Resting(),
+      }),
+    }),
+    ClickedAgentManageSave: () =>
+      Option.match(model.agentForm, {
+        onNone: () => ({ model }),
+        onSome: (form) => {
+          if (!agentFormReady(form)) return { model };
+          const body = managementOf(form);
+          const op: AgentOp = form.slug === "" ? "create" : "update";
+          const row: AgentRow = {
+            doName: `agent:pending-${body.slug}`,
+            slug: body.slug,
+            name: body.name,
+            role: body.role,
+            persona: body.persona,
+            tools: body.tools,
+            isDefault: false,
+            model: body.model,
+            created: Date.now(),
+            lastActive: 0,
+          };
+          const patched = onAgents(model, (rows) =>
+            op === "create"
+              ? [...rows, row]
+              : rows.map((agent) =>
+                  agent.slug === form.slug
+                    ? {
+                        ...agent,
+                        ...row,
+                        doName: agent.doName,
+                        isDefault: agent.isDefault,
+                        created: agent.created,
+                        lastActive: agent.lastActive,
+                      }
+                    : agent,
+                ),
+          );
+          return {
+            model: modifyFields(
+              op === "update"
+                ? onChannels(patched, (rows) =>
+                    rows.map((channel) =>
+                      channel.threadId === form.slug
+                        ? { ...channel, name: body.name, threadId: body.slug }
+                        : channel,
+                    ),
+                  )
+                : patched,
+              { agentForm: () => Option.none(), notice: () => Option.none() },
+            ),
+            commands: [PostManagedAgent({ op, slug: form.slug, body, form: Option.some(form) })],
+          };
+        },
+      }),
+    ClickedAgentManageDelete: ({ slug }) => {
+      const key = `agent-delete:${slug}`;
+      if (!isArmed(model.armed, key)) {
+        return {
+          model: modifyFields(model, {
+            armed: () => Confirmation.Armed({ key }),
+            notice: () => Option.none(),
+          }),
+        };
+      }
+      const doName = Option.flatMap(AsyncData.getData(agentsQuery.read(model.agents)), (rows) =>
+        Option.map(
+          Array.findFirst(rows, (agent) => agent.slug === slug),
+          (agent) => agent.doName,
+        ),
+      );
+      const wasOpen = Option.exists(doName, (name) =>
+        Option.contains(routeChannel(model.route), name),
+      );
+      const patched = onChannels(
+        onAgents(model, (rows) => rows.filter((agent) => agent.slug !== slug)),
+        (rows) => rows.filter((channel) => channel.threadId !== slug),
+      );
+      return {
+        model: modifyFields(patched, {
           armed: () => Confirmation.Resting(),
-          notice: () => Option.some(said),
+          agentForm: () => Option.none(),
         }),
+        commands: [
+          PostManagedAgent({ op: "delete", slug, body: null, form: model.agentForm }),
+          ...(wasOpen
+            ? [NavigateInternal({ url: routeHref(AppRoute.Overview({ channel: Option.none() })) })]
+            : []),
+        ],
+      };
+    },
+    FailedAgentManage: ({ reason, form }) =>
+      refreshAgents(
+        modifyFields(model, { agentForm: () => form, notice: () => Option.some(reason) }),
       ),
 
     UpdatedComposer: ({ field, value }) => ({
@@ -638,17 +981,22 @@ const step = (model: Model, message: Message): UpdateReturn =>
       Option.match(currentChannel(model), {
         onNone: () => ({ model }),
         onSome: (channel) => ({
-          model: modifyFields(model, { notice: () => Option.none() }),
+          model: modifyFields(model, {
+            composer: () => ({ name: "", kind: "markdown" as const, content: "" }),
+            notice: () => Option.none(),
+          }),
           commands: [
             PostNewArtifact({ channel, ...model.composer, name: model.composer.name.trim() }),
           ],
         }),
       }),
     SucceededPublish: ({ url }) =>
+      loadRoute(modifyFields(model, { notice: () => Option.some(`Published: ${url}`) })),
+    FailedPublish: ({ reason, name, kind, content }) =>
       loadRoute(
         modifyFields(model, {
-          composer: () => ({ name: "", kind: "markdown" as const, content: "" }),
-          notice: () => Option.some(`Published: ${url}`),
+          composer: () => ({ name, kind: kind === "html" ? "html" : "markdown", content }),
+          notice: () => Option.some(reason),
         }),
       ),
 
@@ -669,7 +1017,9 @@ const step = (model: Model, message: Message): UpdateReturn =>
         };
       }
       return {
-        model: modifyFields(model, { armed: () => Confirmation.Resting() }),
+        model: modifyFields(withArtifact(model, channel.value, name, action), {
+          armed: () => Confirmation.Resting(),
+        }),
         commands: [PostArtifact({ channel: channel.value, name, action })],
       };
     },
@@ -685,7 +1035,10 @@ const step = (model: Model, message: Message): UpdateReturn =>
           Option.match(Record.get(model.drafts, key), {
             onNone: () => ({ model }),
             onSome: (value) => ({
-              model: modifyFields(model, { notice: () => Option.none() }),
+              model: modifyFields(withSetting(model, channel, key, value), {
+                drafts: (drafts) => Record.remove(drafts, key),
+                notice: () => Option.none(),
+              }),
               commands: [SaveSetting({ channel, key, value })],
             }),
           }),
@@ -694,15 +1047,18 @@ const step = (model: Model, message: Message): UpdateReturn =>
       Option.match(currentChannel(model), {
         onNone: () => ({ model }),
         onSome: (channel) => ({
-          model: modifyFields(model, { notice: () => Option.none() }),
+          model: modifyFields(withSetting(model, channel, key, ""), {
+            drafts: (drafts) => Record.remove(drafts, key),
+            notice: () => Option.none(),
+          }),
           commands: [SaveSetting({ channel, key, value: "" })],
         }),
       }),
-    SucceededSetting: ({ key, said }) =>
+    FailedSetting: ({ reason, key, value }) =>
       loadRoute(
         modifyFields(model, {
-          drafts: (drafts) => Record.remove(drafts, key),
-          notice: () => Option.some(said),
+          drafts: (drafts) => Record.set(drafts, key, value),
+          notice: () => Option.some(reason),
         }),
       ),
 
@@ -739,11 +1095,13 @@ const step = (model: Model, message: Message): UpdateReturn =>
         };
       }
       return {
-        model: modifyFields(model, { armed: () => Confirmation.Resting() }),
+        model: modifyFields(withAction(model, channel.value, action, id), {
+          armed: () => Confirmation.Resting(),
+        }),
         commands: [PostAction({ channel: channel.value, action, id })],
       };
     },
-    SucceededAction: () => loadRoute(modifyFields(model, { notice: () => Option.some("Done.") })),
+    SucceededAction: () => refreshAgents(model),
     FailedAction: ({ reason }) =>
       loadRoute(modifyFields(model, { notice: () => Option.some(reason) })),
 

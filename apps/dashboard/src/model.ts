@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 
 import {
-  AgentKind,
+  agentsQuery,
   artifactQuery,
   artifactsQuery,
   auditQuery,
@@ -20,18 +20,11 @@ import {
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
+import { OpenAgentForm, OpenAgentManagerForm } from "./forms.ts";
 import { Confirmation } from "./confirmation.ts";
 import { NavState } from "./nav.ts";
 import { PaletteState } from "./palette-machine.ts";
 import { AppRoute } from "./route.ts";
-
-const OpenAgentForm = Schema.Option(
-  Schema.Struct({
-    kind: AgentKind,
-    id: Schema.String,
-    fields: Schema.Record(Schema.String, Schema.String),
-  }),
-);
 
 const UnsavedSettingInputs = Schema.Record(Schema.String, Schema.String);
 
@@ -44,6 +37,7 @@ const ArtifactBeingWritten = Schema.Struct({
 export const Model = Schema.Struct({
   route: AppRoute,
   channels: channelsQuery.Model,
+  agents: agentsQuery.Model,
   overview: overviewQuery.Model,
   log: logQuery.Model,
   entry: entryQuery.Model,
@@ -63,6 +57,7 @@ export const Model = Schema.Struct({
   artifact: artifactQuery.Model,
   recent: recentQuery.Model,
   editor: OpenAgentForm,
+  agentForm: OpenAgentManagerForm,
   drafts: UnsavedSettingInputs,
   composer: ArtifactBeingWritten,
   armed: Confirmation,

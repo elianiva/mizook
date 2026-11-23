@@ -6,6 +6,7 @@ import { Url } from "foldkit/url";
 import {
   ActionKind,
   AgentKind,
+  agentsQuery,
   ArtifactAction,
   artifactQuery,
   artifactsQuery,
@@ -26,6 +27,7 @@ import {
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
+import { AgentForm, OpenAgentForm } from "./forms.ts";
 
 export const Message = defineMessageUnion({
   CompletedNavigateInternal: {},
@@ -33,6 +35,7 @@ export const Message = defineMessageUnion({
   ClickedLink: { request: UrlRequest },
   ChangedUrl: { url: Url },
   GotChannelsMessage: { message: channelsQuery.Message },
+  GotAgentsMessage: { message: agentsQuery.Message },
   GotOverviewMessage: { message: overviewQuery.Message },
   GotLogMessage: { message: logQuery.Message },
   GotEntryMessage: { message: entryQuery.Message },
@@ -53,7 +56,13 @@ export const Message = defineMessageUnion({
     kind: AgentKind,
     id: Schema.String,
   },
-  SucceededAgentEdit: { said: Schema.String },
+  FailedAgentEdit: { reason: Schema.String, editor: OpenAgentForm },
+  ClickedAgentManage: { slug: Schema.String },
+  UpdatedAgentManageField: { key: Schema.String, value: Schema.String },
+  ClickedAgentManageClose: {},
+  ClickedAgentManageSave: {},
+  ClickedAgentManageDelete: { slug: Schema.String },
+  FailedAgentManage: { reason: Schema.String, form: Schema.Option(AgentForm) },
   SelectedChannel: { channel: Schema.String },
   UpdatedKindDraft: { value: Schema.String },
   UpdatedSearchDraft: { value: Schema.String },
@@ -68,12 +77,18 @@ export const Message = defineMessageUnion({
   UpdatedComposer: { field: Schema.Literals(["name", "kind", "content"]), value: Schema.String },
   ClickedPublish: {},
   SucceededPublish: { url: Schema.String },
+  FailedPublish: {
+    reason: Schema.String,
+    name: Schema.String,
+    kind: Schema.String,
+    content: Schema.String,
+  },
+  FailedSetting: { reason: Schema.String, key: SettingKey, value: Schema.String },
   GotAuditMessage: { message: auditQuery.Message },
   GotRecentMessage: { message: recentQuery.Message },
   UpdatedDraft: { key: SettingKey, value: Schema.String },
   ClickedSave: { key: SettingKey },
   ClickedResetSetting: { key: SettingKey },
-  SucceededSetting: { key: SettingKey, said: Schema.String },
   FailedAction: { reason: Schema.String },
   TickedOverviewRefresh: {},
   SwipedRight: {},

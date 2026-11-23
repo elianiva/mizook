@@ -12,6 +12,7 @@ export const AppRoute = defineRouteUnion({
   Usage: { channel: MaybeString, days: MaybeString },
   Schedules: { channel: MaybeString },
   Agent: { channel: MaybeString },
+  Agents: { channel: MaybeString },
   Profile: { channel: MaybeString },
   Runs: { channel: MaybeString },
   Settings: { channel: MaybeString },
@@ -75,6 +76,13 @@ export const agentRouter = pipe(
   Route.mapTo(AppRoute.Agent),
 );
 
+export const agentsRouter = pipe(
+  admin,
+  slash(literal("agents")),
+  Route.query(Schema.Struct({ channel: optional })),
+  Route.mapTo(AppRoute.Agents),
+);
+
 export const profileRouter = pipe(
   admin,
   slash(literal("profile")),
@@ -117,6 +125,7 @@ const routeParser = Route.oneOf(
   usageRouter,
   schedulesRouter,
   agentRouter,
+  agentsRouter,
   profileRouter,
   runsRouter,
   settingsRouter,
@@ -136,6 +145,7 @@ export const routeChannel = (route: AppRoute): Option.Option<string> =>
     Usage: ({ channel }) => channel,
     Schedules: ({ channel }) => channel,
     Agent: ({ channel }) => channel,
+    Agents: ({ channel }) => channel,
     Profile: ({ channel }) => channel,
     Runs: ({ channel }) => channel,
     Settings: ({ channel }) => channel,
@@ -153,6 +163,7 @@ export const routeHref = (route: AppRoute): string =>
     Usage: usageRouter,
     Schedules: schedulesRouter,
     Agent: agentRouter,
+    Agents: agentsRouter,
     Profile: profileRouter,
     Runs: runsRouter,
     Settings: settingsRouter,
@@ -177,6 +188,7 @@ export const routeOnChannel = (route: AppRoute, channel: string): AppRoute => {
     Usage: ({ days }) => AppRoute.Usage({ channel: selected, days }),
     Schedules: () => AppRoute.Schedules({ channel: selected }),
     Agent: () => AppRoute.Agent({ channel: selected }),
+    Agents: () => AppRoute.Agents({ channel: selected }),
     Profile: () => AppRoute.Profile({ channel: selected }),
     Runs: () => AppRoute.Runs({ channel: selected }),
     Settings: () => AppRoute.Settings({ channel: selected }),

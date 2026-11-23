@@ -1,6 +1,6 @@
 import { Effect, Option, Predicate } from "effect";
 import type { Env } from "../env.ts";
-import type { AgentInfo, Profile } from "../host.ts";
+import type { AgentChange, AgentInfo, AgentSpec, Profile } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
 import type { AutomationsObject } from "../automations-object.ts";
 import { verifierFor } from "./access.ts";
@@ -23,6 +23,20 @@ interface ChannelRpc {
   ): Promise<{ ok: true; said: string } | { ok: false; error: string }>;
   setting(who: string, key: string, value: string | undefined): Promise<string>;
 }
+
+/** What the Agents page shows: an agent's identity and configuration, not its activity. */
+const agentRow = (a: AgentInfo, model: string) => ({
+  doName: a.doName,
+  slug: a.slug,
+  name: a.name,
+  role: a.role,
+  persona: a.persona,
+  tools: a.tools ?? null,
+  isDefault: a.isDefault,
+  model,
+  created: a.created,
+  lastActive: a.lastActive,
+});
 
 const PAGES = new Set([
   "overview",
@@ -96,6 +110,16 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const channels = agents.map(agentAsChannelRow);
   if (name === "channels") return json(channels);
   if (name === "profile") return json(await hub.profile());
+  if (name === "agents")
+    return json(
+      await Promise.all(
+        agents.map(async (a) => {
+          const rpc = env.AgentObject.getByName(a.doName) as unknown as ChannelRpc;
+          const o = (await rpc.dashboard("overview", {})) as { settings: Record<string, string> };
+          return agentRow(a, o.settings["model"] ?? "");
+        }),
+      ),
+    );
   if (name === "summary") {
     const overviewRowPerChannel = await Promise.all(
       channels.map(async (c) => {
@@ -199,8 +223,84 @@ const bodyOf = (request: Request): Promise<unknown> =>
 const isSameOriginScriptRequest = (request: Request, url: URL) =>
   request.headers.get("x-mizook-csrf") === "1" && request.headers.get("origin") === url.origin;
 
+type HubRpc = {
+  agents(): Promise<AgentInfo[]>;
+  createAgent(spec: AgentSpec): Promise<AgentChange>;
+  updateAgent(key: string, patch: Partial<AgentSpec>): Promise<AgentChange>;
+  deleteAgent(key: string): Promise<AgentChange>;
+};
+
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/** Creates, changes or deletes an agent, with the same rules as `tools.agents.manage`. */
+const manageAgent = async (
+  env: Env,
+  who: string,
+  op: "create" | "update" | "delete",
+  slug: string,
+  input: unknown,
+): Promise<Response> => {
+  const hub = env.Hub.getByName("hub") as unknown as HubRpc;
+  const body = (Predicate.isObject(input) ? input : {}) as Record<string, unknown>;
+  const text = (key: string) => (typeof body[key] === "string" ? (body[key] as string) : undefined);
+  const toolsGiven = "tools" in body;
+  if (toolsGiven && body["tools"] !== null && !isStringList(body["tools"]))
+    return json({ error: "bad request" }, 400);
+  const tools = toolsGiven ? (body["tools"] as string[] | null) : undefined;
+  const model = text("model")?.trim();
+  if (model !== undefined && model !== "" && invalidSettingReason("model", model))
+    return json({ error: "That is not a model id" }, 400);
+
+  const change =
+    op === "create"
+      ? await hub.createAgent({
+          slug: text("slug") ?? "",
+          name: text("name") ?? text("slug") ?? "",
+          role: text("role") ?? "",
+          persona: text("persona") ?? "",
+          ...(tools !== undefined && { tools }),
+        })
+      : op === "update"
+        ? await hub.updateAgent(slug, {
+            ...(text("slug") !== undefined && { slug: text("slug")! }),
+            ...(text("name") !== undefined && { name: text("name")! }),
+            ...(text("role") !== undefined && { role: text("role")! }),
+            ...(text("persona") !== undefined && { persona: text("persona")! }),
+            ...(tools !== undefined && { tools }),
+          })
+        : await hub.deleteAgent(slug);
+  if (!change.ok) return json({ error: change.error }, 400);
+  const agent = change.agent;
+  if (op === "delete") return json({ ok: true, said: `Deleted /${agent.slug}.` });
+  const rpc = env.AgentObject.getByName(agent.doName) as unknown as ChannelRpc & {
+    reload(): Promise<void>;
+  };
+  if (model !== undefined) await rpc.setting(who, "model", model === "" ? undefined : model);
+  if (op === "update") await rpc.reload();
+  return json({
+    ok: true,
+    said: `${op === "create" ? "Created" : "Saved"} /${agent.slug} (${agent.name}).`,
+  });
+};
+
 const act = async (request: Request, url: URL, who: string, env: Env): Promise<Response> => {
   if (!isSameOriginScriptRequest(request, url)) return json({ error: "forbidden" }, 403);
+
+  if (url.pathname === "/admin/api/agents")
+    return manageAgent(env, who, "create", "", await bodyOf(request));
+  const agentOp = /^\/admin\/api\/agents\/([a-z][a-z0-9_]{1,31})\/(update|delete)$/.exec(
+    url.pathname,
+  );
+  if (agentOp)
+    return manageAgent(
+      env,
+      who,
+      agentOp[2] as "update" | "delete",
+      agentOp[1]!,
+      await bodyOf(request),
+    );
+
   const hub = env.Hub.getByName("hub") as unknown as { agents(): Promise<AgentInfo[]> };
   const channel = (await hub.agents()).find((a) => a.doName === url.searchParams.get("c"));
   if (!channel) return json({ error: "no such channel" }, 404);
