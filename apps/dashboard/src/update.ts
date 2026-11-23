@@ -1,6 +1,7 @@
 import { Array, Duration, Effect, Option, Predicate, Record, Schema, Stream, pipe } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
 import * as Dom from "foldkit/dom";
+import { swipes } from "@mizook/ui/swipe";
 import { Machine } from "foldkit/experimental";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
@@ -503,10 +504,13 @@ export const update = (model: Model, message: Message) =>
 
     ClickedLink: ({ request }) =>
       UrlRequest.match<UpdateReturn>(request, {
-        Internal: ({ url }) => ({
-          model,
-          commands: [NavigateInternal({ url: urlToString(url) })],
-        }),
+        Internal: ({ url }) => {
+          const href = urlToString(url);
+          // Only the admin pages are routes here; the chat is another app.
+          return href.startsWith("/admin")
+            ? { model, commands: [NavigateInternal({ url: href })] }
+            : { model, commands: [LoadExternal({ href })] };
+        },
         External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
       }),
 
@@ -719,6 +723,8 @@ export const update = (model: Model, message: Message) =>
           NavState.match(nav, { Closed: () => NavState.Open(), Open: () => NavState.Closed() }),
       }),
     }),
+    SwipedRight: () => ({ model: modifyFields(model, { nav: () => NavState.Open() }) }),
+    SwipedLeft: () => ({ model: modifyFields(model, { nav: () => NavState.Closed() }) }),
     ClosedNav: () => ({ model: modifyFields(model, { nav: () => NavState.Closed() }) }),
 
     PressedPalette: () => {
@@ -761,6 +767,11 @@ export const update = (model: Model, message: Message) =>
   });
 
 export const subscriptions = Subscription.make<Model, Message>()((entryOf) => ({
+  swipe: Subscription.persistentEntry(
+    swipes({ maxWidth: 899 }).pipe(
+      Stream.map((swipe) => (swipe === "Right" ? Message.SwipedRight() : Message.SwipedLeft())),
+    ),
+  ),
   keys: entryOf(
     { isPaletteOpen: Schema.Boolean, isOnLog: Schema.Boolean },
     {

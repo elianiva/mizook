@@ -35,6 +35,8 @@ export const Message = defineMessageUnion({
   WentOnline: {},
 
   ClickedThread: { id: Schema.String },
+  SwipedRight: {},
+  SwipedLeft: {},
   ClickedNewChat: {},
   ClickedSend: {},
   ClickedStop: {},

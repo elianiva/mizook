@@ -2388,6 +2388,15 @@ export const view = (model: Model, h: H): Document => {
                   ],
                   [icon(h, "search", 18)],
                 ),
+                h.a(
+                  [
+                    h.Class(ui.headerJump),
+                    h.Href("/c"),
+                    h.AriaLabel("Web chat"),
+                    h.Title("Web chat"),
+                  ],
+                  [icon(h, "thread", 18)],
+                ),
               ],
             ),
             h.main([h.Class(ui.main)], [noticeView(model, h), pageView(model, h)]),

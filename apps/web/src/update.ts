@@ -15,6 +15,7 @@ import {
   type UiRegistry,
 } from "@mizook/ui";
 import { WebChat, type ChatState } from "@mizook/chat-sync";
+import { swipes } from "@mizook/ui/swipe";
 
 import { type Bootstrap, type ThreadState } from "./api.ts";
 import { ChatSync } from "./sync.ts";
@@ -538,6 +539,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         ],
       };
     },
+    SwipedRight: () => {
+      const drawer = setDrawer(model, true);
+      return { model: { ...model, ui: drawer.ui }, commands: drawer.commands };
+    },
+    SwipedLeft: () => {
+      const drawer = setDrawer(model, false);
+      return { model: { ...model, ui: drawer.ui }, commands: drawer.commands };
+    },
+
     ClickedNewChat: () => {
       const route = AppRoute.Home();
       const next: Model = {
@@ -721,6 +731,11 @@ export const subscriptions = Subscription.make<Model, Message, ChatSync>()((entr
           ),
         ),
     },
+  ),
+  swipe: Subscription.persistentEntry(
+    swipes({ maxWidth: 767 }).pipe(
+      Stream.map((swipe) => (swipe === "Right" ? Message.SwipedRight() : Message.SwipedLeft())),
+    ),
   ),
   timer: Subscription.persistentEntry(
     Stream.fromEffectSchedule(Effect.succeed(Message.RefreshTick()), Schedule.spaced("2 seconds")),
