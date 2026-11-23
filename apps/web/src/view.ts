@@ -20,6 +20,7 @@ import { clock, dayGroup, previewText, timeAgo } from "./format.ts";
 import { icon } from "./icon.ts";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
+import { isArmed } from "./confirmation.ts";
 import { TurnState } from "./turn-machine.ts";
 import { AppRoute, routeThread } from "./route.ts";
 import { ui } from "./ui.ts";
@@ -777,7 +778,7 @@ const header = (model: Model, h: H, config: PartsConfig<Message>): Html => {
   const hasThread = Predicate.isTagged(model.route, "Thread") && Option.isSome(state);
   const armed = Option.match(state, {
     onNone: () => false,
-    onSome: (value) => Option.contains(model.armedArchive, value.thread.id),
+    onSome: (value) => isArmed(model.armedArchive, value.thread.id),
   });
   return h.header(
     [h.Class(ui.header)],

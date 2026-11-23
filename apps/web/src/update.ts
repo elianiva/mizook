@@ -20,6 +20,7 @@ import { type Bootstrap, type ThreadState } from "./api.ts";
 import { ChatSync } from "./sync.ts";
 import { kit } from "./kit.ts";
 import { Message } from "./message.ts";
+import { Confirmation, isArmed } from "./confirmation.ts";
 import { Model } from "./model.ts";
 import { TurnState, turnMachine } from "./turn-machine.ts";
 import { AppRoute, routeHref, routeThread, urlToAppRoute } from "./route.ts";
@@ -363,7 +364,7 @@ export const init = (flags: Flags, url: Url) => {
     notice: Option.none(),
     offline: typeof navigator !== "undefined" && !navigator.onLine,
     saved: false,
-    armedArchive: Option.none(),
+    armedArchive: Confirmation.Resting(),
     renameThreadId: Option.none(),
     copied: Option.none(),
   });
@@ -378,7 +379,7 @@ const stepTurn = (model: Model, message: Message): TurnState =>
 const withNotice = (model: Model, notice: string): Model => ({
   ...model,
   notice: Option.some(notice),
-  armedArchive: Option.none(),
+  armedArchive: Confirmation.Resting(),
 });
 
 export const update = (model: Model, message: Message): UpdateReturn =>
@@ -404,7 +405,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           route,
           thread,
           notice: Option.none(),
-          armedArchive: Option.none(),
+          armedArchive: Confirmation.Resting(),
         },
       };
     },
@@ -509,7 +510,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           ...model,
           route: wasActive ? route : model.route,
           thread: wasActive ? AsyncData.Idle() : model.thread,
-          armedArchive: Option.none(),
+          armedArchive: Confirmation.Resting(),
           notice: Option.some("Chat archived."),
         },
         commands: wasActive ? [NavigateInternal({ url: routeHref(route) })] : [],
@@ -525,7 +526,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         route,
         thread,
         notice: Option.none(),
-        armedArchive: Option.none(),
+        armedArchive: Confirmation.Resting(),
       };
       const drawer = setDrawer(next, false);
       return {
@@ -545,7 +546,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         thread: AsyncData.Idle(),
         turn: stepTurn(model, message),
         notice: Option.none(),
-        armedArchive: Option.none(),
+        armedArchive: Confirmation.Resting(),
         renameThreadId: Option.none(),
       };
       const cleared = clearComposer(next);
@@ -583,7 +584,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           thread: AsyncData.Idle(),
           turn: stepTurn(model, message),
           notice: Option.none(),
-          armedArchive: Option.none(),
+          armedArchive: Confirmation.Resting(),
         },
         commands: [
           NavigateInternal({ url: routeHref(route) }),
@@ -641,15 +642,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ClickedArchive: () => {
       const active = activeThread(model);
       if (Option.isNone(active)) return { model };
-      if (Option.contains(model.armedArchive, active.value))
+      if (isArmed(model.armedArchive, active.value))
         return {
-          model: { ...model, armedArchive: Option.none(), notice: Option.none() },
+          model: { ...model, armedArchive: Confirmation.Resting(), notice: Option.none() },
           commands: [ArchiveThread({ id: active.value })],
         };
       return {
         model: {
           ...model,
-          armedArchive: Option.some(active.value),
+          armedArchive: Confirmation.Armed({ key: active.value }),
           notice: Option.some("Press Archive again to confirm."),
         },
       };
@@ -685,7 +686,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     Copied: ({ id }) => ({ model: { ...model, copied: Option.some(id) } }),
 
     ClickedDismissNotice: () => ({
-      model: { ...model, notice: Option.none(), armedArchive: Option.none() },
+      model: { ...model, notice: Option.none(), armedArchive: Confirmation.Resting() },
     }),
 
     GotUiMessage: ({ message: child }) => {

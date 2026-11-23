@@ -4,6 +4,7 @@ import { AsyncData } from "foldkit";
 import { ChatState } from "@mizook/chat-sync";
 import { Bootstrap, ThreadState } from "./api.ts";
 import { kit } from "./kit.ts";
+import { Confirmation } from "./confirmation.ts";
 import { TurnState } from "./turn-machine.ts";
 import { AppRoute } from "./route.ts";
 
@@ -21,7 +22,7 @@ export const Model = Schema.Struct({
   notice: Schema.Option(Schema.String),
   offline: Schema.Boolean,
   saved: Schema.Boolean,
-  armedArchive: Schema.Option(Schema.String),
+  armedArchive: Confirmation,
   renameThreadId: Schema.Option(Schema.String),
   copied: Schema.Option(Schema.Finite),
 });
