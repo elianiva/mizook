@@ -1,6 +1,7 @@
 import {
   ChatEvent,
   ChatMessage,
+  ChatPart,
   ChatState,
   ThreadSummary,
   ThreadTranscript,
@@ -9,6 +10,7 @@ import {
   previewOf,
   titleOf,
   withThread,
+  withLive,
   withTranscript,
   type Agent,
   type Approval,
@@ -404,21 +406,27 @@ const refresh = (env: Env, state: ServerState, payload: { readonly threadId?: st
 
 const appendAgent = (
   state: ServerState,
-  payload: { readonly threadId: string; readonly text: string },
+  payload: {
+    readonly threadId: string;
+    readonly text: string;
+    readonly parts?: ReadonlyArray<ChatPart>;
+  },
 ) =>
   Effect.gen(function* () {
     const thread = threadOf(state, payload.threadId);
     if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
     const text = payload.text.trim();
-    if (text === "") return yield* Effect.fail({ reason: "Nothing to add." });
+    const parts = payload.parts ?? [];
+    if (text === "" && parts.length === 0) return yield* Effect.fail({ reason: "Nothing to add." });
     const at = Date.now();
     const message: ChatMessage = {
       id: state.nextMessageId,
       role: "agent",
       text,
       at,
+      ...(parts.length > 0 && { parts }),
     };
-    const transcript = transcriptOfThread(state, thread.id);
+    const transcript = withLive(transcriptOfThread(state, thread.id), []);
     const updated: ThreadSummary = {
       ...thread,
       title: titleOf(thread, text),
@@ -475,7 +483,32 @@ const setStatus = (
     });
   });
 
-const INTERNAL_ACTIONS: ReadonlySet<string> = new Set(["appendAgent", "setStatus", "autoTitle"]);
+const setLive = (
+  state: ServerState,
+  payload: { readonly threadId: string; readonly parts: ReadonlyArray<ChatPart> },
+) =>
+  Effect.gen(function* () {
+    const thread = threadOf(state, payload.threadId);
+    if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
+    const transcript = transcriptOfThread(state, thread.id);
+    if (same(transcript.live ?? [], payload.parts))
+      return Server.commit({ state, events: [], result: undefined });
+    return Server.commit({
+      state: {
+        ...state,
+        chat: withTranscript(state.chat, thread.id, withLive(transcript, payload.parts)),
+      },
+      events: [ChatEvent.cases.Live.make({ threadId: thread.id, parts: payload.parts })],
+      result: undefined,
+    });
+  });
+
+const INTERNAL_ACTIONS: ReadonlySet<string> = new Set([
+  "appendAgent",
+  "setStatus",
+  "setLive",
+  "autoTitle",
+]);
 
 export const makeWebChatServer = (env: Env): Server.Definition<typeof WebChat.spec, never> =>
   Server.make(WebChat, {
@@ -508,5 +541,6 @@ export const makeWebChatServer = (env: Env): Server.Definition<typeof WebChat.sp
       refresh: ({ state, payload }) => refresh(env, state, payload),
       appendAgent: ({ state, payload }) => appendAgent(state, payload),
       setStatus: ({ state, payload }) => setStatus(state, payload),
+      setLive: ({ state, payload }) => setLive(state, payload),
     },
   });

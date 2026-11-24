@@ -399,6 +399,10 @@ export class Handlers extends Context.Service<
             return Effect.gen(function* () {
               const a = yield* decode(SendToUserArgs, args);
               if (!place) return yield* new ToolError({ reason: "no chat to send to here" });
+              if (place.startsWith("web:"))
+                return yield* new ToolError({
+                  reason: "a web thread has no send_to_user; write your answer as text",
+                });
               const texts = a.messages.map((m) => m.trim()).filter((m) => m !== "");
               yield* outbox.send(place, texts);
               return `Sent ${texts.length}.`;

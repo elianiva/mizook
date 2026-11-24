@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT, type Context as ChordContext } from "@earendil-works/chord/context";
 import {
+  type AgentChange,
   createRegistry,
   defineExtension,
   defineTool,
@@ -36,6 +37,8 @@ export class Durable extends Context.Service<
     readonly models: PiModels;
     readonly context: ChordContext;
     readonly turnInputs: Map<ConversationId, string>;
+    /** What a web conversation offers the model: it answers in text, so it has no `send_to_user`. */
+    readonly webModelTools: NonNullable<AgentChange["modelTools"]>;
   }
 >()("mizook/Durable") {
   static readonly layer = (database: DurableObjectSqliteDatabase) =>
@@ -67,21 +70,22 @@ export class Durable extends Context.Service<
             ? args.code
             : "";
 
-        const modelTools = [
-          defineTool({
-            name: "send_to_user",
-            description: agentTools[0]!.description,
-            parameters: agentTools[0]!.parameters,
-            replay: "unsafe",
-            execute: async (args, api) =>
-              text(
-                await run(
-                  Effect.flatMap(placeOf(api.conversationId), (place) =>
-                    handlers.call("send_to_user", args, place),
-                  ),
+        const sendToUser = defineTool({
+          name: "send_to_user",
+          description: agentTools[0]!.description,
+          parameters: agentTools[0]!.parameters,
+          replay: "unsafe",
+          execute: async (args, api) =>
+            text(
+              await run(
+                Effect.flatMap(placeOf(api.conversationId), (place) =>
+                  handlers.call("send_to_user", args, place),
                 ),
               ),
-          }),
+            ),
+        });
+        const modelTools = [
+          sendToUser,
           defineTool({
             name: "execute",
             description: agentTools[1]!.description,
@@ -174,7 +178,13 @@ export class Durable extends Context.Service<
         );
         harness.resume();
         void main;
-        return Durable.of({ harness, models, context: BACKGROUND_CONTEXT, turnInputs });
+        return Durable.of({
+          harness,
+          models,
+          context: BACKGROUND_CONTEXT,
+          turnInputs,
+          webModelTools: { remove: [sendToUser] },
+        });
       }),
     );
 }

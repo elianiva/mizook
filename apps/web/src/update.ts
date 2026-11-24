@@ -209,6 +209,19 @@ const FocusComposer = Command.define("FocusComposer", {
     ),
 });
 
+const BlurComposer = Command.define("BlurComposer", {
+  messages: [Message.CompletedFocus],
+  execute: Effect.sync(() => {
+    const composer = document.querySelector(COMPOSER);
+    if (composer instanceof HTMLElement) composer.blur();
+    return Message.CompletedFocus();
+  }),
+});
+
+/** After a send: a touch screen drops its keyboard, a desktop keeps typing. */
+const settleComposer = (model: Model) =>
+  model.touch ? BlurComposer() : FocusComposer({ always: true });
+
 const COPIED_FOR = Duration.millis(1600);
 const TOAST_FOR = Duration.seconds(3);
 const ARMED_FOR = Duration.seconds(4);
@@ -337,6 +350,9 @@ const threadStateOf = (chat: ChatState, threadId: string): Option.Option<ThreadS
     messages: transcript.messages,
     running: transcript.running,
     approvals: transcript.approvals,
+    ...(chat.transcripts[threadId]?.live !== undefined && {
+      live: chat.transcripts[threadId].live,
+    }),
   });
 };
 
@@ -355,6 +371,20 @@ const threadDataFor = (
             onSome: (data) => AsyncData.Success({ data }),
           }),
       }),
+  });
+
+const liveSize = (state: AsyncData.AsyncData<ThreadState, string>): number =>
+  Option.match(AsyncData.getData(state), {
+    onNone: () => 0,
+    onSome: (thread) =>
+      (thread.live ?? []).reduce(
+        (total, part) =>
+          total +
+          (part._tag === "Tool"
+            ? part.input.length + (part.output?.length ?? 0)
+            : part.text.length),
+        0,
+      ),
   });
 
 const lastMessageId = (state: AsyncData.AsyncData<ThreadState, string>): number =>
@@ -437,6 +467,32 @@ const withToast = (model: Model, text: string) => ({
   commands: [ExpireToast({ text })],
 });
 
+/** Leaves an archived chat at once; the server's answer only matters if it refuses. */
+const archivedNow = (model: Model, id: string) => {
+  const active = activeThread(model);
+  const wasActive = Option.contains(active, id);
+  const route = AppRoute.Home();
+  const toast = withToast(
+    {
+      ...model,
+      route: wasActive ? route : model.route,
+      thread: wasActive ? AsyncData.Idle() : model.thread,
+      armedArchive: Confirmation.Resting(),
+      notice: Option.none(),
+    },
+    "Chat archived.",
+  );
+  return {
+    model: toast.model,
+    commands: [
+      ...toast.commands,
+      ...(wasActive
+        ? [NavigateInternal({ url: routeHref(route) }), FocusComposer({ always: false })]
+        : []),
+    ],
+  };
+};
+
 export const update = (model: Model, message: Message): UpdateReturn =>
   Message.match<UpdateReturn>(message, {
     ClickedLink: ({ request }) =>
@@ -487,7 +543,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           saved: view.saved,
           notice,
         },
-        commands: [...(applied.commands ?? []), ...(next > previous ? [ScrollToBottom()] : [])],
+        commands: [
+          ...(applied.commands ?? []),
+          ...(next > previous || liveSize(thread) > liveSize(model.thread)
+            ? [ScrollToBottom()]
+            : []),
+        ],
       };
     },
 
@@ -519,7 +580,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       // The composer was cleared on press; a draft typed since must survive.
       return {
         model: { ...model, turn, notice: Option.none() },
-        commands: [ScrollToBottom(), FocusComposer({ always: true })],
+        commands: [ScrollToBottom(), settleComposer(model)],
       };
     },
     FailedSend: ({ reason, text, threadId }) => {
@@ -553,44 +614,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     }),
     FailedApprove: ({ reason }) => ({ model: withNotice(model, reason) }),
 
-    Renamed: () => {
-      const closed = closeRename(model);
-      return {
-        model: {
-          ...model,
-          ui: closed.ui,
-          renameThreadId: Option.none(),
-          notice: Option.none(),
-        },
-        commands: closed.commands,
-      };
-    },
+    Renamed: () => ({ model }),
     FailedRename: ({ reason }) => ({ model: withNotice(model, reason) }),
 
-    Archived: ({ id }) => {
-      const active = activeThread(model);
-      const wasActive = Option.contains(active, id);
-      const route = AppRoute.Home();
-      const toast = withToast(
-        {
-          ...model,
-          route: wasActive ? route : model.route,
-          thread: wasActive ? AsyncData.Idle() : model.thread,
-          armedArchive: Confirmation.Resting(),
-          notice: Option.none(),
-        },
-        "Chat archived.",
-      );
-      return {
-        model: toast.model,
-        commands: [
-          ...toast.commands,
-          ...(wasActive
-            ? [NavigateInternal({ url: routeHref(route) }), FocusComposer({ always: false })]
-            : []),
-        ],
-      };
-    },
+    Archived: () => ({ model }),
     FailedArchive: ({ reason }) => ({ model: withNotice(model, reason) }),
 
     ClickedThread: ({ id }) => {
@@ -662,7 +689,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           commands: [
             ...cleared.commands,
             SendMessage({ threadId: active.value, text, requestId }),
-            FocusComposer({ always: true }),
+            settleComposer(model),
           ],
         };
       if (!Predicate.isTagged(model.route, "Home"))
@@ -682,7 +709,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           ...cleared.commands,
           NavigateInternal({ url: routeHref(route) }),
           SendMessage({ threadId, text, requestId, agent }),
-          FocusComposer({ always: true }),
+          settleComposer(model),
         ],
       };
     },
@@ -727,20 +754,26 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const title = model.ui.renameInput.value.trim();
       if (Option.isNone(model.renameThreadId) || title === "")
         return { model: withNotice(model, "Give the chat a name.") };
+      const closed = closeRename(model);
       return {
-        model: { ...model, notice: Option.none() },
-        commands: [RenameThread({ threadId: model.renameThreadId.value, title })],
+        model: { ...model, ui: closed.ui, renameThreadId: Option.none(), notice: Option.none() },
+        commands: [
+          ...closed.commands,
+          RenameThread({ threadId: model.renameThreadId.value, title }),
+        ],
       };
     },
 
     ClickedArchive: () => {
       const active = activeThread(model);
       if (Option.isNone(active)) return { model };
-      if (isArmed(model.armedArchive, active.value))
+      if (isArmed(model.armedArchive, active.value)) {
+        const gone = archivedNow(model, active.value);
         return {
-          model: { ...model, armedArchive: Confirmation.Resting(), notice: Option.none() },
-          commands: [ArchiveThread({ id: active.value })],
+          model: gone.model,
+          commands: [...gone.commands, ArchiveThread({ id: active.value })],
         };
+      }
       return {
         // The menu stays open and its item asks "sure?"; the question lapses by itself.
         model: { ...model, armedArchive: Confirmation.Armed({ key: active.value }) },

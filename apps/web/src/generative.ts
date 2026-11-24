@@ -111,7 +111,7 @@ const blocksOf = (program: string): ReadonlyArray<Block> => {
 };
 
 export type Segment =
-  | { readonly kind: "markdown"; readonly html: string }
+  | { readonly kind: "markdown"; readonly source: string }
   | { readonly kind: "ui"; readonly blocks: ReadonlyArray<Block> }
   | { readonly kind: "pending" };
 
@@ -127,7 +127,7 @@ export const segmentsOf = (text: string): ReadonlyArray<Segment> => {
   const segments: Array<Segment> = [];
   let run: Array<Token> = [];
   const flush = () => {
-    if (run.length > 0) segments.push({ kind: "markdown", html: marked.parser(run) });
+    if (run.length > 0) segments.push({ kind: "markdown", source: run.map((t) => t.raw).join("") });
     run = [];
   };
   for (const token of marked.lexer(text)) {

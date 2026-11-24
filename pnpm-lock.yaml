@@ -136,6 +136,12 @@ importers:
       '@openuidev/lang-core':
         specifier: 1.1.1
         version: 1.1.1(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(zod@4.4.3)
+      '@pierre/highlights':
+        specifier: ^0.5.2
+        version: 0.5.2
+      '@pierre/words':
+        specifier: ^0.3.0
+        version: 0.3.0(@pierre/highlights@0.5.2)
       '@yielded/sync':
         specifier: 0.1.0-beta.5
         version: 0.1.0-beta.5(effect@4.1.4)
@@ -1846,6 +1852,23 @@ packages:
   '@parcel/watcher@2.5.6':
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
+
+  '@pierre/highlights@0.5.2':
+    resolution: {integrity: sha512-CV+yFa8dodaU3w7U42FR+AfoavrsfcH0/n3rckDu1A/UXan1Dzo6OdM/MPOAAsGM/EbKhDxD6k+qMcNUtnLfsg==}
+
+  '@pierre/words@0.3.0':
+    resolution: {integrity: sha512-k38qoYj0eUCr+vGQlXlSer78q5EeG7rSge9b2ADBFvLQ0L+OJH5zAdgdgm1jqkFq2Q6zXUuBkZWB5nQgPy2iUQ==}
+    peerDependencies:
+      '@pierre/highlights': '>=0.5.1'
+      react: ^18.3.1 || ^19.0.0
+      react-dom: ^18.3.1 || ^19.0.0
+    peerDependenciesMeta:
+      '@pierre/highlights':
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
@@ -6738,6 +6761,12 @@ snapshots:
       '@parcel/watcher-win32-arm64': 2.5.6
       '@parcel/watcher-win32-ia32': 2.5.6
       '@parcel/watcher-win32-x64': 2.5.6
+
+  '@pierre/highlights@0.5.2': {}
+
+  '@pierre/words@0.3.0(@pierre/highlights@0.5.2)':
+    optionalDependencies:
+      '@pierre/highlights': 0.5.2
 
   '@polka/url@1.0.0-next.29': {}
 

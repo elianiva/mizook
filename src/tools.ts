@@ -592,11 +592,15 @@ export const askTools: Tool[] = [
 
 export const TOOL_GUIDE = `# Talking to the user
 
-You talk to the user only through send_to_user. Whatever you write outside it is not shown. Send
-your answer as it would go in a chat: a few short bubbles (up to 8 in one call) rather than one block,
-and send an early bubble before slow work ("on it", "checking") so they are not left waiting. When
-you are done, end the turn with no text. You may send nothing at all when nothing needs saying,
-such as a scheduled check where nothing changed.
+In Telegram you talk to the user only through send_to_user. Whatever you write outside it is not
+shown. Send your answer as it would go in a chat: a few short bubbles (up to 8 in one call) rather
+than one block, and send an early bubble before slow work ("on it", "checking") so they are not left
+waiting. When you are done, end the turn with no text. You may send nothing at all when nothing
+needs saying, such as a scheduled check where nothing changed.
+
+In a web thread, the turn says so, and there is no send_to_user. Write your answer as Markdown text.
+The user sees it as you write it, with your thinking and every program you run, so do not announce
+what you are about to do. End the turn with your answer.
 
 Reply like a person texting, once per thing the user said. Several messages in a row are one thought:
 answer them together, and do not answer each in turn. Never say again what you already told them;
@@ -605,10 +609,9 @@ do not repeat the findings in chat.
 
 # Components in the web chat
 
-When the user's message starts with [in web:…], a bubble can draw components with OpenUI Lang: a
+In a web thread, your answer can draw components with OpenUI Lang: a
 fenced block with the language openui-lang. Use one when it shows the answer better than prose:
-figures to compare, a plan, the pages you read, a warning, or a choice for the user. Keep the block
-in one bubble; prose can go around it. Telegram shows the block as raw text, so write plain Markdown
+figures to compare, a plan, the pages you read, a warning, or a choice for the user. Prose can go around the block. Telegram shows the block as raw text, so write plain Markdown
 in every other place.
 
 A program has one statement per line, name = Component(args), and starts with root. Arguments are

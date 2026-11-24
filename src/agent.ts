@@ -1,14 +1,22 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { Conversation, EntryRecord, SubmissionId } from "@earendil-works/pi-durable";
+import type {
+  Conversation,
+  EntryRecord,
+  LiveState,
+  SubmissionId,
+} from "@earendil-works/pi-durable";
 import { clipToolOutput, Memory, type StoreError } from "@mizook/memory";
+import type { ChatPart } from "@mizook/chat-sync";
 import { Context, DateTime, Effect, Layer } from "effect";
 import { Settings } from "./config.ts";
+import { WebChatClient } from "./chat/web-chat-client.ts";
 import { Durable } from "./durable.ts";
 import { DurableError, type StateError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
 import { Host, type Profile } from "./host.ts";
 import { Intents, type Intent } from "./intents.ts";
+import { textOfParts, turnParts } from "./live-parts.ts";
 import { Models } from "./models.ts";
 import { Skills } from "./skills.ts";
 import { askTools } from "./tools.ts";
@@ -62,7 +70,10 @@ const threadText = (lines: ReadonlyArray<ThreadLine>): string => {
 };
 
 const WEB_THREAD_NOTE =
-  "This is a web thread. The <thread> above is everything said here; your memory of the rest of the chat is not shown. Search it with tools.memory.search only when the user refers to something outside this thread.";
+  "This is a web thread. The <thread> above is everything said here; your memory of the rest of the chat is not shown. Search it with tools.memory.search only when the user refers to something outside this thread. You have no send_to_user here: write your answer as Markdown text, which the user sees as you write it, with your thinking and the programs you run.";
+
+const LIVE_PUBLISH_INTERVAL_MS = 250;
+const LIVE_WINDOW_ENTRIES = 500;
 
 const JOIN_RUNNING_TURN = "steer";
 const MAX_ASK_STEPS = 8;
@@ -125,8 +136,11 @@ export class Agent extends Context.Service<
       const host = yield* Host;
       const skills = yield* Skills;
       const intents = yield* Intents;
+      const webChat = yield* WebChatClient;
       const { main, summary } = yield* Models;
       const { harness, context, turnInputs } = durable;
+      const services = yield* Effect.context<never>();
+      const run = Effect.runPromiseWith(services);
 
       const call = <A>(operation: string, f: () => Promise<A>) =>
         Effect.tryPromise({ try: f, catch: (cause) => new DurableError({ operation, cause }) });
@@ -166,6 +180,56 @@ export class Agent extends Context.Service<
           } while (cursor);
           return entries;
         });
+
+      /**
+       * Shows a web turn as it happens: each commit of the conversation becomes the
+       * thread's live parts. Publishes are spaced and kept in order, and the last
+       * one always goes out; the turn's final message replaces them.
+       */
+      const streamToWeb = (place: string, conversation: Conversation) =>
+        call("watch", () =>
+          conversation.watch(context, { min: LIVE_WINDOW_ENTRIES, max: 2 * LIVE_WINDOW_ENTRIES }),
+        ).pipe(
+          Effect.map((watch) => {
+            let queue: Promise<unknown> = Promise.resolve();
+            let pending: ReadonlyArray<ChatPart> | undefined;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let sentAt = 0;
+            const publish = () => {
+              timer = undefined;
+              const parts = pending;
+              pending = undefined;
+              if (parts === undefined) return;
+              sentAt = Date.now();
+              queue = queue.then(() =>
+                run(
+                  webChat
+                    .setLive(place, parts)
+                    .pipe(Effect.tapError((error) => Effect.logWarning("live web turn", error))),
+                ).catch(() => undefined),
+              );
+            };
+            watch.start(async (call) => {
+              if (call.kind !== "value") return;
+              pending = turnParts(
+                call.value.entries,
+                call.value.docs["pi.live"] as unknown as LiveState | undefined,
+              );
+              timer ??= setTimeout(
+                publish,
+                Math.max(0, sentAt + LIVE_PUBLISH_INTERVAL_MS - Date.now()),
+              );
+            });
+            return {
+              stop: call("stop watching", async () => {
+                clearTimeout(timer);
+                pending = undefined;
+                await watch.stop();
+                await queue;
+              }),
+            };
+          }),
+        );
 
       const logTranscript = Effect.fnUntraced(function* (
         place: string,
@@ -265,6 +329,7 @@ export class Agent extends Context.Service<
               agent: {
                 model: { provider: main.provider, modelId: main.id },
                 thinkingLevel: "medium",
+                ...(isolated && { modelTools: durable.webModelTools }),
               },
             },
             context,
@@ -313,6 +378,8 @@ export class Agent extends Context.Service<
           });
         }
 
+        const live = isWebThread(chatId) ? yield* streamToWeb(chatId, conversation) : undefined;
+
         let waited = 0;
         let last:
           | Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof harness.submission>>>["wait"]>>
@@ -328,13 +395,10 @@ export class Agent extends Context.Service<
           waited = ids.length;
         }
 
+        if (live !== undefined) yield* live.stop;
+
         const entries = yield* allEntriesOf(conversation);
         const turn = (yield* state.turn(chatId)) ?? first;
-        if (!turn.logged) {
-          yield* logTranscript(chatId, entries);
-          yield* state.putTurn({ ...turn, logged: true });
-        }
-        turnInputs.delete(conversation.id);
 
         let fallbackReply: string;
         if (last?.status === "done") {
@@ -343,9 +407,25 @@ export class Agent extends Context.Service<
         } else {
           fallbackReply = `I couldn't answer that (${last?.reason ?? "no answer"}).`;
         }
+
+        if (!turn.logged) {
+          yield* logTranscript(chatId, entries);
+          if (live !== undefined) {
+            // The web shows everything the turn did, so its one message is the turn itself.
+            const parts: ReadonlyArray<ChatPart> =
+              last?.status === "done"
+                ? turnParts(entries)
+                : [...turnParts(entries), { _tag: "Text", text: fallbackReply }];
+            yield* parts.length === 0
+              ? webChat.setLive(chatId, [])
+              : webChat.appendAgent(chatId, textOfParts(parts), parts);
+          }
+          yield* state.putTurn({ ...turn, logged: true });
+        }
+        turnInputs.delete(conversation.id);
         yield* state.deleteTurn(chatId);
         const sentToUser = (yield* outbox.take(chatId)) > 0;
-        return sentToUser ? "" : fallbackReply;
+        return sentToUser || live !== undefined ? "" : fallbackReply;
       });
 
       const stop = Effect.fn("Agent.stop")(function* (chatId: string) {

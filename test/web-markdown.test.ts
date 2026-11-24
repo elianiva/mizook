@@ -1,18 +1,18 @@
 import { expect, test } from "vite-plus/test";
 import { previewText } from "../apps/web/src/format.ts";
 import { segmentsOf } from "../apps/web/src/generative.ts";
-import { renderMarkdown } from "../apps/web/src/markdown.ts";
+import { renderWords } from "../apps/web/src/words.ts";
 import { TOOL_GUIDE } from "../src/tools.ts";
 
-test("raw HTML from an answer stays text", () => {
-  const rendered = renderMarkdown("<img src=x onerror=alert(1)> and <script>alert(1)</script>");
+test("raw HTML from an answer is dropped", () => {
+  const rendered = renderWords("<img src=x onerror=alert(1)> and <script>alert(1)</script>", false);
   expect(rendered).not.toContain("<img src=x");
   expect(rendered).not.toContain("<script>");
-  expect(rendered).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  expect(rendered).not.toContain("onerror");
 });
 
 test("links keep http, https and mailto, and drop every other scheme", () => {
-  const rendered = renderMarkdown(
+  const rendered = renderWords(
     [
       "[http](http://example.com/a)",
       "[https](https://example.com/b)",
@@ -20,6 +20,7 @@ test("links keep http, https and mailto, and drop every other scheme", () => {
       "[script](javascript:alert(1))",
       "[data](data:text/html,hello)",
     ].join(" "),
+    false,
   );
   expect(rendered).toContain('href="http://example.com/a"');
   expect(rendered).toContain('href="https://example.com/b"');
@@ -37,8 +38,9 @@ test("a sidebar preview is one plain line, whatever Markdown the answer used", (
 });
 
 test("an image needs https, and its alt and title text are escaped", () => {
-  const rendered = renderMarkdown(
+  const rendered = renderWords(
     '![safe](https://example.com/a.png "a \\"title\\"") ![](http://example.com/b.png)',
+    false,
   );
   expect(rendered).toContain('src="https://example.com/a.png"');
   expect(rendered).toContain('alt="safe"');
@@ -52,7 +54,7 @@ test("a program between prose becomes its components, and the prose around it st
     `**Before** the chart\n\n${fence('root = Stack([rain, next])\nrain = Bars([Bar("Mon", 3.5), Bar("Tue", 0)], "Rain")\nnext = Choices(["Umbrella?"])')}\n\nAfter it`,
   );
   expect(segments).toEqual([
-    { kind: "markdown", html: "<p><strong>Before</strong> the chart</p>\n" },
+    { kind: "markdown", source: "**Before** the chart\n\n" },
     {
       kind: "ui",
       blocks: [
@@ -69,7 +71,7 @@ test("a program between prose becomes its components, and the prose around it st
         { type: "Choices", props: { items: ["Umbrella?"] } },
       ],
     },
-    { kind: "markdown", html: "<p>After it</p>\n" },
+    { kind: "markdown", source: "\n\nAfter it" },
   ]);
 });
 
@@ -84,9 +86,7 @@ test("a closed program that draws nothing from the catalog stays a code block", 
     const segments = segmentsOf(fence(body));
     expect(segments).toHaveLength(1);
     expect(segments[0]!.kind).toBe("markdown");
-    expect(segments[0]!.kind === "markdown" && segments[0]!.html).toContain(
-      'class="language-openui-lang"',
-    );
+    expect(segments[0]!.kind === "markdown" && segments[0]!.source).toContain("```openui-lang");
   }
 });
 

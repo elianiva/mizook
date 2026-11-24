@@ -5,6 +5,7 @@ import { kit } from "./kit.ts";
 import { Flags, Message, Model, init, subscriptions, update, view } from "./main.ts";
 import { startServiceWorker } from "./pwa.ts";
 import { layer as chatSyncLayer } from "./sync.ts";
+import "@pierre/words/styles.css";
 import "./styles.css";
 
 class AppRootMissing extends Data.TaggedError("AppRootMissing") {

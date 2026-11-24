@@ -144,12 +144,6 @@ export const ui = {
     whiteSpace: "nowrap",
   }),
   threadAgent: css({ textStyle: "meta", marginRight: "6px", color: "accent", fontSize: "11px" }),
-  sideSkeleton: css({
-    height: "40px",
-    margin: "8px 20px",
-    backgroundColor: "bgHover",
-    animation: "pulse 1.6s ease-in-out infinite",
-  }),
   sideError: css({
     display: "flex",
     alignItems: "center",
@@ -433,6 +427,31 @@ export const ui = {
     "& hr": { margin: "12px 0", border: 0, borderTop: "1px solid {colors.border}" },
     "& img": { maxWidth: "100%", height: "auto", border: "1px solid {colors.border}" },
   }),
+  turnStep: css({
+    border: "1px solid {colors.border}",
+    backgroundColor: "bgSubtle",
+    minWidth: 0,
+    "& > :not(summary)": { margin: "0 8px 8px" },
+  }),
+  turnStepSummary: css({
+    textStyle: "caps",
+    display: "flex",
+    gap: "10px",
+    alignItems: "baseline",
+    padding: "6px 10px",
+    color: "fgMuted",
+    cursor: "pointer",
+    minWidth: 0,
+  }),
+  turnStepHint: css({
+    color: "fgFaint",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    textTransform: "none",
+    fontFamily: "mono",
+  }),
+  turnStepFailed: css({ color: "danger" }),
   working: css({ display: "flex", alignItems: "center", gap: "6px", height: "24px" }),
   workingMark: css({
     width: "10px",
@@ -936,11 +955,6 @@ export const ui = {
     _placeholder: { color: "fgFaint" },
   }),
 
-  skeletonBlock: css({
-    height: "72px",
-    backgroundColor: "bgHover",
-    animation: "pulse 1.6s ease-in-out infinite",
-  }),
   errorBox: css({
     width: "100%",
     display: "flex",
