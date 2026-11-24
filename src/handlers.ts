@@ -4,24 +4,19 @@ import { Browser } from "./browser.ts";
 import { Settings } from "./config.ts";
 import { ScheduleError } from "./errors.ts";
 import { formatDate } from "./format.ts";
-import {
-  Intents,
-  MAX_INTENT_DESCRIPTION,
-  MAX_INTENT_TRIGGERS,
-  MAX_TRIGGER_LENGTH,
-} from "./intents.ts";
+import { describeIntent, Intents } from "./intents.ts";
 import { MEDIA_LABEL, Media } from "./media.ts";
-import { Policies } from "./policies.ts";
+import { describePolicy, Policies } from "./policies.ts";
 import type { Automation } from "./automations.ts";
 import { describeAutomation } from "./runner.ts";
 import type { Spec } from "./schedule.ts";
-import { MAX_SKILL_BODY, MAX_SKILL_DESCRIPTION, SKILL_NAME, Skills } from "./skills.ts";
+import { Skills } from "./skills.ts";
 import { KIND_TYPES } from "./artifact-render.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
 import { Approvals } from "./approvals.ts";
 import { Executor, pausedExecution } from "./executor.ts";
-import { Host } from "./host.ts";
+import { describeProfile, Host } from "./host.ts";
 import { describeAgentAction, encodeAgentAction, type AgentAction } from "./agent-manage.ts";
 import { ToolError } from "./errors.ts";
 import { Outbox } from "./outbox.ts";
@@ -131,9 +126,6 @@ export class Handlers extends Context.Service<
               if (!prompt) return yield* new ToolError({ reason: "a turn needs a prompt" });
               const skill = a.skill?.trim();
               if (skill) {
-                if (!SKILL_NAME.test(skill)) {
-                  return yield* new ToolError({ reason: `"${skill}" is not a skill name` });
-                }
                 if (yield* skills.get(skill)) yield* skills.pin(skill);
                 else if (yield* host.globalSkills.get(skill)) yield* host.globalSkills.pin(skill);
                 else return yield* new ToolError({ reason: `no skill "${skill}"` });
@@ -242,31 +234,13 @@ export class Handlers extends Context.Service<
             return Effect.gen(function* () {
               const a = yield* decode(ProfileArgs, args);
               if (a.action === "get") {
-                const profile = yield* host.profile;
-                if (profile.about.trim() === "" && profile.rules.length === 0) {
-                  return "No profile yet.";
-                }
-                return [
-                  profile.about.trim() === "" ? "" : `About: ${profile.about.trim()}`,
-                  profile.rules.length === 0
-                    ? ""
-                    : `Rules:\n${profile.rules.map((rule) => `- ${rule}`).join("\n")}`,
-                ]
-                  .filter((part) => part !== "")
-                  .join("\n\n");
+                const profile = describeProfile(yield* host.profile);
+                return profile === "" ? "No profile yet." : profile;
               }
-              const about = a.about?.trim();
-              const rules = a.rules?.map((rule) => rule.trim()).filter((rule) => rule !== "");
-              if (about === undefined && rules === undefined) {
+              if (a.about === undefined && a.rules === undefined) {
                 return yield* new ToolError({ reason: "update needs about, rules, or both" });
               }
-              if (about !== undefined && about.length > 4_000) {
-                return yield* new ToolError({ reason: "about is longer than 4,000 characters" });
-              }
-              if (rules !== undefined && rules.length > 20) {
-                return yield* new ToolError({ reason: "keep rules to 20 entries or fewer" });
-              }
-              const saved = yield* host.updateProfile(about, rules);
+              const saved = yield* host.updateProfile(a.about, a.rules);
               return `Profile saved: ${saved.about === "" ? "no about" : "about"}, ${saved.rules.length} rule(s).`;
             });
           case "policy_manage":
@@ -275,22 +249,13 @@ export class Handlers extends Context.Service<
               switch (a.action) {
                 case "list": {
                   const all = yield* policies.list;
-                  return all.length === 0
-                    ? "No policies."
-                    : all
-                        .map((policy) => `#${policy.id} ${policy.decision} ${policy.match}`)
-                        .join("\n");
+                  return all.length === 0 ? "No policies." : all.map(describePolicy).join("\n");
                 }
                 case "add": {
-                  const match = a.match?.trim().toLowerCase() ?? "";
-                  if (match === "") return yield* new ToolError({ reason: "add needs a match" });
-                  if (match.length > 200) {
-                    return yield* new ToolError({ reason: "match is longer than 200 characters" });
-                  }
                   if (a.decision === undefined) {
                     return yield* new ToolError({ reason: "add needs a decision" });
                   }
-                  const made = yield* policies.add(match, a.decision);
+                  const made = yield* policies.add(a.match ?? "", a.decision);
                   return `Policy #${made.id}: ${made.decision} ${made.match}.`;
                 }
                 case "remove": {
@@ -475,42 +440,14 @@ export class Handlers extends Context.Service<
                   return `# ${found.skill.name}\n${found.skill.description}\n\n${found.skill.body}`;
                 }
                 case "save": {
-                  if (!a.name || !a.description || !a.body) {
-                    return yield* new ToolError({
-                      reason: "save needs name, description and body",
-                    });
-                  }
-                  const name = a.name.trim();
-                  const description = a.description.trim();
-                  const body = a.body.trim();
-                  if (!SKILL_NAME.test(name)) {
-                    return yield* new ToolError({
-                      reason: "name: lowercase letters, digits and dashes, up to 64",
-                    });
-                  }
-                  if (description.length > MAX_SKILL_DESCRIPTION) {
-                    return yield* new ToolError({
-                      reason: `description is longer than ${MAX_SKILL_DESCRIPTION} characters`,
-                    });
-                  }
-                  if (body.length > MAX_SKILL_BODY) {
-                    return yield* new ToolError({
-                      reason: `body is longer than ${MAX_SKILL_BODY} characters`,
-                    });
-                  }
                   const store = a.scope === "global" ? global : skills;
-                  const saved = yield* store.save(name, description, body);
+                  const saved = yield* store.save(a.name ?? "", a.description ?? "", a.body ?? "");
                   return `Saved ${a.scope === "global" ? "global " : ""}skill "${saved.name}".`;
                 }
                 case "delete": {
                   if (!a.name) return yield* new ToolError({ reason: "delete needs a name" });
                   const found = yield* findOwnFirstThenSharedUnlessScoped(a.name);
                   if (!found) return `No skill "${a.name}".`;
-                  if (found.skill.pinned) {
-                    return yield* new ToolError({
-                      reason: `"${a.name}" is pinned by an automation; cancel the automation first`,
-                    });
-                  }
                   return (yield* found.store.remove(a.name))
                     ? `Deleted ${found.scope === "global" ? "global " : ""}skill "${a.name}".`
                     : `No skill "${a.name}".`;
@@ -574,50 +511,19 @@ export class Handlers extends Context.Service<
               const a = yield* decode(IntentArgs, args);
               switch (a.action) {
                 case "create": {
-                  const description = a.description?.trim() ?? "";
-                  const triggers = (a.triggers ?? [])
-                    .map((trigger) => trigger.trim())
-                    .filter((trigger) => trigger !== "");
-                  if (description === "") {
-                    return yield* new ToolError({ reason: "create needs a description" });
-                  }
-                  if (triggers.length === 0) {
-                    return yield* new ToolError({ reason: "create needs at least one trigger" });
-                  }
-                  if (description.length > MAX_INTENT_DESCRIPTION) {
-                    return yield* new ToolError({
-                      reason: `description is longer than ${MAX_INTENT_DESCRIPTION} characters`,
-                    });
-                  }
-                  if (triggers.length > MAX_INTENT_TRIGGERS) {
-                    return yield* new ToolError({
-                      reason: `keep triggers to ${MAX_INTENT_TRIGGERS} or fewer`,
-                    });
-                  }
-                  const long = triggers.find((trigger) => trigger.length > MAX_TRIGGER_LENGTH);
-                  if (long !== undefined) {
-                    return yield* new ToolError({
-                      reason: `trigger "${long}" is longer than ${MAX_TRIGGER_LENGTH} characters`,
-                    });
-                  }
                   const days = a.days ?? 90;
-                  const made = yield* intents.create(description, triggers, {
+                  const made = yield* intents.create(a.description ?? "", a.triggers ?? [], {
                     expiresAt: Date.now() + days * 86_400_000,
                     cooldownMs: (a.cooldown_hours ?? 24) * 3_600_000,
                     maxFires: a.max_fires ?? 3,
                   });
-                  return `Standing intent #${made.id} armed for: ${triggers.join(", ")}.`;
+                  return `Standing intent #${made.id} armed for: ${made.triggers.join(", ")}.`;
                 }
                 case "list": {
                   const all = yield* intents.list;
                   return all.length === 0
                     ? "No standing intents."
-                    : all
-                        .map(
-                          (intent) =>
-                            `#${intent.id} ${intent.state} [${intent.triggers.join(", ")}] ${intent.description} (fires ${intent.fireCount}/${intent.maxFires}, expires ${formatDate(new Date(intent.expires), timezone)})`,
-                        )
-                        .join("\n");
+                    : all.map((intent) => describeIntent(intent, timezone)).join("\n");
                 }
                 case "cancel": {
                   if (a.id === undefined) {

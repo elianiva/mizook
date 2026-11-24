@@ -80,3 +80,31 @@ test("a place's thread holds only what was said there, oldest first, newest 100 
       }),
     ),
   ));
+
+test("a setting refuses a value no path may save, keeps the old one, and clears back to the default", () =>
+  Effect.runPromise(
+    withState(
+      Effect.gen(function* () {
+        const state = yield* State;
+        yield* state.setSetting("model", "deepseek/v4");
+        yield* state.setSetting("instructions", "be brief");
+        yield* state.setSetting("timezone", "Asia/Jakarta");
+        yield* state.setSetting("budget", "2.5");
+        const kept = yield* state.settings;
+        for (const [key, value] of [
+          ["model", "two words"],
+          ["model", "m".repeat(121)],
+          ["instructions", "i".repeat(4_001)],
+          ["timezone", "Mars/Base"],
+          ["budget", "-1"],
+          ["budget", "lots"],
+        ] as const) {
+          const refused = yield* Effect.flip(state.setSetting(key, value));
+          expect(refused._tag).toBe("InvalidInput");
+        }
+        expect(yield* state.settings).toEqual(kept);
+        yield* state.setSetting("model", undefined);
+        expect((yield* state.settings)["model"]).toBeUndefined();
+      }),
+    ),
+  ));

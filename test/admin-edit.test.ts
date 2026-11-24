@@ -2,7 +2,7 @@ import { Arbitrary, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
 import { edit } from "../src/admin/edit.ts";
-import { Host, type Profile } from "../src/host.ts";
+import { checkProfile, Host, type Profile } from "../src/host.ts";
 import { Intents } from "../src/intents.ts";
 import { Policies } from "../src/policies.ts";
 import { Skills } from "../src/skills.ts";
@@ -51,13 +51,15 @@ const world = (profile: { current: Profile }) => {
   const host = fakeHost({
     profile: Effect.sync(() => profile.current),
     updateProfile: (about, rules) =>
-      Effect.sync(() => {
-        profile.current = {
-          about: about ?? profile.current.about,
-          rules: rules ?? profile.current.rules,
-        };
-        return profile.current;
-      }),
+      checkProfile(about, rules).pipe(
+        Effect.map((change) => {
+          profile.current = {
+            about: change.about ?? profile.current.about,
+            rules: change.rules ?? profile.current.rules,
+          };
+          return profile.current;
+        }),
+      ),
   });
   return Layer.mergeAll(
     Skills.layer(sql),

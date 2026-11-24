@@ -56,6 +56,8 @@ const chars = (alphabet: string, minLength: number, maxLength: number) =>
   );
 const survivesUtf8 = (s: string) => new TextDecoder().decode(new TextEncoder().encode(s)) === s;
 const text = Arbitrary.schema(Schema.String).pipe(Arbitrary.filter(survivesUtf8));
+/** Text a skill or intent accepts: not blank, nothing to trim, within every limit. */
+const words = chars("abc xyz", 0, 30).pipe(Arbitrary.map((inner) => `w${inner}w`));
 const distinctBy = <A>(items: ReadonlyArray<A>, key: (a: A) => string) =>
   new Set(items.map(key)).size === items.length;
 
@@ -97,17 +99,17 @@ const channelContents = Arbitrary.all({
   }).pipe(Arbitrary.filter((s) => distinctBy(s, (x) => x.key))),
   skills: Arbitrary.array(
     Arbitrary.all({
-      name: chars("abcdef-", 1, 8),
-      description: text,
-      body: text,
+      name: chars("abcdef-", 1, 8).pipe(Arbitrary.filter((name) => !name.startsWith("-"))),
+      description: words,
+      body: words,
       pinned: Arbitrary.schema(Schema.Boolean),
     }),
     { maxLength: 3 },
   ).pipe(Arbitrary.filter((s) => distinctBy(s, (x) => x.name))),
   intents: Arbitrary.array(
     Arbitrary.all({
-      description: text,
-      triggers: Arbitrary.array(chars("abcxyz ", 1, 8), { minLength: 1, maxLength: 3 }),
+      description: words,
+      triggers: Arbitrary.array(chars("abcxyz", 1, 8), { minLength: 1, maxLength: 3 }),
       expiresIn: int(1, 30 * DAY),
       cooldown: int(0, DAY),
       maxFires: int(1, 9),

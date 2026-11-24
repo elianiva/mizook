@@ -483,7 +483,14 @@ export class Bot extends Context.Service<
         Effect.gen(function* () {
           const taken = yield* approvals.take(id);
           if (!taken) return undefined;
-          if (always && taken.match !== "") yield* policies.add(taken.match, "allow");
+          if (always && taken.match !== "")
+            yield* policies
+              .add(taken.match, "allow")
+              .pipe(
+                Effect.catchTag("InvalidInput", (refused) =>
+                  Effect.logWarning(`no standing policy for this approval: ${refused.reason}`),
+                ),
+              );
           const resume = Effect.gen(function* () {
             const isOurOwnAgentChange = taken.action !== "";
             if (isOurOwnAgentChange) {

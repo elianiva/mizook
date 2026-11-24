@@ -1,6 +1,6 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
-import { StateError } from "./errors.ts";
+import { InvalidInput, StateError } from "./errors.ts";
 import { stateSql } from "./sql.ts";
 
 export type Decision = "allow" | "ask" | "deny";
@@ -10,6 +10,22 @@ export interface Policy {
   readonly match: string;
   readonly decision: Decision;
 }
+
+const MAX_MATCH = 200;
+
+const refuse = (reason: string) => Effect.fail(new InvalidInput({ reason }));
+
+/** A policy's match, trimmed and lowercased, or the reason it cannot be saved. */
+const checkMatch = (match: string) => {
+  const normal = match.trim().toLowerCase();
+  if (normal === "") return refuse("Give the policy something to match.");
+  if (normal.length > MAX_MATCH) return refuse(`Keep the match under ${MAX_MATCH} characters.`);
+  return Effect.succeed(normal);
+};
+
+/** One line per policy, as `/policies` and the policy tool list them. */
+export const describePolicy = (policy: Policy): string =>
+  `#${policy.id} ${policy.decision} ${policy.match}`;
 
 const Row = Schema.Struct({
   id: Schema.Finite,
@@ -27,12 +43,14 @@ export class Policies extends Context.Service<
   Policies,
   {
     readonly list: Effect.Effect<ReadonlyArray<Policy>, StateError>;
-    add(match: string, decision: Decision): Effect.Effect<Policy, StateError>;
+    /** Adds a rule, its match trimmed and lowercased; adding one that exists returns it. */
+    add(match: string, decision: Decision): Effect.Effect<Policy, StateError | InvalidInput>;
+    /** Changes a rule; undefined when there is none. Refuses to duplicate another rule. */
     update(
       id: number,
       match: string,
       decision: Decision,
-    ): Effect.Effect<Policy | undefined, StateError>;
+    ): Effect.Effect<Policy | undefined, StateError | InvalidInput>;
     remove(id: number): Effect.Effect<boolean, StateError>;
     decide(target: string): Effect.Effect<Decision | undefined, StateError>;
   }
@@ -63,8 +81,9 @@ export class Policies extends Context.Service<
 
         return Policies.of({
           list,
-          add: (match, decision) =>
+          add: (raw, decision) =>
             Effect.gen(function* () {
+              const match = yield* checkMatch(raw);
               yield* run("add policy", () =>
                 sql.all(
                   `INSERT OR IGNORE INTO app_policies (match, decision, created) VALUES (?, ?, ?)`,
@@ -81,15 +100,23 @@ export class Policies extends Context.Service<
               );
               return rows[0]!;
             }),
-          update: (id, match, decision) =>
-            query(
-              "update policy",
-              `UPDATE app_policies SET match = ?, decision = ? WHERE id = ?
-               RETURNING id, match, decision`,
-              match,
-              decision,
-              id,
-            ).pipe(Effect.map((rows) => rows[0])),
+          update: (id, raw, decision) =>
+            Effect.gen(function* () {
+              const match = yield* checkMatch(raw);
+              const all = yield* list;
+              if (!all.some((policy) => policy.id === id)) return undefined;
+              if (all.some((p) => p.id !== id && p.match === match && p.decision === decision))
+                return yield* refuse("That rule already exists.");
+              const rows = yield* query(
+                "update policy",
+                `UPDATE app_policies SET match = ?, decision = ? WHERE id = ?
+                 RETURNING id, match, decision`,
+                match,
+                decision,
+                id,
+              );
+              return rows[0];
+            }),
           remove: (id) =>
             run("remove policy", () =>
               sql.all(`DELETE FROM app_policies WHERE id = ? RETURNING id`, id),

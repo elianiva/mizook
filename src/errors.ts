@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Effect } from "effect";
 
 export class ModelNotFound extends Data.TaggedError("ModelNotFound")<{
   readonly provider: string;
@@ -117,3 +117,25 @@ export class HookSecretMissing extends Data.TaggedError("HookSecretMissing")<{}>
     return "MIZOOK_WEBHOOK_SECRET is empty, so webhook links cannot be signed";
   }
 }
+
+/** Input a service refuses, with the reason in words a user or the model can act on. */
+export class InvalidInput extends Data.TaggedError("InvalidInput")<{
+  readonly reason: string;
+}> {
+  override get message() {
+    return this.reason;
+  }
+}
+
+/**
+ * A result that crosses a Durable Object call. A refusal travels as data, because an error
+ * thrown across the call loses its tag.
+ */
+export type Refusable<A> =
+  | { readonly ok: true; readonly value: A }
+  | { readonly ok: false; readonly reason: string };
+
+export const fromRefusable = <A>(result: Refusable<A>): Effect.Effect<A, InvalidInput> =>
+  result.ok
+    ? Effect.succeed(result.value)
+    : Effect.fail(new InvalidInput({ reason: result.reason }));

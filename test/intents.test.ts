@@ -1,4 +1,4 @@
-import { Arbitrary, Effect, Schema } from "effect";
+import { Arbitrary, Effect, Exit, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
 import { Intents, matchesTrigger, type Intent, type IntentState } from "../src/intents.ts";
@@ -98,6 +98,13 @@ property(
 
 type Modeled = Omit<Intent, "created">;
 
+const cleanTriggers = (triggers: ReadonlyArray<string>) =>
+  triggers.map((t) => t.trim()).filter((t) => t !== "");
+
+/** What `create` and `update` accept: words to act on, a trigger, and an expiry still ahead. */
+const acceptable = (description: string, triggers: ReadonlyArray<string>, expires: number) =>
+  description.trim() !== "" && cleanTriggers(triggers).length > 0 && expires > Date.now();
+
 const stripCreated = (intent: Intent): Modeled =>
   Object.fromEntries(Object.entries(intent).filter(([key]) => key !== "created")) as Modeled;
 
@@ -128,19 +135,26 @@ property(
           clock += s.advanceHours * HOUR;
           switch (s.op) {
             case "create": {
-              const made = yield* intents.create(s.description, s.triggers, {
-                expiresAt: clock + s.expiresInHours * HOUR,
-                cooldownMs: s.cooldownHours * HOUR,
-                maxFires: s.maxFires,
-              });
+              const expires = clock + s.expiresInHours * HOUR;
+              const accepted = acceptable(s.description, s.triggers, expires);
+              const exit = yield* Effect.exit(
+                intents.create(s.description, s.triggers, {
+                  expiresAt: expires,
+                  cooldownMs: s.cooldownHours * HOUR,
+                  maxFires: s.maxFires,
+                }),
+              );
+              expect(Exit.isSuccess(exit)).toBe(accepted);
+              if (!Exit.isSuccess(exit)) break;
+              const made = exit.value;
               expect(model.map((m) => m.id)).not.toContain(made.id);
               model = [
                 ...model,
                 {
                   id: made.id,
-                  description: s.description,
-                  triggers: s.triggers,
-                  expires: clock + s.expiresInHours * HOUR,
+                  description: s.description.trim(),
+                  triggers: cleanTriggers(s.triggers),
+                  expires,
                   cooldown: s.cooldownHours * HOUR,
                   maxFires: s.maxFires,
                   fireCount: 0,
@@ -160,13 +174,19 @@ property(
             case "update": {
               const id = idAt(s.slot);
               const expires = clock + s.expiresInHours * HOUR + HOUR / 2;
-              const changed = yield* intents.update(id, {
-                description: s.description,
-                triggers: s.triggers,
-                expires,
-                cooldown: s.cooldownHours * HOUR,
-                maxFires: s.maxFires,
-              });
+              const accepted = acceptable(s.description, s.triggers, expires);
+              const exit = yield* Effect.exit(
+                intents.update(id, {
+                  description: s.description,
+                  triggers: s.triggers,
+                  expires,
+                  cooldown: s.cooldownHours * HOUR,
+                  maxFires: s.maxFires,
+                }),
+              );
+              expect(Exit.isSuccess(exit)).toBe(accepted);
+              if (!Exit.isSuccess(exit)) break;
+              const changed = exit.value;
               const old = model.find((m) => m.id === id);
               if (old === undefined) {
                 expect(changed).toBeUndefined();
@@ -182,8 +202,8 @@ property(
                       : "armed";
               const next: Modeled = {
                 ...old,
-                description: s.description,
-                triggers: s.triggers,
+                description: s.description.trim(),
+                triggers: cleanTriggers(s.triggers),
                 expires,
                 cooldown: s.cooldownHours * HOUR,
                 maxFires: s.maxFires,
@@ -299,7 +319,17 @@ property(
         const options = { expiresAt: now + HOUR, cooldownMs: 0, maxFires: 1 };
         const corrupted = yield* intents.create("Stored by hand.", ["placeholder"], options);
         db.prepare("UPDATE app_intents SET triggers = ? WHERE id = ?").run(stored, corrupted.id);
-        yield* intents.create("Made with no triggers.", [], options);
+        yield* intents.restore({
+          description: "Restored with no triggers.",
+          triggers: [],
+          created: now,
+          expires: now + HOUR,
+          cooldown: 0,
+          maxFires: 1,
+          fireCount: 0,
+          lastFired: undefined,
+          state: "armed",
+        });
         expect(yield* intents.match(text, new Date(now))).toEqual([]);
       }),
     ),

@@ -3,12 +3,12 @@ import { Agent, type AgentError } from "./agent.ts";
 import { COMMANDS } from "./command-list.ts";
 import { Settings } from "./config.ts";
 import { formatDate } from "./format.ts";
-import { Host } from "./host.ts";
-import { Intents } from "./intents.ts";
-import { Policies } from "./policies.ts";
+import { describeProfile, Host } from "./host.ts";
+import { describeIntent, Intents } from "./intents.ts";
+import { describePolicy, Policies } from "./policies.ts";
 import { describeAutomation } from "./runner.ts";
 import { Skills } from "./skills.ts";
-import { State } from "./state.ts";
+import { isSettingKey, State, type SettingKey } from "./state.ts";
 import type { StateError } from "./errors.ts";
 import { Usage } from "./usage.ts";
 
@@ -32,16 +32,9 @@ export class Commands extends Context.Service<
       const host = yield* Host;
       const agent = yield* Agent;
 
-      const saveSettingAndReload = (key: string, value: string, said: string) =>
+      const saveSettingAndReload = (key: SettingKey, value: string | undefined, said: string) =>
         Effect.gen(function* () {
-          yield* state.setMeta(`setting:${key}`, value);
-          yield* host.reload;
-          return said;
-        });
-
-      const resetSetting = (key: string, said: string) =>
-        Effect.gen(function* () {
-          yield* state.deleteMeta(`setting:${key}`);
+          yield* state.setSetting(key, value);
           yield* host.reload;
           return said;
         });
@@ -51,8 +44,8 @@ export class Commands extends Context.Service<
         if (!match) return undefined;
         const arg = (match[2] ?? "").trim();
         const name = match[1] ?? "";
-        if (arg === "reset" && ["model", "instructions", "timezone", "budget"].includes(name)) {
-          return yield* resetSetting(name, `${name} is back to the default.`);
+        if (arg === "reset" && isSettingKey(name)) {
+          return yield* saveSettingAndReload(name, undefined, `${name} is back to the default.`);
         }
         switch (name) {
           case "stop":
@@ -81,21 +74,11 @@ export class Commands extends Context.Service<
           case "timezone":
             return arg === ""
               ? `Time zone: ${settings.timezone}.`
-              : yield* Effect.try({
-                  try: () => new Intl.DateTimeFormat("en", { timeZone: arg }),
-                  catch: () => "unknown",
-                }).pipe(
-                  Effect.flatMap(() =>
-                    saveSettingAndReload("timezone", arg, `Time zone set to ${arg}.`),
-                  ),
-                  Effect.orElseSucceed(() => `"${arg}" is not an IANA time zone.`),
-                );
+              : yield* saveSettingAndReload("timezone", arg, `Time zone set to ${arg}.`);
           case "budget":
             return arg === ""
               ? `Daily budget: ${settings.budgetDaily === 0 ? "none" : dollars(settings.budgetDaily)}. Set it with /budget <dollars>, 0 for none, or /budget reset.`
-              : Number.isFinite(Number(arg)) && Number(arg) >= 0
-                ? yield* saveSettingAndReload("budget", arg, `Daily budget set to ${arg}.`)
-                : "Give a number of dollars, 0 for none.";
+              : yield* saveSettingAndReload("budget", arg, `Daily budget set to ${arg}.`);
           case "name":
             if (arg === "")
               return `This place is ${yield* host.placeLabel(place)}. Rename it with /name <name>.`;
@@ -151,8 +134,6 @@ export class Commands extends Context.Service<
             if (!skill) return `No skill "${name}".`;
             if (verb === "show") return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
             if (verb === "delete") {
-              if (skill.pinned)
-                return `"${name}" is pinned by an automation; cancel the automation first.`;
               return (yield* store.remove(name))
                 ? `Deleted skill "${name}".`
                 : `No skill "${name}".`;
@@ -171,12 +152,7 @@ export class Commands extends Context.Service<
             const all = yield* intents.list;
             return all.length === 0
               ? "No standing intents."
-              : all
-                  .map(
-                    (intent) =>
-                      `#${intent.id} ${intent.state} [${intent.triggers.join(", ")}] ${intent.description} (fires ${intent.fireCount}/${intent.maxFires}, expires ${formatDate(new Date(intent.expires), settings.timezone)})`,
-                  )
-                  .join("\n");
+              : all.map((intent) => describeIntent(intent, settings.timezone)).join("\n");
           }
           case "policies": {
             const [verb = "", ...rest] = arg.split(/\s+/);
@@ -188,13 +164,13 @@ export class Commands extends Context.Service<
             }
             if (verb === "allow" || verb === "ask" || verb === "deny") {
               if (match === "") return `Use /policies ${verb} <match>.`;
-              const made = yield* policies.add(match.toLowerCase(), verb);
+              const made = yield* policies.add(match, verb);
               return `Policy #${made.id}: ${made.decision} ${made.match}.`;
             }
             const all = yield* policies.list;
             return all.length === 0
               ? "No policies. Use /policies allow|ask|deny <match>."
-              : all.map((policy) => `#${policy.id} ${policy.decision} ${policy.match}`).join("\n");
+              : all.map(describePolicy).join("\n");
           }
           case "runs": {
             const id = arg === "" ? undefined : Number(arg);
@@ -259,18 +235,10 @@ export class Commands extends Context.Service<
               yield* host.updateProfile("", []);
               return "Profile cleared.";
             }
-            const profile = yield* host.profile;
-            if (profile.about.trim() === "" && profile.rules.length === 0) {
-              return "No profile yet. Tell the agent about yourself and every agent will know it.";
-            }
-            return [
-              profile.about.trim() === "" ? "" : `About: ${profile.about.trim()}`,
-              profile.rules.length === 0
-                ? ""
-                : `Rules:\n${profile.rules.map((rule) => `- ${rule}`).join("\n")}`,
-            ]
-              .filter((part) => part !== "")
-              .join("\n\n");
+            const profile = describeProfile(yield* host.profile);
+            return profile === ""
+              ? "No profile yet. Tell the agent about yourself and every agent will know it."
+              : profile;
           }
           case "export":
             return `Your export of ${host.self.slug} (works for one hour): ${yield* host.exportNow}`;
@@ -280,7 +248,12 @@ export class Commands extends Context.Service<
             return `Unknown command /${match[1]}. Try /help.`;
         }
       });
-      return Commands.of({ run });
+      return Commands.of({
+        run: (place, text) =>
+          run(place, text).pipe(
+            Effect.catchTag("InvalidInput", (refused) => Effect.succeed(refused.reason)),
+          ),
+      });
     }),
   );
 }

@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import type { ConversationId, SubmissionId } from "@earendil-works/pi-durable";
-import type { StateError } from "./errors.ts";
+import { InvalidInput, type StateError } from "./errors.ts";
 import { stateSql } from "./sql.ts";
 
 export interface PendingTurn {
@@ -43,6 +43,30 @@ const THREAD_LINES_KEPT = 100;
 
 const WEEK = 7 * 24 * 3600 * 1000;
 
+/** The settings each agent keeps, each one overriding its install-wide default. */
+export const SETTING_KEYS = ["model", "instructions", "timezone", "budget"] as const;
+export type SettingKey = (typeof SETTING_KEYS)[number];
+
+export const isSettingKey = (key: string): key is SettingKey =>
+  (SETTING_KEYS as ReadonlyArray<string>).includes(key);
+
+const MAX_SETTING_CHARS = 4_000;
+
+const isTimeZone = (zone: string) =>
+  Effect.runSync(
+    Effect.isSuccess(Effect.try(() => new Intl.DateTimeFormat("en", { timeZone: zone }))),
+  );
+
+/** Why a value cannot be saved for a setting, or undefined when it can. */
+export const settingRefusal = (key: SettingKey, value: string): string | undefined => {
+  if (value.length > MAX_SETTING_CHARS) return "That is too long.";
+  if (key === "budget" && !(Number.isFinite(Number(value)) && Number(value) >= 0))
+    return "Give a number of dollars, 0 for none.";
+  if (key === "timezone" && !isTimeZone(value)) return `"${value}" is not an IANA time zone.`;
+  if (key === "model" && !/^[\w.:/-]{1,120}$/.test(value)) return "That is not a model id.";
+  return undefined;
+};
+
 export class State extends Context.Service<
   State,
   {
@@ -57,6 +81,11 @@ export class State extends Context.Service<
     setMeta(key: string, value: string): Effect.Effect<void, StateError>;
     deleteMeta(key: string): Effect.Effect<void, StateError>;
     readonly settings: Effect.Effect<Record<string, string>, StateError>;
+    /** Saves a setting, or clears it back to its default when undefined. Refuses invalid values. */
+    setSetting(
+      key: SettingKey,
+      value: string | undefined,
+    ): Effect.Effect<void, StateError | InvalidInput>;
     audit(
       who: string,
       action: string,
@@ -183,6 +212,22 @@ export class State extends Context.Service<
               );
             }),
           settings: readSettings(sql),
+          setSetting: (key, value) => {
+            if (value === undefined)
+              return run("clear setting", () =>
+                sql.all(`DELETE FROM app_meta WHERE key = ?`, `setting:${key}`),
+              ).pipe(Effect.asVoid);
+            const reason = settingRefusal(key, value);
+            if (reason !== undefined) return Effect.fail(new InvalidInput({ reason }));
+            return run("save setting", () =>
+              sql.all(
+                `INSERT INTO app_meta (key, value) VALUES (?, ?)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+                `setting:${key}`,
+                value,
+              ),
+            ).pipe(Effect.asVoid);
+          },
           audit: (who, action, target, ok) =>
             run("audit", async () => {
               const now = Date.now();

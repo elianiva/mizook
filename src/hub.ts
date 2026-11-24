@@ -8,6 +8,7 @@ import { AGENT_SLUG, menuWith, RESERVED_COMMANDS } from "./command-list.ts";
 import type { AgentChange, AgentInfo, AgentSpec, Profile, WebThreadInfo } from "./host.ts";
 import type { Env } from "./env.ts";
 import { agentDoName, agentObject } from "./objects.ts";
+import type { InvalidInput, Refusable, StateError } from "./errors.ts";
 import { WEB_PERSONA, WEB_ROLE } from "./persona.ts";
 import { Skills, type Skill } from "./skills.ts";
 
@@ -53,6 +54,14 @@ const parseStringList = (json: string): string[] | undefined =>
   );
 
 const EVERY_TOOL = undefined;
+
+const refusable = <A>(effect: Effect.Effect<A, StateError | InvalidInput>) =>
+  effect.pipe(
+    Effect.map((value): Refusable<A> => ({ ok: true, value })),
+    Effect.catchTag("InvalidInput", (error) =>
+      Effect.succeed<Refusable<A>>({ ok: false, reason: error.reason }),
+    ),
+  );
 
 export class Hub extends DurableObject<Env> {
   private readonly skills: Promise<Skills["Service"]>;
@@ -407,12 +416,12 @@ export class Hub extends DurableObject<Env> {
     return this.withSkills((s) => s.get(name));
   }
 
-  skillSave(name: string, description: string, body: string): Promise<Skill> {
-    return this.withSkills((s) => s.save(name, description, body));
+  skillSave(name: string, description: string, body: string): Promise<Refusable<Skill>> {
+    return this.withSkills((s) => refusable(s.save(name, description, body)));
   }
 
-  skillRemove(name: string): Promise<boolean> {
-    return this.withSkills((s) => s.remove(name));
+  skillRemove(name: string): Promise<Refusable<boolean>> {
+    return this.withSkills((s) => refusable(s.remove(name)));
   }
 
   skillTouch(name: string): Promise<void> {

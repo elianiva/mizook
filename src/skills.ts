@@ -1,11 +1,30 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
-import { StateError } from "./errors.ts";
+import { InvalidInput, StateError } from "./errors.ts";
 import { stateSql } from "./sql.ts";
 
-export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
-export const MAX_SKILL_DESCRIPTION = 200;
-export const MAX_SKILL_BODY = 24_000;
+const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const MAX_SKILL_DESCRIPTION = 200;
+const MAX_SKILL_BODY = 24_000;
+
+const refuse = (reason: string) => Effect.fail(new InvalidInput({ reason }));
+
+/** A skill's name, description and body, trimmed, or the reason they cannot be saved. */
+const checkSkill = (name: string, description: string, body: string) => {
+  const [n, d, b] = [name.trim(), description.trim(), body.trim()];
+  if (n === "") return refuse("Give the skill a name.");
+  if (!SKILL_NAME.test(n))
+    return refuse("Use lowercase letters, digits and dashes for the name, up to 64 characters.");
+  if (d === "") return refuse("Describe when to use the skill.");
+  if (d.length > MAX_SKILL_DESCRIPTION)
+    return refuse(`Keep the description under ${MAX_SKILL_DESCRIPTION} characters.`);
+  if (b === "") return refuse("Write the skill's steps.");
+  if (b.length > MAX_SKILL_BODY) return refuse(`Keep the body under ${MAX_SKILL_BODY} characters.`);
+  return Effect.succeed({ name: n, description: d, body: b });
+};
+
+export const pinnedRefusal = (name: string) =>
+  `"${name}" is pinned by an automation; cancel the automation first.`;
 
 export interface Skill {
   readonly name: string;
@@ -47,8 +66,14 @@ export class Skills extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<Skill>, StateError>;
     get(name: string): Effect.Effect<Skill | undefined, StateError>;
-    save(name: string, description: string, body: string): Effect.Effect<Skill, StateError>;
-    remove(name: string): Effect.Effect<boolean, StateError>;
+    /** Saves a skill, trimmed. Refuses a bad name, a blank or overlong description or body. */
+    save(
+      name: string,
+      description: string,
+      body: string,
+    ): Effect.Effect<Skill, StateError | InvalidInput>;
+    /** Deletes a skill; false when there is none. Refuses a skill an automation pins. */
+    remove(name: string): Effect.Effect<boolean, StateError | InvalidInput>;
     touch(name: string): Effect.Effect<void, StateError>;
     pin(name: string): Effect.Effect<void, StateError>;
     setPinned(name: string, pinned: boolean): Effect.Effect<void, StateError>;
@@ -83,6 +108,7 @@ export class Skills extends Context.Service<
           get: (name) => one("get skill", name),
           save: (name, description, body) =>
             Effect.gen(function* () {
+              const skill = yield* checkSkill(name, description, body);
               const now = Date.now();
               const rows = yield* query(
                 "save skill",
@@ -92,18 +118,24 @@ export class Skills extends Context.Service<
                    description = excluded.description, body = excluded.body,
                    updated = excluded.updated
                  RETURNING name, description, body, created, updated, used_at, use_count, pinned`,
-                name,
-                description,
-                body,
+                skill.name,
+                skill.description,
+                skill.body,
                 now,
                 now,
               );
               return rows[0]!;
             }),
           remove: (name) =>
-            run("remove skill", () =>
-              sql.all(`DELETE FROM app_skills WHERE name = ? RETURNING name`, name),
-            ).pipe(Effect.map((rows) => rows.length > 0)),
+            Effect.gen(function* () {
+              const found = yield* one("find skill", name);
+              if (!found) return false;
+              if (found.pinned) return yield* refuse(pinnedRefusal(name));
+              const gone = yield* run("remove skill", () =>
+                sql.all(`DELETE FROM app_skills WHERE name = ? RETURNING name`, name),
+              );
+              return gone.length > 0;
+            }),
           touch: (name) =>
             run("touch skill", () =>
               sql.all(

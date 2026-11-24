@@ -1,14 +1,17 @@
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Option, Schema } from "effect";
-import { StateError } from "./errors.ts";
+import { InvalidInput, StateError } from "./errors.ts";
+import { formatDate } from "./format.ts";
 import { IntentEvents, IntentState, stepIntent } from "./intent-lifecycle.ts";
 import { stateSql } from "./sql.ts";
 
 export type { IntentState };
 
-export const MAX_INTENT_DESCRIPTION = 500;
-export const MAX_INTENT_TRIGGERS = 8;
-export const MAX_TRIGGER_LENGTH = 64;
+const MAX_INTENT_DESCRIPTION = 500;
+const MAX_INTENT_TRIGGERS = 8;
+const MAX_TRIGGER_LENGTH = 64;
+const MAX_FIRES = 1_000;
+const MAX_COOLDOWN_MS = 8_760 * 3_600_000;
 
 type MillisecondsBetweenFires = number;
 
@@ -30,6 +33,42 @@ export interface IntentOptions {
   readonly cooldownMs: number;
   readonly maxFires: number;
 }
+
+interface IntentInput {
+  readonly description: string;
+  readonly triggers: ReadonlyArray<string>;
+  readonly expires: number;
+  readonly cooldown: MillisecondsBetweenFires;
+  readonly maxFires: number;
+}
+
+const refuse = (reason: string) => Effect.fail(new InvalidInput({ reason }));
+
+/** An intent's fields, trimmed and without blank triggers, or the reason it cannot be armed. */
+const checkIntent = (input: IntentInput) => {
+  const description = input.description.trim();
+  const triggers = input.triggers.map((t) => t.trim()).filter((t) => t !== "");
+  if (description === "") return refuse("Say what the intent should do.");
+  if (description.length > MAX_INTENT_DESCRIPTION)
+    return refuse(`Keep the description under ${MAX_INTENT_DESCRIPTION} characters.`);
+  if (triggers.length === 0) return refuse("Add at least one trigger.");
+  if (triggers.length > MAX_INTENT_TRIGGERS)
+    return refuse(`Keep triggers to ${MAX_INTENT_TRIGGERS} or fewer.`);
+  const long = triggers.find((trigger) => trigger.length > MAX_TRIGGER_LENGTH);
+  if (long !== undefined)
+    return refuse(`Keep each trigger under ${MAX_TRIGGER_LENGTH} characters: "${long}" is longer.`);
+  if (!Number.isInteger(input.expires) || input.expires <= Date.now())
+    return refuse("Choose an expiry date in the future.");
+  if (!Number.isInteger(input.maxFires) || input.maxFires < 1 || input.maxFires > MAX_FIRES)
+    return refuse("Let the intent fire between 1 and 1,000 times.");
+  if (!Number.isFinite(input.cooldown) || input.cooldown < 0 || input.cooldown > MAX_COOLDOWN_MS)
+    return refuse("Use a cooldown between 0 and 8,760 hours.");
+  return Effect.succeed({ ...input, description, triggers });
+};
+
+/** One line per intent, as `/intents` and the intent tool list them. */
+export const describeIntent = (intent: Intent, timezone: string): string =>
+  `#${intent.id} ${intent.state} [${intent.triggers.join(", ")}] ${intent.description} (fires ${intent.fireCount}/${intent.maxFires}, expires ${formatDate(new Date(intent.expires), timezone)})`;
 
 const Row = Schema.Struct({
   id: Schema.Finite,
@@ -85,22 +124,18 @@ export const matchesTrigger = (text: string, trigger: string): boolean => {
 export class Intents extends Context.Service<
   Intents,
   {
+    /** Arms an intent. Refuses blank or overlong text, a past expiry and out-of-range counts. */
     create(
       description: string,
       triggers: ReadonlyArray<string>,
       options: IntentOptions,
-    ): Effect.Effect<Intent, StateError>;
+    ): Effect.Effect<Intent, StateError | InvalidInput>;
     readonly list: Effect.Effect<ReadonlyArray<Intent>, StateError>;
+    /** Replaces an intent's fields, with the same rules as `create`; undefined when there is none. */
     update(
       id: number,
-      input: {
-        readonly description: string;
-        readonly triggers: ReadonlyArray<string>;
-        readonly expires: number;
-        readonly cooldown: number;
-        readonly maxFires: number;
-      },
-    ): Effect.Effect<Intent | undefined, StateError>;
+      input: IntentInput,
+    ): Effect.Effect<Intent | undefined, StateError | InvalidInput>;
     restore(input: Omit<Intent, "id">): Effect.Effect<Intent, StateError>;
     cancel(id: number): Effect.Effect<boolean, StateError>;
     match(text: string, now: Date): Effect.Effect<ReadonlyArray<Intent>, StateError>;
@@ -138,6 +173,13 @@ export class Intents extends Context.Service<
         return Intents.of({
           create: (description, triggers, options) =>
             Effect.gen(function* () {
+              const input = yield* checkIntent({
+                description,
+                triggers,
+                expires: options.expiresAt,
+                cooldown: options.cooldownMs,
+                maxFires: options.maxFires,
+              });
               const now = Date.now();
               const made = yield* one(
                 "create intent",
@@ -146,18 +188,19 @@ export class Intents extends Context.Service<
                  VALUES (?, ?, ?, ?, ?, ?)
                  RETURNING id, description, triggers, created, expires, cooldown,
                    max_fires, fire_count, last_fired, state`,
-                description,
-                JSON.stringify(triggers),
+                input.description,
+                JSON.stringify(input.triggers),
                 now,
-                options.expiresAt,
-                options.cooldownMs,
-                options.maxFires,
+                input.expires,
+                Math.round(input.cooldown),
+                input.maxFires,
               );
               return made!;
             }),
           list: query("list intents", `${SELECT} ORDER BY id`),
-          update: (id, input) =>
+          update: (id, changes) =>
             Effect.gen(function* () {
+              const input = yield* checkIntent(changes);
               const current = yield* one("intent", `${SELECT} WHERE id = ?`, id);
               if (!current) return undefined;
               const state = yield* stepIntent(
@@ -178,7 +221,7 @@ export class Intents extends Context.Service<
                 input.description,
                 JSON.stringify(input.triggers),
                 input.expires,
-                input.cooldown,
+                Math.round(input.cooldown),
                 input.maxFires,
                 state ?? current.state,
                 id,

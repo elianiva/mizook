@@ -4,8 +4,15 @@ import { Agent } from "./agent.ts";
 import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
 import type { Env } from "./env.ts";
-import { StateError, ToolError } from "./errors.ts";
-import { EMPTY_PROFILE, Host, shortPlace, type AgentInfo, type AutomationsApi } from "./host.ts";
+import { fromRefusable, StateError, ToolError } from "./errors.ts";
+import {
+  checkProfile,
+  EMPTY_PROFILE,
+  Host,
+  shortPlace,
+  type AgentInfo,
+  type AutomationsApi,
+} from "./host.ts";
 import type { Skills } from "./skills.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
 import { agentObject, automationsObject, hubObject } from "./objects.ts";
@@ -59,8 +66,13 @@ const hubSkillsAsAgentSkills = (hub: () => HubStub): Skills["Service"] => {
     list: call("global skills", () => hub().skillList()),
     get: (name) => call("global skill", () => hub().skillGet(name)),
     save: (name, description, body) =>
-      call("save global skill", () => hub().skillSave(name, description, body)),
-    remove: (name) => call("remove global skill", () => hub().skillRemove(name)),
+      call("save global skill", () => hub().skillSave(name, description, body)).pipe(
+        Effect.flatMap(fromRefusable),
+      ),
+    remove: (name) =>
+      call("remove global skill", () => hub().skillRemove(name)).pipe(
+        Effect.flatMap(fromRefusable),
+      ),
     touch: (name) => call("touch global skill", () => hub().skillTouch(name)),
     pin: (name) => call("pin global skill", () => hub().skillPin(name)),
     setPinned: (name, pinned) =>
@@ -158,10 +170,18 @@ export class AgentObject extends DurableObject<Env> {
         Effect.orElseSucceed(() => EMPTY_PROFILE),
       ),
       updateProfile: (about, rules) =>
-        Effect.tryPromise({
-          try: () => hub().setProfile(about, rules === undefined ? undefined : [...rules]),
-          catch: (cause) => new StateError({ operation: "profile", cause }),
-        }),
+        checkProfile(about, rules).pipe(
+          Effect.flatMap((change) =>
+            Effect.tryPromise({
+              try: () =>
+                hub().setProfile(
+                  change.about,
+                  change.rules === undefined ? undefined : [...change.rules],
+                ),
+              catch: (cause) => new StateError({ operation: "profile", cause }),
+            }),
+          ),
+        ),
       automations: automationsApi(() => automationsObject(this.env)),
       ask: (agent, question) =>
         Effect.gen(function* () {

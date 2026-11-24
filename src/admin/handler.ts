@@ -3,6 +3,7 @@ import type { Env } from "../env.ts";
 import type { AgentInfo } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
 import { agentObject, automationsObject, hubObject } from "../objects.ts";
+import { isSettingKey, settingRefusal } from "../state.ts";
 import { verifierFor } from "./access.ts";
 
 /** What the Agents page shows: an agent's identity and configuration, not its activity. */
@@ -169,24 +170,6 @@ const ACTIONS: Record<string, string> = {
   cancel: "cancel_schedule",
 };
 
-const SETTINGS = ["model", "instructions", "timezone", "budget"];
-
-const MAX_SETTING_CHARS = 4_000;
-
-const invalidSettingReason = (key: string, value: string): string | undefined => {
-  if (value.length > MAX_SETTING_CHARS) return "That is too long";
-  if (key === "budget" && !(Number.isFinite(Number(value)) && Number(value) >= 0))
-    return "Give a number of dollars, 0 for none";
-  if (key === "timezone") {
-    const isZone = Effect.runSync(
-      Effect.isSuccess(Effect.try(() => new Intl.DateTimeFormat("en", { timeZone: value }))),
-    );
-    if (!isZone) return `${value} is not an IANA time zone`;
-  }
-  if (key === "model" && !/^[\w.:/-]{1,120}$/.test(value)) return "That is not a model id";
-  return undefined;
-};
-
 const bodyOf = (request: Request): Promise<unknown> =>
   Effect.runPromise(
     Effect.tryPromise(async (): Promise<unknown> => request.json()).pipe(
@@ -217,8 +200,8 @@ const manageAgent = async (
     return json({ error: "bad request" }, 400);
   const tools = toolsGiven ? (body["tools"] as string[] | null) : undefined;
   const model = text("model")?.trim();
-  if (model !== undefined && model !== "" && invalidSettingReason("model", model))
-    return json({ error: "That is not a model id" }, 400);
+  const badModel = model === undefined || model === "" ? undefined : settingRefusal("model", model);
+  if (badModel) return json({ error: badModel }, 400);
 
   const change =
     op === "create"
@@ -308,13 +291,13 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
   const setting = /^\/admin\/api\/settings\/([a-z]+)$/.exec(url.pathname);
   if (setting) {
     const key = setting[1]!;
-    if (!SETTINGS.includes(key)) return json({ error: "not found" }, 404);
+    if (!isSettingKey(key)) return json({ error: "not found" }, 404);
     const body = (await bodyOf(request)) as { value?: unknown } | undefined;
     const value = typeof body?.value === "string" ? body.value.trim() : undefined;
     if (body === undefined || (body.value !== undefined && value === undefined))
       return json({ error: "bad request" }, 400);
     const invalidReason =
-      value === undefined || value === "" ? undefined : invalidSettingReason(key, value);
+      value === undefined || value === "" ? undefined : settingRefusal(key, value);
     if (invalidReason) return json({ error: invalidReason }, 400);
     return json({ ok: true, said: await rpc.setting(who, key, value === "" ? undefined : value) });
   }

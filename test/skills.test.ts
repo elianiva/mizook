@@ -1,4 +1,4 @@
-import { Arbitrary, Effect, Schema } from "effect";
+import { Arbitrary, Effect, Exit, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
 import { Skills } from "../src/skills.ts";
@@ -48,12 +48,22 @@ property(
           const current = model.get(s.name);
           switch (s.op) {
             case "save": {
-              const saved = yield* skills.save(s.name, s.description, s.body);
+              const description = s.description.trim();
+              const body = s.body.trim();
+              const accepted =
+                description !== "" &&
+                description.length <= 200 &&
+                body !== "" &&
+                body.length <= 24_000;
+              const exit = yield* Effect.exit(skills.save(s.name, s.description, s.body));
+              expect(Exit.isSuccess(exit)).toBe(accepted);
+              if (!Exit.isSuccess(exit)) break;
+              const saved = exit.value;
               const next = current
-                ? { ...current, description: s.description, body: s.body }
+                ? { ...current, description, body }
                 : {
-                    description: s.description,
-                    body: s.body,
+                    description,
+                    body,
                     useCount: 0,
                     used: false,
                     pinned: false,
@@ -61,8 +71,8 @@ property(
               model.set(s.name, next);
               expect(saved).toMatchObject({
                 name: s.name,
-                description: s.description,
-                body: s.body,
+                description,
+                body,
                 useCount: next.useCount,
                 pinned: next.pinned,
               });
@@ -84,10 +94,16 @@ property(
               if (current) model.set(s.name, { ...current, pinned });
               break;
             }
-            case "remove":
-              expect(yield* skills.remove(s.name)).toBe(current !== undefined);
+            case "remove": {
+              const exit = yield* Effect.exit(skills.remove(s.name));
+              if (current?.pinned) {
+                expect(Exit.isFailure(exit)).toBe(true);
+                break;
+              }
+              expect(exit).toEqual(Exit.succeed(current !== undefined));
               model.delete(s.name);
               break;
+            }
             case "get":
               break;
           }

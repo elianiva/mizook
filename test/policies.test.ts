@@ -62,7 +62,10 @@ property(
           switch (s.op) {
             case "add": {
               const same = rules.find((r) => r.match === s.match && r.decision === s.decision);
-              const made = yield* policies.add(s.match, s.decision);
+              const exit = yield* Effect.exit(policies.add(s.match, s.decision));
+              expect(Exit.isSuccess(exit)).toBe(s.match !== "");
+              if (!Exit.isSuccess(exit)) break;
+              const made = exit.value;
               expect(made).toMatchObject({ match: s.match, decision: s.decision });
               if (same) {
                 expect(made.id).toBe(same.id);
@@ -80,7 +83,7 @@ property(
                 (r) => r.id !== id && r.match === s.match && r.decision === s.decision,
               );
               const exit = yield* Effect.exit(policies.update(id, s.match, s.decision));
-              if (exists && clash) {
+              if (s.match === "" || (exists && clash)) {
                 expect(Exit.isFailure(exit)).toBe(true);
               } else if (exists) {
                 const changed = { id, match: s.match, decision: s.decision };
