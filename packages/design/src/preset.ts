@@ -66,14 +66,14 @@ export const mizookPreset = definePreset({
       translate: "calc(var(--swipe-offset, 0px) - 100%) 0 !important",
     },
     "[data-settling] [data-swipe-panel]": {
-      transition: "translate 240ms {easings.out} !important",
+      transition: "translate var(--swipe-settle, 240ms) {easings.out} !important",
     },
     "[data-settling] [data-swipe-backdrop], [data-swiped] [data-swipe-backdrop]": {
       animation: "none !important",
       opacity: "var(--swipe-progress, 0) !important",
     },
     "[data-settling] [data-swipe-backdrop]": {
-      transition: "opacity 240ms {easings.out} !important",
+      transition: "opacity var(--swipe-settle, 240ms) {easings.out} !important",
     },
     "@media (prefers-reduced-motion: reduce)": {
       "*, *::before, *::after": {

@@ -18,6 +18,7 @@ const fire = (target: EventTarget, type: string, x: number, y: number) => {
 };
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const viewport = (width: number) => {
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
@@ -47,14 +48,17 @@ const draw = async (): Promise<Drawing> => {
   };
 };
 
-const panel = () => {
+const panel = (left = () => 0) => {
   const element = document.createElement("div");
   element.setAttribute("data-swipe-panel", "");
   element.setAttribute("data-open", "");
-  element.getBoundingClientRect = () => ({ width: 340 }) as DOMRect;
+  element.getBoundingClientRect = () => ({ width: 340, left: left() }) as DOMRect;
   document.body.append(element);
   return element;
 };
+
+const swipeOffset = () =>
+  Number.parseFloat(document.documentElement.style.getPropertyValue("--swipe-offset"));
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -63,6 +67,7 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-swiped");
   document.documentElement.style.removeProperty("--swipe-offset");
   document.documentElement.style.removeProperty("--swipe-progress");
+  document.documentElement.style.removeProperty("--swipe-settle");
 });
 
 test("a right drag follows the finger and a release past half opens the menu", async () => {
@@ -77,7 +82,7 @@ test("a right drag follows the finger and a release past half opens the menu", a
 
   fire(document, "touchmove", 200, 400);
   fire(document, "touchend", 200, 400);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await wait(300);
   expect(drawing.messages).toEqual(["open"]);
   expect(document.documentElement.getAttribute("data-swiped")).toBe("");
   await drawing.stop();
@@ -87,10 +92,10 @@ test("a slow short drag settles back and closes a menu it opened", async () => {
   viewport(390);
   const drawing = await draw();
   fire(document, "touchstart", 20, 400);
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  await wait(400);
   fire(document, "touchmove", 80, 400);
   fire(document, "touchend", 80, 400);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await wait(300);
   expect(drawing.messages).toEqual(["open", "close"]);
   expect(document.documentElement.hasAttribute("data-swiped")).toBe(false);
   await drawing.stop();
@@ -106,7 +111,7 @@ test("a left drag closes an open menu and follows the finger", async () => {
   expect(drawing.messages).toEqual([]);
   expect(document.documentElement.style.getPropertyValue("--swipe-offset")).toBe("240px");
   fire(document, "touchend", 200, 400);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await wait(300);
   expect(drawing.messages).toEqual(["close"]);
   await drawing.stop();
 });
@@ -121,5 +126,93 @@ test("a drag that starts in a text field keeps its own horizontal movement", asy
   await tick();
   expect(drawing.messages).toEqual([]);
   expect(document.documentElement.hasAttribute("data-swiping")).toBe(false);
+  await drawing.stop();
+});
+
+test("a diagonal first move waits for the gesture to become horizontal", async () => {
+  viewport(390);
+  const drawing = await draw();
+  fire(document, "touchstart", 20, 400);
+  fire(document, "touchmove", 34, 412);
+  fire(document, "touchmove", 60, 412);
+  await tick();
+  expect(drawing.messages).toEqual(["open"]);
+  expect(document.documentElement.style.getPropertyValue("--swipe-offset")).toBe("40px");
+  await drawing.stop();
+});
+
+test("a quick flick back closes a drawer dragged most of the way open", async () => {
+  viewport(390);
+  const drawing = await draw();
+  fire(document, "touchstart", 20, 400);
+  await wait(40);
+  fire(document, "touchmove", 120, 400);
+  await wait(40);
+  fire(document, "touchmove", 220, 400);
+  await wait(40);
+  fire(document, "touchmove", 300, 400);
+  await wait(20);
+  fire(document, "touchmove", 280, 400);
+  await wait(10);
+  fire(document, "touchmove", 250, 400);
+  fire(document, "touchend", 250, 400);
+  await wait(300);
+  expect(drawing.messages).toEqual(["open", "close"]);
+  expect(document.documentElement.hasAttribute("data-swiped")).toBe(false);
+  await drawing.stop();
+});
+
+test("a drag on a settled drawer measures it before the animation can re-arm", async () => {
+  viewport(390);
+  panel(() => (document.documentElement.hasAttribute("data-swiped") ? 0 : -340));
+  document.documentElement.setAttribute("data-swiped", "");
+  const drawing = await draw();
+  fire(document, "touchstart", 300, 400);
+  fire(document, "touchmove", 200, 400);
+  await tick();
+  expect(document.documentElement.style.getPropertyValue("--swipe-offset")).toBe("240px");
+  expect(drawing.messages).toEqual([]);
+  await drawing.stop();
+});
+
+test("a drag past the panel width gives way instead of opening a gap", async () => {
+  viewport(390);
+  const drawing = await draw();
+  fire(document, "touchstart", 20, 400);
+  fire(document, "touchmove", 200, 400);
+  fire(document, "touchmove", 520, 400);
+  await tick();
+  expect(document.documentElement.style.getPropertyValue("--swipe-progress")).toBe("1");
+  expect(swipeOffset()).toBeGreaterThan(340);
+  expect(swipeOffset()).toBeLessThan(500);
+  fire(document, "touchend", 520, 400);
+  await wait(300);
+  expect(drawing.messages).toEqual(["open"]);
+  await drawing.stop();
+});
+
+test("a touch during a close catches the panel and can pull it back", async () => {
+  viewport(390);
+  let left = 0;
+  panel(() => left);
+  const drawing = await draw();
+  fire(document, "touchstart", 300, 400);
+  await wait(20);
+  fire(document, "touchmove", 200, 400);
+  fire(document, "touchend", 200, 400);
+  await wait(50);
+
+  left = -170;
+  fire(document, "touchstart", 200, 400);
+  fire(document, "touchmove", 240, 400);
+  await tick();
+  expect(document.documentElement.hasAttribute("data-settling")).toBe(false);
+  expect(document.documentElement.getAttribute("data-swiping")).toBe("");
+  expect(document.documentElement.style.getPropertyValue("--swipe-offset")).toBe("210px");
+
+  fire(document, "touchend", 240, 400);
+  await wait(400);
+  expect(drawing.messages).toEqual([]);
+  expect(document.documentElement.getAttribute("data-swiped")).toBe("");
   await drawing.stop();
 });
