@@ -1,4 +1,4 @@
-import { Array, Duration, Effect, Option, Predicate, Record, Schema, Stream, pipe } from "effect";
+import { Array, Duration, Effect, Option, Predicate, Record, Schema, Stream } from "effect";
 import { AsyncData, Command, Runtime, Subscription, Update } from "foldkit";
 import * as Dom from "foldkit/dom";
 import { swipeDrawer } from "@mizook/ui/swipe";
@@ -10,19 +10,12 @@ import { Confirmation, ExpireArmed, isArmed } from "@mizook/ui/confirmation";
 
 import {
   ActionKind,
-  AgentEdit,
-  Decision,
-  AgentKind,
   AgentManagement,
   AgentOp,
   AgentRow,
   Channel,
-  IntentRow,
   Overview,
-  PolicyRow,
-  Profile,
   ScheduleRow,
-  SkillRow,
   ArtifactRow,
   ArtifactAction,
   SettingKey,
@@ -32,7 +25,6 @@ import {
   channelKey,
   artifactQuery,
   artifactsQuery,
-  postAgent,
   postArtifact,
   postManagedAgent,
   postNewArtifact,
@@ -54,11 +46,19 @@ import {
   schedulesQuery,
   usageQuery,
 } from "./api.ts";
-import { AgentForm, OpenAgentForm, emptyAgentForm, agentFormReady, managementOf } from "./forms.ts";
+import { AgentForm, emptyAgentForm, agentFormReady, managementOf } from "./forms.ts";
+import { currentChannel } from "./channel.ts";
 import { Message } from "./message.ts";
 import { patch, patchKeyed } from "./optimistic.ts";
 import { Model } from "./model.ts";
 import { NavState } from "./nav.ts";
+import {
+  closeEditor,
+  editField,
+  openEditor,
+  removeEditorEntry,
+  saveEditor,
+} from "./pages/agent-editor.ts";
 import { GO_KEYS, matches, sections } from "./palette.ts";
 import { PaletteState, paletteMachine } from "./palette-machine.ts";
 import {
@@ -158,16 +158,6 @@ const SaveSetting = Command.define("SaveSetting", {
     ),
 });
 
-const PostAgent = Command.define("PostAgent", {
-  args: { channel: Schema.String, edit: AgentEdit, editor: OpenAgentForm },
-  messages: [Message.SucceededAction, Message.FailedAgentEdit],
-  execute: ({ channel, edit, editor }) =>
-    postAgent(channel, edit).pipe(
-      Effect.as(Message.SucceededAction()),
-      Effect.catch((reason) => Effect.succeed(Message.FailedAgentEdit({ reason, editor }))),
-    ),
-});
-
 const PostManagedAgent = Command.define("PostManagedAgent", {
   args: {
     op: AgentOp,
@@ -255,164 +245,6 @@ const runs = runsQuery.lift<Model, Message>({
   parentField: "runs",
   toParentMessage: (message) => Message.GotRunsMessage({ message }),
 });
-
-export const currentChannel = (model: Model): Option.Option<string> =>
-  Option.orElse(routeChannel(model.route), () =>
-    pipe(
-      AsyncData.getData(channelsQuery.read(model.channels)),
-      Option.flatMap(Array.head),
-      Option.map(({ doName }) => doName),
-    ),
-  );
-
-type Editor = {
-  readonly kind: AgentKind;
-  readonly id: string;
-  readonly fields: { readonly [key: string]: string };
-};
-
-const dateField = (at: number): string => new Date(at).toISOString().slice(0, 10);
-
-const isDecision = Schema.is(Decision);
-
-const defaultFields = (kind: AgentKind): { readonly [key: string]: string } =>
-  kind === "profile"
-    ? { about: "", rules: "" }
-    : kind === "skills"
-      ? { name: "", description: "", body: "", pinned: "0" }
-      : kind === "intents"
-        ? {
-            description: "",
-            triggers: "",
-            expires: dateField(Date.now() + 90 * 86_400_000),
-            maxFires: "3",
-            cooldownHours: "24",
-          }
-        : { match: "", decision: "ask" };
-
-const fieldsFor = (
-  model: Model,
-  kind: AgentKind,
-  id: string,
-): { readonly [key: string]: string } | undefined => {
-  if (kind === "profile") {
-    return Option.match(AsyncData.getData(profileQuery.read(model.profile)), {
-      onNone: () => undefined,
-      onSome: (profile) => ({ about: profile.about, rules: profile.rules.join("\n") }),
-    });
-  }
-  const channel = currentChannel(model);
-  if (Option.isNone(channel)) return undefined;
-  if (kind === "skills") {
-    const rows = Option.getOrElse(
-      AsyncData.getData(skillsQuery.read(model.skills, { channel: channel.value })),
-      () => [],
-    );
-    const row = rows.find((item) => item.name === id);
-    return row
-      ? {
-          name: row.name,
-          description: row.description,
-          body: row.body,
-          pinned: row.pinned ? "1" : "0",
-        }
-      : defaultFields(kind);
-  }
-  if (kind === "intents") {
-    const rows = Option.getOrElse(
-      AsyncData.getData(intentsQuery.read(model.intents, { channel: channel.value })),
-      () => [],
-    );
-    const row = rows.find((item) => String(item.id) === id);
-    return row
-      ? {
-          description: row.description,
-          triggers: row.triggers.join(", "),
-          expires: dateField(row.expires),
-          maxFires: String(row.maxFires),
-          cooldownHours: String(row.cooldown / 3_600_000),
-        }
-      : defaultFields(kind);
-  }
-  const rows = Option.getOrElse(
-    AsyncData.getData(policiesQuery.read(model.policies, { channel: channel.value })),
-    () => [],
-  );
-  const row = rows.find((item) => String(item.id) === id);
-  return row ? { match: row.match, decision: row.decision } : defaultFields(kind);
-};
-
-const openEditor = (model: Model, kind: AgentKind, id: string): UpdateReturn => {
-  const fields = fieldsFor(model, kind, id);
-  if (!fields) return { model };
-  return {
-    model: modifyFields(model, {
-      editor: () => Option.some<Editor>({ kind, id, fields }),
-      armed: () => Confirmation.Resting(),
-      notice: () => Option.none(),
-    }),
-  };
-};
-
-const triggersOf = (text: string): string[] =>
-  text
-    .split(/[\n,]+/)
-    .map((trigger) => trigger.trim())
-    .filter((trigger) => trigger !== "");
-
-const editOf = (editor: Editor): AgentEdit | undefined => {
-  const fields = editor.fields;
-  switch (editor.kind) {
-    case "profile":
-      return {
-        kind: "profile",
-        action: "save",
-        about: fields.about ?? "",
-        rules: (fields.rules ?? "")
-          .split("\n")
-          .map((rule) => rule.trim())
-          .filter((rule) => rule !== ""),
-      };
-    case "skills":
-      return {
-        kind: "skills",
-        action: "save",
-        name: (editor.id || fields.name || "").trim(),
-        description: fields.description ?? "",
-        body: fields.body ?? "",
-      };
-    case "intents": {
-      const expires = Date.parse(`${fields.expires ?? ""}T23:59:59.999Z`);
-      return {
-        kind: "intents",
-        action: "save",
-        ...(editor.id === "" ? {} : { id: Number(editor.id) }),
-        description: fields.description ?? "",
-        triggers: triggersOf(fields.triggers ?? ""),
-        expires: Number.isFinite(expires) ? expires : 0,
-        maxFires: Number(fields.maxFires ?? ""),
-        cooldownHours: Number(fields.cooldownHours ?? ""),
-      };
-    }
-    case "policies":
-      return {
-        kind: "policies",
-        action: "save",
-        ...(editor.id === "" ? {} : { id: Number(editor.id) }),
-        match: fields.match ?? "",
-        decision: isDecision(fields.decision) ? fields.decision : "ask",
-      };
-  }
-};
-
-const removalOf = (kind: AgentKind, id: string): AgentEdit | undefined =>
-  kind === "skills"
-    ? { kind: "skills", action: "delete", name: id }
-    : kind === "intents"
-      ? { kind: "intents", action: "cancel", id: Number(id) }
-      : kind === "policies"
-        ? { kind: "policies", action: "remove", id: Number(id) }
-        : undefined;
 
 type UpdateReturn = Update.Return<Model, Message>;
 type Step = Update.Step<Model, Message>;
@@ -502,12 +334,8 @@ const loadRoute: Step = (model) =>
   });
 
 type OverviewData = Overview;
-type SkillData = SkillRow;
-type IntentData = IntentRow;
-type PolicyData = PolicyRow;
 type ScheduleData = ScheduleRow;
 type ArtifactData = ArtifactRow;
-type ProfileData = Profile;
 type ChannelData = Channel;
 
 /**
@@ -578,88 +406,6 @@ const withArtifact = (model: Model, channel: string, name: string, action: Artif
       ? rows.filter((row) => row.name !== name)
       : rows.map((row) => (row.name === name ? { ...row, visibility: action } : row)),
   );
-
-const withEdit = (model: Model, channel: string, edit: AgentEdit): Model => {
-  const key = channelKey({ channel });
-  switch (edit.kind) {
-    case "profile":
-      return modifyFields(model, {
-        profile: (query) =>
-          patch<ProfileData>()(query, () => ({
-            about: edit.about ?? "",
-            rules: edit.rules ?? [],
-          })),
-      });
-    case "skills": {
-      const name = edit.name ?? "";
-      return modifyFields(model, {
-        skills: (query) =>
-          patchKeyed<ReadonlyArray<SkillData>>()(query, key, (rows) =>
-            edit.action === "delete"
-              ? rows.filter((row) => row.name !== name)
-              : rows.some((row) => row.name === name)
-                ? rows.map((row) =>
-                    row.name === name
-                      ? { ...row, description: edit.description ?? "", body: edit.body ?? "" }
-                      : row,
-                  )
-                : [
-                    ...rows,
-                    {
-                      name,
-                      description: edit.description ?? "",
-                      body: edit.body ?? "",
-                      pinned: false,
-                      useCount: 0,
-                      usedAt: null,
-                      updated: Date.now(),
-                    },
-                  ],
-          ),
-      });
-    }
-    case "intents":
-      return modifyFields(model, {
-        intents: (query) =>
-          patchKeyed<ReadonlyArray<IntentData>>()(query, key, (rows) =>
-            edit.action === "cancel"
-              ? rows.map((row) => (row.id === edit.id ? { ...row, state: "cancelled" } : row))
-              : rows.map((row) =>
-                  row.id === edit.id
-                    ? {
-                        ...row,
-                        description: edit.description ?? row.description,
-                        triggers: edit.triggers ?? row.triggers,
-                        expires: edit.expires ?? row.expires,
-                        maxFires: edit.maxFires ?? row.maxFires,
-                        cooldown:
-                          edit.cooldownHours === undefined
-                            ? row.cooldown
-                            : edit.cooldownHours * 3_600_000,
-                      }
-                    : row,
-                ),
-          ),
-      });
-    case "policies":
-      return modifyFields(model, {
-        policies: (query) =>
-          patchKeyed<ReadonlyArray<PolicyData>>()(query, key, (rows) =>
-            edit.action === "remove"
-              ? rows.filter((row) => row.id !== edit.id)
-              : rows.map((row) =>
-                  row.id === edit.id
-                    ? {
-                        ...row,
-                        match: edit.match ?? row.match,
-                        decision: edit.decision ?? row.decision,
-                      }
-                    : row,
-                ),
-          ),
-      });
-  }
-};
 
 const agentFields = (row: AgentRow): { readonly [key: string]: string } => ({
   slug: row.slug,
@@ -802,62 +548,10 @@ const step = (model: Model, message: Message): UpdateReturn =>
 
     ClickedAgentEdit: ({ kind, id }) => openEditor(model, kind, id),
     ClickedAgentNew: ({ kind }) => openEditor(model, kind, ""),
-    UpdatedAgentField: ({ key, value }) => ({
-      model: modifyFields(model, {
-        editor: (editor) =>
-          Option.map(editor, (open) => ({
-            ...open,
-            fields: { ...open.fields, [key]: value },
-          })),
-      }),
-    }),
-    ClickedAgentClose: () => ({
-      model: modifyFields(model, {
-        editor: () => Option.none(),
-        armed: () => Confirmation.Resting(),
-      }),
-    }),
-    ClickedAgentSave: () =>
-      Option.match(model.editor, {
-        onNone: () => ({ model }),
-        onSome: (editor) => {
-          const edit = editOf(editor);
-          if (!edit) return { model };
-          return Option.match(currentChannel(model), {
-            onNone: () => ({ model }),
-            onSome: (channel) => ({
-              model: modifyFields(withEdit(model, channel, edit), {
-                editor: () => Option.none(),
-                notice: () => Option.none(),
-              }),
-              commands: [PostAgent({ channel, edit, editor: model.editor })],
-            }),
-          });
-        },
-      }),
-    ClickedAgentRemove: ({ kind, id }) => {
-      const key = `agent-remove:${kind}:${id}`;
-      if (!isArmed(model.armed, key)) {
-        return {
-          model: modifyFields(model, {
-            armed: () => Confirmation.Armed({ key }),
-            notice: () => Option.none(),
-          }),
-        };
-      }
-      const edit = removalOf(kind, id);
-      if (!edit) return { model };
-      return Option.match(currentChannel(model), {
-        onNone: () => ({ model }),
-        onSome: (channel) => ({
-          model: modifyFields(withEdit(model, channel, edit), {
-            armed: () => Confirmation.Resting(),
-            editor: () => Option.none(),
-          }),
-          commands: [PostAgent({ channel, edit, editor: model.editor })],
-        }),
-      });
-    },
+    UpdatedAgentField: ({ key, value }) => editField(model, key, value),
+    ClickedAgentClose: () => closeEditor(model),
+    ClickedAgentSave: () => saveEditor(model),
+    ClickedAgentRemove: ({ kind, id }) => removeEditorEntry(model, kind, id),
     FailedAgentEdit: ({ reason, editor }) =>
       loadRoute(modifyFields(model, { editor: () => editor, notice: () => Option.some(reason) })),
 
