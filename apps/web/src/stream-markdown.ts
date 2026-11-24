@@ -1,3 +1,4 @@
+import { glyphs } from "@mizook/design/icons";
 import { createDomRenderer } from "@pierre/words/html";
 import { Effect } from "effect";
 import { Mount } from "foldkit";
@@ -5,12 +6,30 @@ import { Mount } from "foldkit";
 import { Message } from "./message.ts";
 import { domOptions } from "./words.ts";
 
+/**
+ * A design glyph as an alpha mask. Words rewrites a code control's text after a
+ * copy, so the icon must be a pseudo-element that its text cannot replace.
+ */
+const maskIcon = (name: "copy" | "download" | "check"): string => {
+  const shape = glyphs[name];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="${shape.d}"/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+};
+
+const controlIcons = {
+  copy: maskIcon("copy"),
+  download: maskIcon("download"),
+  copied: maskIcon("check"),
+} as const;
+
 /** The slowest a reply is revealed, so a steady stream reads at an even pace. */
 const MIN_CHARS_PER_SECOND = 90;
 /** How long a burst of text may wait before it is all shown. */
 const CATCH_UP_MS = 250;
 /** A frame after a hidden tab or a stall counts as this long at most. */
 const MAX_FRAME_MS = 100;
+/** A little after Words resets its copy label, so the check mark outlives it. */
+const COPY_FEEDBACK_MS = 2100;
 
 const wordEnd = /\s*\S+(?=\s)/y;
 
@@ -35,8 +54,33 @@ export const StreamMarkdown = Mount.define("StreamMarkdown", {
       yield* Effect.acquireRelease(
         Effect.sync(() => {
           const root = element as HTMLElement;
+          root.style.setProperty("--code-icon-copy", controlIcons.copy);
+          root.style.setProperty("--code-icon-download", controlIcons.download);
+          root.style.setProperty("--code-icon-copied", controlIcons.copied);
+
           const renderer = createDomRenderer(root, domOptions);
           renderer.connect();
+
+          const copyTimers = new Map<HTMLButtonElement, number>();
+          const markCopied = (event: Event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            const button =
+              target === null
+                ? null
+                : target.closest<HTMLButtonElement>('button[data-code-action="copy"]');
+            if (button === null || !root.contains(button)) return;
+            const timer = copyTimers.get(button);
+            if (timer !== undefined) window.clearTimeout(timer);
+            button.setAttribute("data-copied", "true");
+            copyTimers.set(
+              button,
+              window.setTimeout(() => {
+                button.removeAttribute("data-copied");
+                copyTimers.delete(button);
+              }, COPY_FEEDBACK_MS),
+            );
+          };
+          root.addEventListener("click", markCopied);
 
           let target = root.dataset["source"] ?? "";
           let shown = target;
@@ -107,7 +151,12 @@ export const StreamMarkdown = Mount.define("StreamMarkdown", {
           return {
             renderer,
             observer,
-            stop: () => frame !== undefined && cancelAnimationFrame(frame),
+            stop: () => {
+              if (frame !== undefined) cancelAnimationFrame(frame);
+              root.removeEventListener("click", markCopied);
+              for (const timer of copyTimers.values()) window.clearTimeout(timer);
+              copyTimers.clear();
+            },
           };
         }),
         ({ renderer, observer, stop }) =>

@@ -19,6 +19,7 @@ export const glyphs = {
   send: { d: "M12 20V5M5 12l7-7 7 7" },
   stop: { d: "M6 6h12v12H6z", fill: true },
   copy: { d: "M8 8h12v12H8zM16 8V4H4v12h4" },
+  download: { d: "M12 3v12M6 9l6 6 6-6M4 21h16" },
   arrowDown: { d: "M12 4v15M5 12l7 7 7-7" },
   arrowLeft: { d: "M20 12H5M12 5l-7 7 7 7" },
   arrowRight: { d: "M4 12h15M12 5l7 7-7 7" },

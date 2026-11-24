@@ -7,3 +7,98 @@
     opacity: 0.5;
   }
 }
+
+/*
+ * Pierre Words ships its own unlayered theme, so its code block keeps a rounded
+ * frame after Panda's square reset. Draw it as one of the site's hairline
+ * frames instead: a square edge, a caps label, and a filled body.
+ */
+[data-markdown="root"] [data-markdown="code-block"] {
+  margin: 10px 0;
+  border: 1px solid var(--colors-border);
+  border-radius: 0;
+  background: var(--colors-bg);
+}
+
+[data-markdown="root"] [data-markdown="code-header"] {
+  min-height: 28px;
+  align-items: center;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--colors-border);
+  color: var(--colors-fg-muted);
+  font-family: var(--fonts-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+[data-markdown="root"] [data-markdown="code-header"] > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 0;
+  cursor: pointer;
+  transition:
+    color 120ms var(--easings-out),
+    background-color 120ms var(--easings-out);
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: var(--code-control-icon) center / contain no-repeat;
+  mask: var(--code-control-icon) center / contain no-repeat;
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button[data-code-action="copy"] {
+  --code-control-icon: var(--code-icon-copy);
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button[data-code-action="download"] {
+  --code-control-icon: var(--code-icon-download);
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button[data-copied="true"] {
+  --code-control-icon: var(--code-icon-copied);
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button:hover {
+  background: var(--colors-bg-hover);
+  color: var(--colors-accent);
+}
+
+[data-markdown="root"] [data-markdown="code-header"] button:focus-visible {
+  outline-offset: -2px;
+}
+
+[data-markdown="root"] [data-markdown="code-block"] pre {
+  padding: 12px 14px;
+  border: 0;
+  background: var(--colors-bg-subtle);
+  font-family: var(--fonts-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+[data-markdown="root"] [data-markdown="code"]:not(pre code) {
+  padding: 1px 4px;
+  border: 1px solid var(--colors-border);
+  border-radius: 0;
+  background: var(--colors-bg-subtle);
+  font-family: var(--fonts-mono);
+  font-size: 13px;
+}
