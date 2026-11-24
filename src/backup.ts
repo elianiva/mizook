@@ -7,7 +7,7 @@ import type { BlobError, StateError, ToolError } from "./errors.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
 import { Skills } from "./skills.ts";
-import { Host } from "./host.ts";
+import { Self } from "./host.ts";
 import { State } from "./state.ts";
 import { packTar, unpackTar } from "./tar.ts";
 
@@ -86,7 +86,7 @@ export class Backup extends Context.Service<
       const artifacts = yield* Artifacts;
       const blobs = yield* Blobs;
       const { publicUrl } = yield* Settings;
-      const { self } = yield* Host;
+      const self = yield* Self;
       const agentDurableObjectName = self.doName;
 
       const tar = Effect.gen(function* () {

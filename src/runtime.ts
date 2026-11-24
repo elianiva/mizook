@@ -2,7 +2,7 @@ import { DurableObjectSqliteDatabase } from "@earendil-works/pi-durable/storage/
 import { Memory } from "@mizook/memory";
 import { sqliteStore } from "@mizook/memory/sqlite";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { ConfigProvider, type Context, Effect, Layer, ManagedRuntime } from "effect";
+import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
 import { Agent } from "./agent.ts";
 import { Bot } from "./bot.ts";
 import { Browser } from "./browser.ts";
@@ -11,7 +11,14 @@ import { Durable } from "./durable.ts";
 import type { Env } from "./env.ts";
 import { formatDate } from "./format.ts";
 import { Models } from "./models.ts";
-import { Host } from "./host.ts";
+import {
+  Agents,
+  AutomationsClient,
+  GlobalSkills,
+  ProfileStore,
+  Self,
+  type AgentInfo,
+} from "./host.ts";
 import { Media } from "./media.ts";
 import { Intents } from "./intents.ts";
 import { Policies } from "./policies.ts";
@@ -35,11 +42,16 @@ import { PERSONA } from "./persona.ts";
 import { TOOL_GUIDE } from "./tools.ts";
 import { catalogText } from "./codemode.ts";
 
-export const makeRuntime = (
-  storage: DurableObjectStorage,
-  env: Env,
-  host: Context.Service.Shape<typeof Host>,
-) => {
+/** What the AgentObject gives its runtime, one capability per service. */
+export interface Capabilities {
+  readonly self: AgentInfo;
+  readonly agents: Agents["Service"];
+  readonly profile: ProfileStore["Service"];
+  readonly globalSkills: GlobalSkills["Service"];
+  readonly automations: AutomationsClient["Service"];
+}
+
+export const makeRuntime = (storage: DurableObjectStorage, env: Env, host: Capabilities) => {
   const sharedDatabase = new DurableObjectSqliteDatabase(storage);
   const sql: SqlDriver = {
     all: <T>(query: string, ...params: unknown[]) =>
@@ -93,7 +105,13 @@ export const makeRuntime = (
     Layer.provideMerge(models),
   );
 
-  const hostLayer = Layer.succeed(Host, host);
+  const hostLayer = Layer.mergeAll(
+    Layer.succeed(Self, host.self),
+    Layer.succeed(Agents, host.agents),
+    Layer.succeed(ProfileStore, host.profile),
+    Layer.succeed(GlobalSkills, host.globalSkills),
+    Layer.succeed(AutomationsClient, host.automations),
+  );
 
   const app = Bot.layer.pipe(
     Layer.provideMerge(Commands.layer),

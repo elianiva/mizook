@@ -1,6 +1,6 @@
 import type { Overview } from "@mizook/admin-api";
 import { DurableObject } from "cloudflare:workers";
-import { type Context, Effect } from "effect";
+import { Effect } from "effect";
 import { Agent } from "./agent.ts";
 import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
@@ -9,13 +9,13 @@ import { fromRefusable, StateError, ToolError } from "./errors.ts";
 import {
   checkProfile,
   EMPTY_PROFILE,
-  Host,
   shortPlace,
   type AgentInfo,
-  type AutomationsApi,
+  type AutomationsClient,
+  type GlobalSkills,
 } from "./host.ts";
-import type { Skills } from "./skills.ts";
-import { makeRuntime, type AppRuntime } from "./runtime.ts";
+import type { HubSkills } from "./hub.ts";
+import { makeRuntime, type AppRuntime, type Capabilities } from "./runtime.ts";
 import { agentObject, automationsObject, hubObject } from "./objects.ts";
 import { Usage, type Spend } from "./usage.ts";
 import { Artifacts } from "./artifacts.ts";
@@ -29,11 +29,11 @@ import { edit as applyEdit, type EditOutcome } from "./admin/edit.ts";
 
 const RELOAD_DELAY_MS = 1_500;
 
-type Hosted = Context.Service.Shape<typeof Host>;
-
 type HubStub = ReturnType<typeof hubObject>;
 
-const automationsApi = (rpc: () => ReturnType<typeof automationsObject>): AutomationsApi => {
+const automationsClient = (
+  rpc: () => ReturnType<typeof automationsObject>,
+): AutomationsClient["Service"] => {
   return {
     create: (spec, action) =>
       Effect.promise(() => rpc().create(spec, action)).pipe(
@@ -60,28 +60,33 @@ const automationsApi = (rpc: () => ReturnType<typeof automationsObject>): Automa
   };
 };
 
-const hubSkillsAsAgentSkills = (hub: () => HubStub): Skills["Service"] => {
-  const call = <A>(operation: string, f: () => Promise<A>) =>
-    Effect.tryPromise({ try: f, catch: (cause) => new StateError({ operation, cause }) });
+/** The Hub's global skills: one `HubSkills` stub per call, released when the call ends. */
+const globalSkills = (hub: () => HubStub): GlobalSkills["Service"] => {
+  const call = <A>(operation: string, f: (skills: HubSkills) => Promise<A>) =>
+    Effect.tryPromise({
+      try: async () => {
+        const skills = await hub().globalSkills();
+        try {
+          return await f(skills);
+        } finally {
+          (skills as Partial<Disposable>)[Symbol.dispose]?.();
+        }
+      },
+      catch: (cause) => new StateError({ operation, cause }),
+    });
   return {
-    list: call("global skills", () => hub().skillList()),
-    get: (name) => call("global skill", () => hub().skillGet(name)),
+    list: call("global skills", (s) => s.list()),
+    get: (name) => call("global skill", (s) => s.get(name)),
     save: (name, description, body) =>
-      call("save global skill", () => hub().skillSave(name, description, body)).pipe(
+      call("save global skill", (s) => s.save(name, description, body)).pipe(
         Effect.flatMap(fromRefusable),
       ),
     remove: (name) =>
-      call("remove global skill", () => hub().skillRemove(name)).pipe(
-        Effect.flatMap(fromRefusable),
-      ),
-    touch: (name) => call("touch global skill", () => hub().skillTouch(name)),
-    pin: (name) => call("pin global skill", () => hub().skillPin(name)),
-    setPinned: (name, pinned) =>
-      pinned ? call("pin global skill", () => hub().skillPin(name)) : Effect.void,
-    index: Effect.map(
-      call("global skills", () => hub().skillList()),
-      (all) => all.map(({ name, description }) => ({ name, description })),
-    ),
+      call("remove global skill", (s) => s.remove(name)).pipe(Effect.flatMap(fromRefusable)),
+    touch: (name) => call("touch global skill", (s) => s.touch(name)),
+    pin: (name) => call("pin global skill", (s) => s.pin(name)),
+    setPinned: (name, pinned) => call("pin global skill", (s) => s.setPinned(name, pinned)),
+    index: call("global skills", (s) => s.index()),
   };
 };
 
@@ -107,7 +112,7 @@ export class AgentObject extends DurableObject<Env> {
         created: 0,
         lastActive: 0,
       };
-      this.runtime = makeRuntime(ctx.storage, env, this.host());
+      this.runtime = makeRuntime(ctx.storage, env, this.capabilities());
       await this.runtime.runPromise(Effect.void);
     };
     void Effect.runPromise(
@@ -132,91 +137,90 @@ export class AgentObject extends DurableObject<Env> {
         await new Promise((resolve) => setTimeout(resolve, RELOAD_DELAY_MS));
         await old.dispose();
         this.self = (await this.hub().agent(this.self.id)) ?? this.self;
-        this.runtime = makeRuntime(this.ctx.storage, this.env, this.host());
+        this.runtime = makeRuntime(this.ctx.storage, this.env, this.capabilities());
         await this.runtime.runPromise(Effect.void);
       })(),
     );
   }
 
-  private host(): Hosted {
+  private capabilities(): Capabilities {
     const hub = () => this.hub();
     const self = this.self;
     const reload = () => this.reloadRuntimeAfterReply();
-    const exportLink = this.runtimeEffect(Backup.use((backup) => backup.exportLink));
     const peer = (doName: string) => agentObject(this.env, doName);
     return {
       self,
-      reload: Effect.sync(reload),
-      agents: Effect.promise(() => hub().agents()),
-      bind: (place, slug) => Effect.promise(() => hub().bind(place, slug)),
-      placeLabel: (place) =>
-        Effect.tryPromise(() => hub().placeName(place)).pipe(
-          Effect.map((name) => name ?? shortPlace(place)),
-          Effect.orElseSucceed(() => shortPlace(place)),
-        ),
-      namePlace: (place, name) => Effect.promise(() => hub().setPlaceName(place, name)),
-      createAgent: (spec) => Effect.promise(() => hub().createAgent(spec)),
-      updateAgent: (key, patch) => Effect.promise(() => hub().updateAgent(key, patch)),
-      deleteAgent: (key) => Effect.promise(() => hub().deleteAgent(key)),
-      setAgentSetting: (doName, key, value) =>
-        Effect.promise(() =>
+      agents: {
+        all: Effect.promise(() => hub().agents()),
+        bind: (place, slug) => Effect.promise(() => hub().bind(place, slug)),
+        placeLabel: (place) =>
+          Effect.tryPromise(() => hub().placeName(place)).pipe(
+            Effect.map((name) => name ?? shortPlace(place)),
+            Effect.orElseSucceed(() => shortPlace(place)),
+          ),
+        namePlace: (place, name) => Effect.promise(() => hub().setPlaceName(place, name)),
+        createAgent: (spec) => Effect.promise(() => hub().createAgent(spec)),
+        updateAgent: (key, patch) => Effect.promise(() => hub().updateAgent(key, patch)),
+        deleteAgent: (key) => Effect.promise(() => hub().deleteAgent(key)),
+        setAgentSetting: (doName, key, value) =>
+          Effect.promise(() =>
+            doName === self.doName
+              ? this.setting(`agent:${self.slug}`, key, value)
+              : peer(doName).setting(`agent:${self.slug}`, key, value),
+          ).pipe(Effect.asVoid),
+        reloadAgent: (doName) =>
           doName === self.doName
-            ? this.setting(`agent:${self.slug}`, key, value)
-            : peer(doName).setting(`agent:${self.slug}`, key, value),
-        ).pipe(Effect.asVoid),
-      reloadAgent: (doName) =>
-        doName === self.doName ? Effect.sync(reload) : Effect.promise(() => peer(doName).reload()),
-      globalSkills: hubSkillsAsAgentSkills(hub),
-      profile: Effect.tryPromise({ try: () => hub().profile(), catch: () => undefined }).pipe(
-        Effect.orElseSucceed(() => EMPTY_PROFILE),
-      ),
-      updateProfile: (about, rules) =>
-        checkProfile(about, rules).pipe(
-          Effect.flatMap((change) =>
-            Effect.tryPromise({
-              try: () =>
-                hub().setProfile(
-                  change.about,
-                  change.rules === undefined ? undefined : [...change.rules],
-                ),
-              catch: (cause) => new StateError({ operation: "profile", cause }),
-            }),
-          ),
-        ),
-      automations: automationsApi(() => automationsObject(this.env)),
-      ask: (agent, question) =>
-        Effect.gen(function* () {
-          const all = yield* Effect.promise(() => hub().agents());
-          const wanted = agent.trim().replace(/^\//, "").toLowerCase();
-          const found = all.find((a) => a.slug === wanted || a.name.toLowerCase() === wanted);
-          if (!found) {
-            return yield* new ToolError({
-              reason: `no agent "${agent}". Agents: ${all.map((a) => a.slug).join(", ")}`,
+            ? Effect.sync(reload)
+            : Effect.promise(() => peer(doName).reload()),
+        ask: (agent, question) =>
+          Effect.gen(function* () {
+            const all = yield* Effect.promise(() => hub().agents());
+            const wanted = agent.trim().replace(/^\//, "").toLowerCase();
+            const found = all.find((a) => a.slug === wanted || a.name.toLowerCase() === wanted);
+            if (!found) {
+              return yield* new ToolError({
+                reason: `no agent "${agent}". Agents: ${all.map((a) => a.slug).join(", ")}`,
+              });
+            }
+            if (found.id === self.id) {
+              return yield* new ToolError({ reason: "that is you: use your own memory" });
+            }
+            return yield* Effect.tryPromise({
+              try: () => peer(found.doName).ask(question),
+              catch: (cause) =>
+                new ToolError({ reason: `asking ${found.slug} failed: ${String(cause)}` }),
             });
-          }
-          if (found.id === self.id) {
-            return yield* new ToolError({ reason: "that is you: use your own memory" });
-          }
-          return yield* Effect.tryPromise({
-            try: () => peer(found.doName).ask(question),
-            catch: (cause) =>
-              new ToolError({ reason: `asking ${found.slug} failed: ${String(cause)}` }),
-          });
+          }),
+        spendAll: Effect.gen(function* () {
+          const all = yield* Effect.promise(() => hub().agents());
+          return yield* Effect.forEach(all, (a) =>
+            Effect.promise(() => peer(a.doName).spend()).pipe(
+              Effect.map((spend) => ({ name: a.slug, spend })),
+            ),
+          );
         }),
-      spendAll: Effect.gen(function* () {
-        const all = yield* Effect.promise(() => hub().agents());
-        return yield* Effect.forEach(all, (a) =>
-          Effect.promise(() => peer(a.doName).spend()).pipe(
-            Effect.map((spend) => ({ name: a.slug, spend })),
+      },
+      profile: {
+        profile: Effect.tryPromise({ try: () => hub().profile(), catch: () => undefined }).pipe(
+          Effect.orElseSucceed(() => EMPTY_PROFILE),
+        ),
+        updateProfile: (about, rules) =>
+          checkProfile(about, rules).pipe(
+            Effect.flatMap((change) =>
+              Effect.tryPromise({
+                try: () =>
+                  hub().setProfile(
+                    change.about,
+                    change.rules === undefined ? undefined : [...change.rules],
+                  ),
+                catch: (cause) => new StateError({ operation: "profile", cause }),
+              }),
+            ),
           ),
-        );
-      }),
-      exportNow: exportLink,
+      },
+      globalSkills: globalSkills(hub),
+      automations: automationsClient(() => automationsObject(this.env)),
     };
-  }
-
-  private runtimeEffect<A, E>(effect: Effect.Effect<A, E, Backup>): Effect.Effect<A> {
-    return Effect.promise(() => this.runtime.runPromise(effect as never) as Promise<A>);
   }
 
   async reload(): Promise<void> {

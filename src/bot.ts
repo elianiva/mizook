@@ -27,7 +27,7 @@ import { Commands } from "./commands.ts";
 import { COMMANDS } from "./command-list.ts";
 import { WebChatClient } from "./chat/web-chat-client.ts";
 import type { WebTurnResult } from "./chat/types.ts";
-import { Host } from "./host.ts";
+import { Agents, Self } from "./host.ts";
 import { Usage } from "./usage.ts";
 import { State } from "./state.ts";
 
@@ -89,7 +89,8 @@ export class Bot extends Context.Service<
       const media = yield* Media;
       const blobs = yield* Blobs;
       const usage = yield* Usage;
-      const host = yield* Host;
+      const self = yield* Self;
+      const agents = yield* Agents;
       const webChat = yield* WebChatClient;
       const services = yield* Effect.context<never>();
       const run = Effect.runPromiseWith(services);
@@ -176,7 +177,7 @@ export class Bot extends Context.Service<
               Effect.forkScoped,
             );
 
-      const buttonIdNamingThisAgent = (verb: string, id: number) => `${verb}:${host.self.id}:${id}`;
+      const buttonIdNamingThisAgent = (verb: string, id: number) => `${verb}:${self.id}:${id}`;
       const postApprovalCards = (threadId: string) =>
         Effect.gen(function* () {
           const pending = yield* approvals.unposted(threadId);
@@ -339,7 +340,7 @@ export class Bot extends Context.Service<
           .join("\n");
         if (joined === "") return;
         if (joined === "/start") {
-          yield* post(thread.id, GREETING(host.self.name));
+          yield* post(thread.id, GREETING(self.name));
           return;
         }
         const commandReplyWithoutModel = yield* commands.run(thread.id, joined);
@@ -384,7 +385,7 @@ export class Bot extends Context.Service<
           chatId: place,
           threadId: place,
           text,
-          where: yield* host.placeLabel(place),
+          where: yield* agents.placeLabel(place),
           requestId: `${place}:${messageId}`,
         });
         if (started === "folded") return;
@@ -495,7 +496,7 @@ export class Bot extends Context.Service<
             const isOurOwnAgentChange = taken.action !== "";
             if (isOurOwnAgentChange) {
               const result = approved
-                ? yield* applyAgentAction(host, taken.action)
+                ? yield* applyAgentAction(agents, taken.action)
                 : "Nothing was changed.";
               yield* startTurn(
                 approved
@@ -535,7 +536,7 @@ export class Bot extends Context.Service<
           const approved = verb === "approve" || verb === "always";
           const always = verb === "always";
           if ((!approved && verb !== "deny") || rawId === undefined) return;
-          const strayPressForAnotherAgent = agentId !== host.self.id;
+          const strayPressForAnotherAgent = agentId !== self.id;
           if (strayPressForAnotherAgent) return;
           const pending = yield* approve(Number(rawId), approved, always);
           if (!pending) {
@@ -563,15 +564,14 @@ export class Bot extends Context.Service<
               return;
             }
             const name = event.command.replace(/^\//, "").replace(/@.*$/, "").toLowerCase();
-            const talksToThisAgentForOneMessage =
-              name === host.self.slug && !COMMAND_NAMES.has(name);
+            const talksToThisAgentForOneMessage = name === self.slug && !COMMAND_NAMES.has(name);
             if (talksToThisAgentForOneMessage) {
               yield* invokeBySlug(threadId, event);
               return;
             }
             const reply =
               name === "start"
-                ? GREETING(host.self.name)
+                ? GREETING(self.name)
                 : yield* commands.run(threadId, `/${name} ${event.text}`.trim());
             yield* post(threadId, reply ?? "That is not a command. Try /help.");
           }).pipe(
@@ -602,7 +602,7 @@ export class Bot extends Context.Service<
               : `[replying to ${replied?.from?.username ?? "an earlier message"}: ${clipToolOutput(repliedText, MAX_QUOTED_CHARS)}]`;
           const said = [quoted, event.text.trim()].filter((part) => part !== "").join("\n");
           if (said === "") {
-            yield* post(place, `Say something after /${host.self.slug}, or use it as a reply.`);
+            yield* post(place, `Say something after /${self.slug}, or use it as a reply.`);
             return;
           }
           yield* converse(place, said, messageId);

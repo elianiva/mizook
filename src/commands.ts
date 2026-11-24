@@ -3,7 +3,15 @@ import { Agent, type AgentError } from "./agent.ts";
 import { COMMANDS } from "./command-list.ts";
 import { Settings } from "./config.ts";
 import { formatDate } from "./format.ts";
-import { describeProfile, Host } from "./host.ts";
+import { Backup } from "./backup.ts";
+import {
+  Agents,
+  AutomationsClient,
+  describeProfile,
+  GlobalSkills,
+  ProfileStore,
+  Self,
+} from "./host.ts";
 import { describeIntent, Intents } from "./intents.ts";
 import { describePolicy, Policies } from "./policies.ts";
 import { describeAutomation } from "./runner.ts";
@@ -29,13 +37,18 @@ export class Commands extends Context.Service<
       const policies = yield* Policies;
       const skills = yield* Skills;
       const usage = yield* Usage;
-      const host = yield* Host;
+      const self = yield* Self;
+      const agents = yield* Agents;
+      const profileStore = yield* ProfileStore;
+      const globalSkills = yield* GlobalSkills;
+      const automations = yield* AutomationsClient;
+      const backup = yield* Backup;
       const agent = yield* Agent;
 
       const saveSettingAndReload = (key: SettingKey, value: string | undefined, said: string) =>
         Effect.gen(function* () {
           yield* state.setSetting(key, value);
-          yield* host.reload;
+          yield* agents.reloadAgent(self.doName);
           return said;
         });
 
@@ -52,8 +65,8 @@ export class Commands extends Context.Service<
             return (yield* agent.stop(place)) ? "Stopped." : "Nothing is running here.";
           case "cost": {
             const mine = yield* usage.spend;
-            const all = yield* host.spendAll;
-            const own = `${host.self.slug}: ${dollars(mine.last24h)} in 24 h, ${dollars(mine.last7d)} in 7 d, ${dollars(mine.total)} in all.`;
+            const all = yield* agents.spendAll;
+            const own = `${self.slug}: ${dollars(mine.last24h)} in 24 h, ${dollars(mine.last7d)} in 7 d, ${dollars(mine.total)} in all.`;
             if (all.length === 0) return own;
             const sum = (pick: (s: (typeof all)[number]["spend"]) => number) =>
               all.reduce((n, c) => n + pick(c.spend), 0);
@@ -68,7 +81,7 @@ export class Commands extends Context.Service<
           case "instructions":
             return arg === ""
               ? settings.instructions === ""
-                ? `No instructions for ${host.self.slug}. Set them with /instructions <text>.`
+                ? `No instructions for ${self.slug}. Set them with /instructions <text>.`
                 : `${settings.instructions}\n\n/instructions reset clears it.`
               : yield* saveSettingAndReload("instructions", arg, "Instructions saved.");
           case "timezone":
@@ -81,14 +94,14 @@ export class Commands extends Context.Service<
               : yield* saveSettingAndReload("budget", arg, `Daily budget set to ${arg}.`);
           case "name":
             if (arg === "")
-              return `This place is ${yield* host.placeLabel(place)}. Rename it with /name <name>.`;
-            yield* host.namePlace(place, arg);
+              return `This place is ${yield* agents.placeLabel(place)}. Rename it with /name <name>.`;
+            yield* agents.namePlace(place, arg);
             return `This place is now called ${arg}.`;
           case "agents": {
-            const all = yield* host.agents;
+            const all = yield* agents.all;
             const lines = yield* Effect.forEach(all, (a) =>
               Effect.gen(function* () {
-                const where = yield* Effect.forEach(a.bound, (p) => host.placeLabel(p));
+                const where = yield* Effect.forEach(a.bound, (p) => agents.placeLabel(p));
                 const roles = [
                   a.isDefault ? "default, answers every unbound place" : "",
                   where.length === 0 ? "" : `bound to ${where.join(", ")}`,
@@ -101,12 +114,12 @@ export class Commands extends Context.Service<
           }
           case "agent": {
             if (arg === "") {
-              const label = yield* host.placeLabel(place);
-              return `${label} talks to ${host.self.slug}. Change it with /agent <slug>, or /agent default.`;
+              const label = yield* agents.placeLabel(place);
+              return `${label} talks to ${self.slug}. Change it with /agent <slug>, or /agent default.`;
             }
-            const bound = yield* host.bind(place, arg === "default" ? undefined : arg);
+            const bound = yield* agents.bind(place, arg === "default" ? undefined : arg);
             if (!bound) {
-              const all = yield* host.agents;
+              const all = yield* agents.all;
               return `No agent "${arg}". Agents: ${all.map((a) => a.slug).join(", ")}.`;
             }
             return arg === "default"
@@ -118,7 +131,7 @@ export class Commands extends Context.Service<
             const name = rest.join(" ").trim();
             if (verb === "") {
               const mine = yield* skills.list;
-              const shared = yield* host.globalSkills.list;
+              const shared = yield* globalSkills.list;
               const line = (s: (typeof mine)[number], scope: string) =>
                 `- ${s.name}${scope}: ${s.description}${s.pinned ? " (pinned)" : ""}`;
               const all = [
@@ -129,8 +142,8 @@ export class Commands extends Context.Service<
             }
             if (name === "") return "Use /skills, /skills show <name>, or /skills delete <name>.";
             const own = yield* skills.get(name);
-            const skill = own ?? (yield* host.globalSkills.get(name));
-            const store = own ? skills : host.globalSkills;
+            const skill = own ?? (yield* globalSkills.get(name));
+            const store = own ? skills : globalSkills;
             if (!skill) return `No skill "${name}".`;
             if (verb === "show") return `# ${skill.name}\n${skill.description}\n\n${skill.body}`;
             if (verb === "delete") {
@@ -177,7 +190,7 @@ export class Commands extends Context.Service<
             if (id !== undefined && (!Number.isInteger(id) || id < 1)) {
               return "Use /runs or /runs <automation id>.";
             }
-            const all = yield* host.automations.runs(10, id);
+            const all = yield* automations.runs(10, id);
             return all.length === 0
               ? "No runs yet."
               : all
@@ -194,30 +207,30 @@ export class Commands extends Context.Service<
               if (!Number.isInteger(id) || id < 1) return `Use /automations ${verb} <id>.`;
               switch (verb) {
                 case "cancel":
-                  return (yield* host.automations.cancel(id))
+                  return (yield* automations.cancel(id))
                     ? `Deleted #${id}.`
                     : `No automation #${id}.`;
                 case "pause":
-                  return (yield* host.automations.pause(id))
+                  return (yield* automations.pause(id))
                     ? `Paused #${id}.`
                     : `No active automation #${id}.`;
                 case "resume":
-                  return yield* host.automations.resume(id).pipe(
+                  return yield* automations.resume(id).pipe(
                     Effect.map((done) => (done ? `Resumed #${id}.` : `No automation #${id}.`)),
                     Effect.catch((error) =>
                       Effect.succeed(`Could not resume #${id}: ${error.message}.`),
                     ),
                   );
                 case "test":
-                  return (yield* host.automations.test(id))
+                  return (yield* automations.test(id))
                     ? `Test #${id} started.`
                     : `No automation #${id}.`;
                 default:
                   return "Use /automations, or /automations cancel|pause|resume|test <id>.";
               }
             }
-            const agents = yield* host.agents;
-            const all = yield* host.automations.list();
+            const everyAgent = yield* agents.all;
+            const all = yield* automations.list();
             return all.length === 0
               ? "No automations."
               : all
@@ -225,23 +238,23 @@ export class Commands extends Context.Service<
                     describeAutomation(
                       a,
                       (at) => formatDate(new Date(at), settings.timezone),
-                      (agentId) => `/${agents.find((x) => x.id === agentId)?.slug ?? agentId}`,
+                      (agentId) => `/${everyAgent.find((x) => x.id === agentId)?.slug ?? agentId}`,
                     ),
                   )
                   .join("\n");
           }
           case "profile": {
             if (arg === "reset") {
-              yield* host.updateProfile("", []);
+              yield* profileStore.updateProfile("", []);
               return "Profile cleared.";
             }
-            const profile = describeProfile(yield* host.profile);
+            const profile = describeProfile(yield* profileStore.profile);
             return profile === ""
               ? "No profile yet. Tell the agent about yourself and every agent will know it."
               : profile;
           }
           case "export":
-            return `Your export of ${host.self.slug} (works for one hour): ${yield* host.exportNow}`;
+            return `Your export of ${self.slug} (works for one hour): ${yield* backup.exportLink.pipe(Effect.orDie)}`;
           case "help":
             return COMMANDS.map((c) => `/${c.command}: ${c.description}`).join("\n");
           default:

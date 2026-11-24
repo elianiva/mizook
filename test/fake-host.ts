@@ -1,23 +1,23 @@
-import { Effect } from "effect";
-import { EMPTY_PROFILE, Host } from "../src/host.ts";
+import { Effect, Layer } from "effect";
+import { Agents, EMPTY_PROFILE, ProfileStore, Self } from "../src/host.ts";
 
-export const fakeHost = (overrides: Partial<typeof Host.Service> = {}) =>
-  Host.of({
-    self: {
-      id: "a1",
-      slug: "mizook",
-      name: "Mizook",
-      role: "",
-      persona: "",
-      tools: undefined,
-      doName: "agent:a1",
-      isDefault: true,
-      bound: [],
-      created: 0,
-      lastActive: 0,
-    },
-    reload: Effect.void,
-    agents: Effect.succeed([]),
+export const fakeSelf = Layer.succeed(Self, {
+  id: "a1",
+  slug: "mizook",
+  name: "Mizook",
+  role: "",
+  persona: "",
+  tools: undefined,
+  doName: "agent:a1",
+  isDefault: true,
+  bound: [],
+  created: 0,
+  lastActive: 0,
+});
+
+export const fakeAgents = (overrides: Partial<Agents["Service"]> = {}) =>
+  Agents.of({
+    all: Effect.succeed([]),
     bind: () => Effect.undefined,
     placeLabel: (place) => Effect.succeed(place),
     namePlace: () => Effect.void,
@@ -26,30 +26,14 @@ export const fakeHost = (overrides: Partial<typeof Host.Service> = {}) =>
     deleteAgent: () => Effect.succeed({ ok: false, error: "no hub" }),
     setAgentSetting: () => Effect.void,
     reloadAgent: () => Effect.void,
-    globalSkills: {
-      list: Effect.succeed([]),
-      get: () => Effect.undefined,
-      save: () => Effect.die("no hub"),
-      remove: () => Effect.succeed(false),
-      touch: () => Effect.void,
-      pin: () => Effect.void,
-      setPinned: () => Effect.void,
-      index: Effect.succeed([]),
-    },
     ask: () => Effect.succeed(""),
+    spendAll: Effect.succeed([]),
+    ...overrides,
+  });
+
+export const fakeProfileStore = (overrides: Partial<ProfileStore["Service"]> = {}) =>
+  ProfileStore.of({
     profile: Effect.succeed(EMPTY_PROFILE),
     updateProfile: () => Effect.succeed(EMPTY_PROFILE),
-    automations: {
-      create: () => Effect.die("no automations"),
-      list: () => Effect.succeed([]),
-      cancel: () => Effect.succeed(false),
-      pause: () => Effect.succeed(false),
-      resume: () => Effect.succeed(false),
-      test: () => Effect.succeed(false),
-      hookUrl: () => Effect.succeed(""),
-      runs: () => Effect.succeed([]),
-    },
-    spendAll: Effect.succeed([]),
-    exportNow: Effect.succeed(""),
     ...overrides,
   });

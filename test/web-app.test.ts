@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vite-plus/test";
 import type { Env } from "../src/env.ts";
 
-vi.mock("cloudflare:workers", () => ({ DurableObject: class {} }));
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, RpcTarget: class {} }));
 
 const { default: worker } = await import("../src/worker.ts");
 

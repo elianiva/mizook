@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { KIND_TYPES } from "./artifact-render.ts";
 import { Artifacts } from "./artifacts.ts";
 import { ToolError } from "./errors.ts";
-import { Host } from "./host.ts";
+import { Self } from "./host.ts";
 import { defineTool, described } from "./tool.ts";
 
 export const ArtifactPublishArgs = Schema.Struct({
@@ -58,7 +58,7 @@ export const ArtifactDeleteArgs = Schema.Struct({
   name: described(Schema.String, "The artifact's name, from artifacts.list."),
 });
 
-const channel = Host.use((host) => Effect.succeed(host.self.doName));
+const channel = Self.use((self) => Effect.succeed(self.doName));
 
 export const artifactTools = [
   defineTool({

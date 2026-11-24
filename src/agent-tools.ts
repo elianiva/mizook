@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import { describeAgentAction, encodeAgentAction, type AgentAction } from "./agent-manage.ts";
 import { Approvals } from "./approvals.ts";
 import { ToolError } from "./errors.ts";
-import { describeProfile, Host } from "./host.ts";
+import { Agents, describeProfile, ProfileStore, Self } from "./host.ts";
 import { defineTool, described } from "./tool.ts";
 
 export const AskAgentArgs = Schema.Struct({
@@ -71,7 +71,7 @@ export const agentsTools = (toolPaths: () => ReadonlyArray<string>) => [
     description:
       "Ask another of the user's agents a question; it answers from its own memory, read-only.",
     args: AskAgentArgs,
-    run: (a) => Host.use((host) => host.ask(a.agent, a.question)),
+    run: (a) => Agents.use((agents) => agents.ask(a.agent, a.question)),
   }),
   defineTool({
     name: "agent_manage",
@@ -81,13 +81,14 @@ export const agentsTools = (toolPaths: () => ReadonlyArray<string>) => [
     args: AgentManageArgs,
     run: (a, place) =>
       Effect.gen(function* () {
-        const host = yield* Host;
+        const agents = yield* Agents;
         if (a.action === "list") {
-          const all = yield* host.agents;
+          const self = yield* Self;
+          const all = yield* agents.all;
           return all
             .map((agent) =>
               [
-                `/${agent.slug} ${agent.name}${agent.isDefault ? " (default)" : ""}${agent.id === host.self.id ? " (you)" : ""}`,
+                `/${agent.slug} ${agent.name}${agent.isDefault ? " (default)" : ""}${agent.id === self.id ? " (you)" : ""}`,
                 agent.role === "" ? "" : `  role: ${agent.role.slice(0, 400)}`,
                 `  tools: ${agent.tools === undefined ? "all" : agent.tools.join(", ")}`,
               ]
@@ -109,7 +110,7 @@ export const agentsTools = (toolPaths: () => ReadonlyArray<string>) => [
         if (unknown.length > 0) {
           return yield* new ToolError({ reason: `no tool ${unknown.join(", ")}` });
         }
-        if (a.action === "create" && (yield* host.agents).some((x) => x.slug === slug)) {
+        if (a.action === "create" && (yield* agents.all).some((x) => x.slug === slug)) {
           return yield* new ToolError({ reason: `${slug} is taken` });
         }
         const action: AgentAction = {
@@ -143,15 +144,15 @@ export const profileTools = [
     args: ProfileArgs,
     run: (a) =>
       Effect.gen(function* () {
-        const host = yield* Host;
+        const profileStore = yield* ProfileStore;
         if (a.action === "get") {
-          const profile = describeProfile(yield* host.profile);
+          const profile = describeProfile(yield* profileStore.profile);
           return profile === "" ? "No profile yet." : profile;
         }
         if (a.about === undefined && a.rules === undefined) {
           return yield* new ToolError({ reason: "update needs about, rules, or both" });
         }
-        const saved = yield* host.updateProfile(a.about, a.rules);
+        const saved = yield* profileStore.updateProfile(a.about, a.rules);
         return `Profile saved: ${saved.about === "" ? "no about" : "about"}, ${saved.rules.length} rule(s).`;
       }),
   }),

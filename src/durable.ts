@@ -19,7 +19,7 @@ import { Context, Effect, Layer } from "effect";
 import { DurableError } from "./errors.ts";
 import { Models } from "./models.ts";
 import { Handlers } from "./handlers.ts";
-import { Host } from "./host.ts";
+import { Self } from "./host.ts";
 import { State } from "./state.ts";
 import { runProgram } from "./codemode.ts";
 import { agentTools } from "./tools.ts";
@@ -51,7 +51,7 @@ export class Durable extends Context.Service<
         const memory = yield* Memory;
         const handlers = yield* Handlers;
         const state = yield* State;
-        const host = yield* Host;
+        const self = yield* Self;
         const services = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(services);
         const turnInputs = new Map<ConversationId, string>();
@@ -98,7 +98,7 @@ export class Durable extends Context.Service<
                 await run(
                   Effect.flatMap(placeOf(api.conversationId), (place) =>
                     runProgram(
-                      host.self.tools,
+                      self.tools,
                       (name, input) => handlers.run(name, input, place),
                       codeOf(args),
                     ),

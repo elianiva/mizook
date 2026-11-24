@@ -7,8 +7,7 @@ import { Artifacts } from "../src/artifacts.ts";
 import { Backup } from "../src/backup.ts";
 import { Blobs } from "../src/blobs.ts";
 import { Settings } from "../src/config.ts";
-import { Host } from "../src/host.ts";
-import { fakeHost } from "./fake-host.ts";
+import { fakeSelf } from "./fake-host.ts";
 import { Intents } from "../src/intents.ts";
 import { Policies } from "../src/policies.ts";
 import { Skills } from "../src/skills.ts";
@@ -44,7 +43,7 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
     Layer.provide(Sql.layer(sql)),
     Layer.provideMerge(blobs),
     Layer.provide(settings),
-    Layer.provide(Layer.succeed(Host, fakeHost())),
+    Layer.provide(fakeSelf),
   );
 };
 

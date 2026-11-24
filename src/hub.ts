@@ -1,4 +1,4 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, RpcTarget } from "cloudflare:workers";
 import { Effect, Layer, Option, Schema } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -62,6 +62,56 @@ const refusable = <A>(effect: Effect.Effect<A, StateError | InvalidInput>) =>
       Effect.succeed<Refusable<A>>({ ok: false, reason: error.reason }),
     ),
   );
+
+const runWith = <A>(
+  skills: Promise<Skills["Service"]>,
+  f: (skills: Skills["Service"]) => Effect.Effect<A, unknown>,
+) => skills.then((s) => Effect.runPromise(f(s)));
+
+/**
+ * The Hub's skills, mirroring `Skills["Service"]` with promises. A refusal travels as data. Only
+ * pinning crosses: an automation pins the global skill it names, and nothing unpins one.
+ */
+export class HubSkills extends RpcTarget {
+  readonly #skills: Promise<Skills["Service"]>;
+
+  constructor(skills: Promise<Skills["Service"]>) {
+    super();
+    this.#skills = skills;
+  }
+
+  list(): Promise<ReadonlyArray<Skill>> {
+    return runWith(this.#skills, (s) => s.list);
+  }
+
+  get(name: string): Promise<Skill | undefined> {
+    return runWith(this.#skills, (s) => s.get(name));
+  }
+
+  save(name: string, description: string, body: string): Promise<Refusable<Skill>> {
+    return runWith(this.#skills, (s) => refusable(s.save(name, description, body)));
+  }
+
+  remove(name: string): Promise<Refusable<boolean>> {
+    return runWith(this.#skills, (s) => refusable(s.remove(name)));
+  }
+
+  touch(name: string): Promise<void> {
+    return runWith(this.#skills, (s) => s.touch(name));
+  }
+
+  pin(name: string): Promise<void> {
+    return runWith(this.#skills, (s) => s.pin(name));
+  }
+
+  setPinned(name: string, pinned: boolean): Promise<void> {
+    return runWith(this.#skills, (s) => (pinned ? s.pin(name) : Effect.void));
+  }
+
+  index(): Promise<ReadonlyArray<{ name: string; description: string }>> {
+    return runWith(this.#skills, (s) => s.index);
+  }
+}
 
 export class Hub extends DurableObject<Env> {
   private readonly skills: Promise<Skills["Service"]>;
@@ -406,32 +456,9 @@ export class Hub extends DurableObject<Env> {
     );
   }
 
-  private async withSkills<A>(f: (skills: Skills["Service"]) => Effect.Effect<A, unknown>) {
-    return Effect.runPromise(f(await this.skills));
-  }
-
-  skillList(): Promise<ReadonlyArray<Skill>> {
-    return this.withSkills((s) => s.list);
-  }
-
-  skillGet(name: string): Promise<Skill | undefined> {
-    return this.withSkills((s) => s.get(name));
-  }
-
-  skillSave(name: string, description: string, body: string): Promise<Refusable<Skill>> {
-    return this.withSkills((s) => refusable(s.save(name, description, body)));
-  }
-
-  skillRemove(name: string): Promise<Refusable<boolean>> {
-    return this.withSkills((s) => refusable(s.remove(name)));
-  }
-
-  skillTouch(name: string): Promise<void> {
-    return this.withSkills((s) => s.touch(name));
-  }
-
-  skillPin(name: string): Promise<void> {
-    return this.withSkills((s) => s.pin(name));
+  /** The global skills, as one object the caller holds by reference over RPC. */
+  globalSkills(): HubSkills {
+    return new HubSkills(this.skills);
   }
 
   profile(): Profile {

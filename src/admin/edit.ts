@@ -7,7 +7,7 @@ import {
 } from "@mizook/admin-api";
 import { Effect, Option, Schema } from "effect";
 import type { InvalidInput, StateError } from "../errors.ts";
-import { Host } from "../host.ts";
+import { ProfileStore } from "../host.ts";
 import { Intents } from "../intents.ts";
 import { Policies } from "../policies.ts";
 import { pinnedRefusal, Skills } from "../skills.ts";
@@ -20,8 +20,7 @@ const said = (text: string): EditOutcome => ({ ok: true, said: text });
 
 const profile = (input: ProfileInput) =>
   Effect.gen(function* () {
-    const host = yield* Host;
-    const saved = yield* host.updateProfile(input.about ?? "", input.rules ?? []);
+    const saved = yield* (yield* ProfileStore).updateProfile(input.about ?? "", input.rules ?? []);
     return said(
       `Profile saved with ${saved.rules.length} rule${saved.rules.length === 1 ? "" : "s"}.`,
     );
@@ -113,7 +112,11 @@ const EDITS: Record<
   string,
   (
     input: unknown,
-  ) => Effect.Effect<EditOutcome, StateError | InvalidInput, Host | Skills | Intents | Policies>
+  ) => Effect.Effect<
+    EditOutcome,
+    StateError | InvalidInput,
+    ProfileStore | Skills | Intents | Policies
+  >
 > = {
   profile: parse(ProfileInput, profile),
   skills: parse(SkillInput, skill),
@@ -125,7 +128,7 @@ const EDITS: Record<
 export const edit = (
   kind: string,
   input: unknown,
-): Effect.Effect<EditOutcome, StateError, Host | Skills | Intents | Policies> =>
+): Effect.Effect<EditOutcome, StateError, ProfileStore | Skills | Intents | Policies> =>
   Object.hasOwn(EDITS, kind)
     ? EDITS[kind]!(input).pipe(
         Effect.catchTag("InvalidInput", (error) => Effect.succeed(refused(error.reason))),

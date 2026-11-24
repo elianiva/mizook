@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import type { Host } from "./host.ts";
+import type { Agents } from "./host.ts";
 
 export const AgentAction = Schema.Struct({
   op: Schema.Literals(["create", "update", "delete"]),
@@ -34,12 +34,12 @@ export const describeAgentAction = (a: AgentAction): string => {
       : `Delete agent /${a.slug} and everything it remembers`;
 };
 
-export const applyAgentAction = (host: Host["Service"], json: string) =>
+export const applyAgentAction = (agents: Agents["Service"], json: string) =>
   Effect.gen(function* () {
     const a = yield* decodeAgentAction(json);
     const change =
       a.op === "create"
-        ? yield* host.createAgent({
+        ? yield* agents.createAgent({
             slug: a.slug,
             name: a.name ?? a.slug,
             role: a.role ?? "",
@@ -47,19 +47,19 @@ export const applyAgentAction = (host: Host["Service"], json: string) =>
             ...(a.tools !== undefined && { tools: a.tools }),
           })
         : a.op === "update"
-          ? yield* host.updateAgent(a.slug, {
+          ? yield* agents.updateAgent(a.slug, {
               ...(a.newSlug !== undefined && { slug: a.newSlug }),
               ...(a.name !== undefined && { name: a.name }),
               ...(a.role !== undefined && { role: a.role }),
               ...(a.persona !== undefined && { persona: a.persona }),
               ...(a.tools !== undefined && { tools: a.tools }),
             })
-          : yield* host.deleteAgent(a.slug);
+          : yield* agents.deleteAgent(a.slug);
     if (!change.ok) return `It failed: ${change.error}.`;
     const agent = change.agent;
     if (a.op === "delete") return `Deleted /${agent.slug}.`;
-    if (a.model !== undefined) yield* host.setAgentSetting(agent.doName, "model", a.model);
+    if (a.model !== undefined) yield* agents.setAgentSetting(agent.doName, "model", a.model);
     const runningAgentMustRereadConfig = a.op === "update";
-    if (runningAgentMustRereadConfig) yield* host.reloadAgent(agent.doName);
+    if (runningAgentMustRereadConfig) yield* agents.reloadAgent(agent.doName);
     return `${a.op === "create" ? "Created" : "Changed"} /${agent.slug} (${agent.name}).`;
   }).pipe(Effect.catch((error) => Effect.succeed(`It failed: ${String(error)}.`)));

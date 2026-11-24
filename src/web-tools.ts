@@ -4,7 +4,7 @@ import { Artifacts } from "./artifacts.ts";
 import { Blobs } from "./blobs.ts";
 import { Browser } from "./browser.ts";
 import { ToolError } from "./errors.ts";
-import { Host } from "./host.ts";
+import { Self } from "./host.ts";
 import { MEDIA_LABEL, Media } from "./media.ts";
 import { Web } from "./search.ts";
 import { defineTool, described } from "./tool.ts";
@@ -100,9 +100,9 @@ export const webTools = [
             : clipToolOutput(page.text, 20_000);
         const heading = page.title ? `${page.title}\n\n` : "";
         if (!page.screenshot) return `${heading}${body}`;
-        const host = yield* Host;
+        const self = yield* Self;
         const shot = yield* (yield* Artifacts)
-          .publishBytes(host.self.doName, `browser-${Date.now()}`, page.screenshot, "image/png")
+          .publishBytes(self.doName, `browser-${Date.now()}`, page.screenshot, "image/png")
           .pipe(
             Effect.catch((error) =>
               Effect.logWarning(`browser screenshot failed: ${error.message}`).pipe(

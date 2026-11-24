@@ -3,11 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
 import { Sql } from "../src/sql.ts";
 import { edit } from "../src/admin/edit.ts";
-import { checkProfile, Host, type Profile } from "../src/host.ts";
+import { checkProfile, ProfileStore, type Profile } from "../src/host.ts";
 import { Intents } from "../src/intents.ts";
 import { Policies } from "../src/policies.ts";
 import { Skills } from "../src/skills.ts";
-import { fakeHost } from "./fake-host.ts";
+import { fakeProfileStore } from "./fake-host.ts";
 import { property } from "./property.ts";
 
 const HOUR = 3_600_000;
@@ -49,7 +49,7 @@ const world = (profile: { current: Profile }) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  const host = fakeHost({
+  const profileStore = fakeProfileStore({
     profile: Effect.sync(() => profile.current),
     updateProfile: (about, rules) =>
       checkProfile(about, rules).pipe(
@@ -64,7 +64,7 @@ const world = (profile: { current: Profile }) => {
   });
   return Layer.mergeAll(Skills.layer, Intents.layer, Policies.layer).pipe(
     Layer.provide(Sql.layer(sql)),
-    Layer.merge(Layer.succeed(Host, host)),
+    Layer.merge(Layer.succeed(ProfileStore, profileStore)),
   );
 };
 

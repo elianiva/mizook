@@ -2,7 +2,7 @@ import { Arbitrary, Effect, Schema } from "effect";
 import { expect } from "vite-plus/test";
 import { AgentAction, applyAgentAction, encodeAgentAction } from "../src/agent-manage.ts";
 import type { AgentInfo, AgentSpec } from "../src/host.ts";
-import { fakeHost } from "./fake-host.ts";
+import { fakeAgents } from "./fake-host.ts";
 import { property } from "./property.ts";
 
 const made = (slug: string, name: string): AgentInfo => ({
@@ -23,7 +23,7 @@ const apply = (json: string, fail: string | undefined) => {
   const calls: unknown[][] = [];
   const answer = (agent: AgentInfo) =>
     fail === undefined ? { ok: true as const, agent } : { ok: false as const, error: fail };
-  const host = fakeHost({
+  const agents = fakeAgents({
     createAgent: (spec: AgentSpec) =>
       Effect.sync(() => {
         calls.push(["create", spec]);
@@ -43,7 +43,7 @@ const apply = (json: string, fail: string | undefined) => {
       Effect.sync(() => void calls.push(["set", doName, key, value])),
     reloadAgent: (doName) => Effect.sync(() => void calls.push(["reload", doName])),
   });
-  return applyAgentAction(host, json).pipe(Effect.map((said) => ({ said, calls })));
+  return applyAgentAction(agents, json).pipe(Effect.map((said) => ({ said, calls })));
 };
 
 const action = Arbitrary.schema(AgentAction);

@@ -13,7 +13,7 @@ import { Durable } from "./durable.ts";
 import { DurableError, type StateError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
-import { Host, type Profile } from "./host.ts";
+import { GlobalSkills, ProfileStore, type Profile } from "./host.ts";
 import { Intents, type Intent } from "./intents.ts";
 import { replyText } from "./reply-text.ts";
 import { Models } from "./models.ts";
@@ -131,7 +131,8 @@ export class Agent extends Context.Service<
       const handlers = yield* Handlers;
       const usage = yield* Usage;
       const outbox = yield* Outbox;
-      const host = yield* Host;
+      const globalSkills = yield* GlobalSkills;
+      const profileStore = yield* ProfileStore;
       const skills = yield* Skills;
       const intents = yield* Intents;
       const webChat = yield* WebChatClient;
@@ -155,7 +156,7 @@ export class Agent extends Context.Service<
         return conversation;
       });
 
-      const globalSkillsOrNone = host.globalSkills.index.pipe(Effect.orElseSucceed(() => []));
+      const globalSkillsOrNone = globalSkills.index.pipe(Effect.orElseSucceed(() => []));
 
       const nowDate = Effect.map(DateTime.now, (n) => new Date(DateTime.toEpochMillis(n)));
       const now = Effect.map(nowDate, (date) => formatDate(date, settings.timezone));
@@ -301,7 +302,7 @@ export class Agent extends Context.Service<
         const isolated = isWebThread(incoming.chatId);
         const turnContext = [
           `Now: ${yield* now}`,
-          profileText(yield* host.profile),
+          profileText(yield* profileStore.profile),
           skillCatalogue(yield* skills.index, yield* globalSkillsOrNone),
           intentText(woke),
           isolated ? WEB_THREAD_NOTE : "",
@@ -432,7 +433,7 @@ export class Agent extends Context.Service<
 
       const ask = Effect.fn("Agent.ask")(function* (question: string) {
         const view = yield* memory.renderView;
-        const turnContext = [`Now: ${yield* now}`, profileText(yield* host.profile)]
+        const turnContext = [`Now: ${yield* now}`, profileText(yield* profileStore.profile)]
           .filter((part) => part !== "")
           .join("\n\n");
         const messages: Message[] = [

@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { ToolError } from "./errors.ts";
-import { Host } from "./host.ts";
+import { GlobalSkills } from "./host.ts";
 import { Skills } from "./skills.ts";
 import { defineTool, described } from "./tool.ts";
 
@@ -42,7 +42,7 @@ export const skillTools = [
     run: (a) =>
       Effect.gen(function* () {
         const skills = yield* Skills;
-        const global = (yield* Host).globalSkills;
+        const global = yield* GlobalSkills;
         const findOwnFirstThenSharedUnlessScoped = (name: string) =>
           Effect.gen(function* () {
             if (a.scope !== "global") {

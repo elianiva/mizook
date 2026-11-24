@@ -3,7 +3,7 @@ import type { Automation } from "./automations.ts";
 import { Settings } from "./config.ts";
 import { ScheduleError, ToolError } from "./errors.ts";
 import { formatDate } from "./format.ts";
-import { Host } from "./host.ts";
+import { Agents, AutomationsClient, GlobalSkills, Self } from "./host.ts";
 import { describeAutomation } from "./runner.ts";
 import type { Spec } from "./schedule.ts";
 import { Skills } from "./skills.ts";
@@ -103,26 +103,25 @@ const specOf = (
 
 const agentIdBySlugDefaultingToSelf = (slug: string | undefined) =>
   Effect.gen(function* () {
-    const host = yield* Host;
+    const self = yield* Self;
     const wanted = slug?.trim().replace(/^\//, "").toLowerCase();
-    if (!wanted || wanted === host.self.slug) return host.self.id;
-    const found = (yield* host.agents).find((x) => x.slug === wanted);
+    if (!wanted || wanted === self.slug) return self.id;
+    const found = (yield* (yield* Agents).all).find((x) => x.slug === wanted);
     if (!found) return yield* new ToolError({ reason: `no agent "${slug}"` });
     return found.id;
   });
 
 const oneLineWithWebhookLink = (a: Automation) =>
   Effect.gen(function* () {
-    const host = yield* Host;
     const { timezone } = yield* Settings;
-    const agents = yield* host.agents;
+    const agents = yield* (yield* Agents).all;
     const line = describeAutomation(
       a,
       (at) => formatDate(new Date(at), timezone),
       (id) => `/${agents.find((x) => x.id === id)?.slug ?? id}`,
     );
     return a.spec.kind === "webhook"
-      ? `${line}\n  link: ${yield* host.automations.hookUrl(a.id)}`
+      ? `${line}\n  link: ${yield* (yield* AutomationsClient).hookUrl(a.id)}`
       : line;
   });
 
@@ -136,9 +135,9 @@ const actionOf = (a: typeof AutomationCreateArgs.Type, place: string | undefined
         const skill = a.skill?.trim();
         if (skill) {
           const skills = yield* Skills;
-          const host = yield* Host;
+          const globalSkills = yield* GlobalSkills;
           if (yield* skills.get(skill)) yield* skills.pin(skill);
-          else if (yield* host.globalSkills.get(skill)) yield* host.globalSkills.pin(skill);
+          else if (yield* globalSkills.get(skill)) yield* globalSkills.pin(skill);
           else return yield* new ToolError({ reason: `no skill "${skill}"` });
         }
         return {
@@ -182,7 +181,7 @@ export const automationTools = [
       Effect.gen(function* () {
         const spec = yield* specOf(a, (yield* Settings).timezone);
         const action = yield* actionOf(a, place);
-        const made = yield* (yield* Host).automations.create(spec, action);
+        const made = yield* (yield* AutomationsClient).create(spec, action);
         return `Automation made. ${yield* oneLineWithWebhookLink(made)}`;
       }),
   }),
@@ -194,8 +193,8 @@ export const automationTools = [
     args: Schema.Struct({}),
     run: () =>
       Effect.gen(function* () {
-        const host = yield* Host;
-        const all = yield* host.automations.list(host.self.id);
+        const self = yield* Self;
+        const all = yield* (yield* AutomationsClient).list(self.id);
         if (all.length === 0) return "No automations.";
         return (yield* Effect.forEach(all, oneLineWithWebhookLink)).join("\n");
       }),
@@ -206,8 +205,8 @@ export const automationTools = [
     description: "Delete an automation by its number.",
     args: AutomationIdArgs,
     run: ({ id }) =>
-      Host.use((host) =>
-        Effect.map(host.automations.cancel(id), (done) =>
+      AutomationsClient.use((automations) =>
+        Effect.map(automations.cancel(id), (done) =>
           done ? `Deleted #${id}.` : `No automation #${id}.`,
         ),
       ),
@@ -218,8 +217,8 @@ export const automationTools = [
     description: "Pause an automation. It keeps its trigger and action and can be resumed.",
     args: AutomationIdArgs,
     run: ({ id }) =>
-      Host.use((host) =>
-        Effect.map(host.automations.pause(id), (done) =>
+      AutomationsClient.use((automations) =>
+        Effect.map(automations.pause(id), (done) =>
           done ? `Paused #${id}.` : `No active automation #${id}.`,
         ),
       ),
@@ -230,8 +229,8 @@ export const automationTools = [
     description: "Resume a paused automation from its next time.",
     args: AutomationIdArgs,
     run: ({ id }) =>
-      Host.use((host) =>
-        Effect.map(host.automations.resume(id), (done) =>
+      AutomationsClient.use((automations) =>
+        Effect.map(automations.resume(id), (done) =>
           done ? `Resumed #${id}.` : `No automation #${id}.`,
         ),
       ),
@@ -243,8 +242,8 @@ export const automationTools = [
       "Fire an automation now, in the background, whatever its trigger. Its next time stays as it was.",
     args: AutomationIdArgs,
     run: ({ id }) =>
-      Host.use((host) =>
-        Effect.map(host.automations.test(id), (started) =>
+      AutomationsClient.use((automations) =>
+        Effect.map(automations.test(id), (started) =>
           started
             ? `Test #${id} started; the result goes where it talks.`
             : `No automation #${id}.`,

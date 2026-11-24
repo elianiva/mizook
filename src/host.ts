@@ -30,17 +30,6 @@ export interface AgentSpec {
 
 export type AgentChange = { ok: true; agent: AgentInfo } | { ok: false; error: string };
 
-export interface AutomationsApi {
-  create(spec: Spec, action: Action): Effect.Effect<Automation, ToolError>;
-  list(agent?: string): Effect.Effect<ReadonlyArray<Automation>>;
-  cancel(id: number): Effect.Effect<boolean>;
-  pause(id: number): Effect.Effect<boolean>;
-  resume(id: number): Effect.Effect<boolean, ToolError>;
-  test(id: number): Effect.Effect<boolean>;
-  hookUrl(id: number): Effect.Effect<string>;
-  runs(limit: number, automationId?: number): Effect.Effect<ReadonlyArray<Run>>;
-}
-
 export interface Profile {
   readonly about: string;
   readonly rules: ReadonlyArray<string>;
@@ -96,12 +85,14 @@ export const describeProfile = (profile: Profile): string =>
     .filter((part) => part !== "")
     .join("\n\n");
 
-export class Host extends Context.Service<
-  Host,
+/** This agent, as the Hub knew it when the runtime was built. */
+export class Self extends Context.Service<Self, AgentInfo>()("mizook/Self") {}
+
+/** Every agent and every place, through the Hub, and the other agents' Durable Objects. */
+export class Agents extends Context.Service<
+  Agents,
   {
-    readonly self: AgentInfo;
-    readonly reload: Effect.Effect<void>;
-    readonly agents: Effect.Effect<ReadonlyArray<AgentInfo>>;
+    readonly all: Effect.Effect<ReadonlyArray<AgentInfo>>;
     bind(place: string, slug: string | undefined): Effect.Effect<AgentInfo | undefined>;
     placeLabel(place: string): Effect.Effect<string>;
     namePlace(place: string, name: string): Effect.Effect<void>;
@@ -109,22 +100,47 @@ export class Host extends Context.Service<
     updateAgent(key: string, patch: Partial<AgentSpec>): Effect.Effect<AgentChange>;
     deleteAgent(key: string): Effect.Effect<AgentChange>;
     setAgentSetting(doName: string, key: string, value: string): Effect.Effect<void>;
+    /** Rebuilds an agent's runtime after its reply; this agent's own when `doName` is its own. */
     reloadAgent(doName: string): Effect.Effect<void>;
-    readonly globalSkills: Skills["Service"];
     ask(agent: string, question: string): Effect.Effect<string, ToolError>;
+    readonly spendAll: Effect.Effect<
+      ReadonlyArray<{ readonly name: string; readonly spend: Spend }>
+    >;
+  }
+>()("mizook/Agents") {}
+
+/** The profile every agent shares, kept in the Hub. */
+export class ProfileStore extends Context.Service<
+  ProfileStore,
+  {
     readonly profile: Effect.Effect<Profile>;
     /** Saves the profile through `checkProfile`; an undefined part keeps what it has. */
     updateProfile(
       about: string | undefined,
       rules: ReadonlyArray<string> | undefined,
     ): Effect.Effect<Profile, StateError | InvalidInput>;
-    readonly automations: AutomationsApi;
-    readonly spendAll: Effect.Effect<
-      ReadonlyArray<{ readonly name: string; readonly spend: Spend }>
-    >;
-    readonly exportNow: Effect.Effect<string>;
   }
->()("mizook/Host") {}
+>()("mizook/ProfileStore") {}
+
+/** The global skills, kept in the Hub and seen by every agent. Unpinning one does nothing. */
+export class GlobalSkills extends Context.Service<GlobalSkills, Skills["Service"]>()(
+  "mizook/GlobalSkills",
+) {}
+
+/** The Automations Durable Object, as this agent reaches it. */
+export class AutomationsClient extends Context.Service<
+  AutomationsClient,
+  {
+    create(spec: Spec, action: Action): Effect.Effect<Automation, ToolError>;
+    list(agent?: string): Effect.Effect<ReadonlyArray<Automation>>;
+    cancel(id: number): Effect.Effect<boolean>;
+    pause(id: number): Effect.Effect<boolean>;
+    resume(id: number): Effect.Effect<boolean, ToolError>;
+    test(id: number): Effect.Effect<boolean>;
+    hookUrl(id: number): Effect.Effect<string>;
+    runs(limit: number, automationId?: number): Effect.Effect<ReadonlyArray<Run>>;
+  }
+>()("mizook/AutomationsClient") {}
 
 export const shortPlace = (place: string): string => {
   const [, chat, topic] = /^telegram:(-?\d+)(?::(\d+))?$/.exec(place) ?? [];
