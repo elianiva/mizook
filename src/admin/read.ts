@@ -1,3 +1,15 @@
+import {
+  MESSAGE_KINDS,
+  type AuditRow,
+  type Entry,
+  type IntentRow,
+  type LogMessage,
+  type Overview,
+  type PolicyRow,
+  type SkillRow,
+  type UsageReport,
+  type ViewLine,
+} from "@mizook/admin-api";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Effect, Option, Schema } from "effect";
 
@@ -12,19 +24,6 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const MESSAGE_PREVIEW_CHARS = 600;
 const DAILY_SPEND_DAYS = 14;
-
-export interface Overview {
-  readonly messages: number;
-  readonly nodes: number;
-  readonly viewLines: number;
-  readonly spend: { readonly last24h: number; readonly last7d: number; readonly total: number };
-  readonly settings: Record<string, string>;
-  readonly turns: ReadonlyArray<{ chatId: string; text: string }>;
-  readonly approvals: ReadonlyArray<{ id: number; summary: string; posted: boolean }>;
-  readonly schedules: number;
-  readonly daily: ReadonlyArray<{ day: string; cost: number }>;
-  readonly nextSchedule: number | null;
-}
 
 const count = async (sql: SqlDriver, table: string) =>
   (await rowsOrEmpty<{ n: number }>(sql, `SELECT COUNT(*) AS n FROM ${table}`))[0]?.n ?? 0;
@@ -89,24 +88,13 @@ export const overview = async (sql: SqlDriver, now: number): Promise<Overview> =
   };
 };
 
-export interface LogMessage {
-  readonly i: number;
-  readonly kind: string;
-  readonly text: string;
-  readonly size: number;
-  readonly date: string;
-  readonly cut: boolean;
-}
-
-const KINDS = ["user", "agent", "tool", "echo", "note"];
-
 export const messages = async (
   sql: SqlDriver,
   options: { kind?: string; q?: string; before?: number; limit: number },
 ): Promise<LogMessage[]> => {
   const where: string[] = [];
   const params: unknown[] = [];
-  if (options.kind && KINDS.includes(options.kind)) {
+  if (options.kind && (MESSAGE_KINDS as ReadonlyArray<string>).includes(options.kind)) {
     where.push("kind = ?");
     params.push(options.kind);
   }
@@ -138,23 +126,14 @@ export const messages = async (
   }));
 };
 
-export const message = async (sql: SqlDriver, i: number) =>
+export const message = async (sql: SqlDriver, i: number): Promise<Entry | undefined> =>
   (
-    await rowsOrEmpty<{
-      i: number;
-      kind: string;
-      text: string;
-      size: number;
-      date: string;
-    }>(sql, `SELECT i, kind, text, size, date FROM mem_messages WHERE i = ?`, i)
+    await rowsOrEmpty<Entry>(
+      sql,
+      `SELECT i, kind, text, size, date FROM mem_messages WHERE i = ?`,
+      i,
+    )
   )[0];
-
-export interface ViewLine {
-  readonly label: string;
-  readonly level: number;
-  readonly text: string;
-  readonly size: number;
-}
 
 export const memoryView = async (sql: SqlDriver): Promise<ViewLine[]> => {
   const json = (await rowsOrEmpty<{ json: string }>(sql, `SELECT json FROM mem_views`))[0]?.json;
@@ -179,27 +158,6 @@ export const memoryView = async (sql: SqlDriver): Promise<ViewLine[]> => {
     };
   });
 };
-
-export interface UsageReport {
-  readonly byDay: ReadonlyArray<{
-    day: string;
-    cost: number;
-    calls: number;
-    input: number;
-    output: number;
-    cacheRead: number;
-  }>;
-  readonly byTool: ReadonlyArray<{ tool: string; calls: number }>;
-  readonly byModel: ReadonlyArray<{
-    model: string;
-    cost: number;
-    calls: number;
-    input: number;
-    output: number;
-    cacheRead: number;
-  }>;
-  readonly byKind: ReadonlyArray<{ kind: string; cost: number; calls: number }>;
-}
 
 const TOOL_NAME_SQL = "substr(text, 1, instr(text || ' ', ' ') - 1)";
 
@@ -255,16 +213,6 @@ export const usage = async (sql: SqlDriver, days: number, now: number): Promise<
   };
 };
 
-export interface SkillRow {
-  readonly name: string;
-  readonly description: string;
-  readonly body: string;
-  readonly pinned: boolean;
-  readonly useCount: number;
-  readonly usedAt: number | null;
-  readonly updated: number;
-}
-
 export const skills = async (sql: SqlDriver): Promise<SkillRow[]> =>
   (
     await rowsOrEmpty<{
@@ -288,18 +236,6 @@ export const skills = async (sql: SqlDriver): Promise<SkillRow[]> =>
     usedAt: skill.used_at,
     updated: skill.updated,
   }));
-
-export interface IntentRow {
-  readonly id: number;
-  readonly description: string;
-  readonly triggers: ReadonlyArray<string>;
-  readonly state: string;
-  readonly fireCount: number;
-  readonly maxFires: number;
-  readonly cooldown: number;
-  readonly expires: number;
-  readonly lastFired: number | null;
-}
 
 const decodeJsonArray = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(Schema.Unknown)),
@@ -340,22 +276,8 @@ export const intents = async (sql: SqlDriver): Promise<IntentRow[]> =>
     lastFired: intent.last_fired,
   }));
 
-export interface PolicyRow {
-  readonly id: number;
-  readonly match: string;
-  readonly decision: string;
-}
-
 export const policies = async (sql: SqlDriver): Promise<PolicyRow[]> =>
   rowsOrEmpty<PolicyRow>(sql, `SELECT id, match, decision FROM app_policies ORDER BY id`);
-
-export interface AuditRow {
-  readonly at: number;
-  readonly who: string;
-  readonly action: string;
-  readonly target: number;
-  readonly ok: boolean;
-}
 
 export const audit = async (sql: SqlDriver): Promise<AuditRow[]> =>
   (

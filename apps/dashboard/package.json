@@ -9,6 +9,7 @@
     "build": "panda codegen && vite build"
   },
   "dependencies": {
+    "@mizook/admin-api": "workspace:*",
     "@mizook/design": "workspace:*",
     "@mizook/ui": "workspace:*",
     "effect": "4.1.4",

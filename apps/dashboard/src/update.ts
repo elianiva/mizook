@@ -10,13 +10,12 @@ import { type Url, toString as urlToString } from "foldkit/url";
 import {
   ActionKind,
   AgentEdit,
+  Decision,
   AgentKind,
   AgentManagement,
   AgentOp,
   AgentRow,
   Channel,
-  agentsQuery,
-  channelKey,
   IntentRow,
   Overview,
   PolicyRow,
@@ -25,13 +24,17 @@ import {
   SkillRow,
   ArtifactRow,
   ArtifactAction,
+  SettingKey,
+} from "@mizook/admin-api";
+import {
+  agentsQuery,
+  channelKey,
   artifactQuery,
   artifactsQuery,
   postAgent,
   postArtifact,
   postManagedAgent,
   postNewArtifact,
-  SettingKey,
   auditQuery,
   channelsQuery,
   entryQuery,
@@ -277,6 +280,8 @@ type Editor = {
 
 const dateField = (at: number): string => new Date(at).toISOString().slice(0, 10);
 
+const isDecision = Schema.is(Decision);
+
 const defaultFields = (kind: AgentKind): { readonly [key: string]: string } =>
   kind === "profile"
     ? { about: "", rules: "" }
@@ -402,7 +407,7 @@ const editOf = (editor: Editor): AgentEdit | undefined => {
         action: "save",
         ...(editor.id === "" ? {} : { id: Number(editor.id) }),
         match: fields.match ?? "",
-        decision: fields.decision ?? "ask",
+        decision: isDecision(fields.decision) ? fields.decision : "ask",
       };
   }
 };
@@ -503,14 +508,14 @@ const loadRoute: Step = (model) =>
       }),
   });
 
-type OverviewData = typeof Overview.Type;
-type SkillData = typeof SkillRow.Type;
-type IntentData = typeof IntentRow.Type;
-type PolicyData = typeof PolicyRow.Type;
-type ScheduleData = typeof ScheduleRow.Type;
-type ArtifactData = typeof ArtifactRow.Type;
-type ProfileData = typeof Profile.Type;
-type ChannelData = typeof Channel.Type;
+type OverviewData = Overview;
+type SkillData = SkillRow;
+type IntentData = IntentRow;
+type PolicyData = PolicyRow;
+type ScheduleData = ScheduleRow;
+type ArtifactData = ArtifactRow;
+type ProfileData = Profile;
+type ChannelData = Channel;
 
 /**
  * Optimistic writes: each helper changes what the page shows before the server answers.

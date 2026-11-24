@@ -1,0 +1,17 @@
+{
+  "name": "@mizook/admin-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The /admin/api contract: reply and request schemas, setting keys, the CSRF header, and paths.",
+  "license": "GPL-3.0-only",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "effect": "4.1.4"
+  }
+}

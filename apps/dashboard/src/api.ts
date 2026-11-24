@@ -4,158 +4,23 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { Query } from "foldkit/experimental";
-
-export const Channel = Schema.Struct({
-  doName: Schema.String,
-  threadId: Schema.String,
-  name: Schema.String,
-  lastActive: Schema.Finite,
-});
-
-const Spend = Schema.Struct({
-  last24h: Schema.Finite,
-  last7d: Schema.Finite,
-  total: Schema.Finite,
-});
-
-export const Overview = Schema.Struct({
-  messages: Schema.Finite,
-  nodes: Schema.Finite,
-  viewLines: Schema.Finite,
-  spend: Spend,
-  settings: Schema.Record(Schema.String, Schema.String),
-  turns: Schema.Array(Schema.Struct({ chatId: Schema.String, text: Schema.String })),
-  approvals: Schema.Array(
-    Schema.Struct({ id: Schema.Finite, summary: Schema.String, posted: Schema.Boolean }),
-  ),
-  schedules: Schema.Finite,
-  daily: Schema.Array(Schema.Struct({ day: Schema.String, cost: Schema.Finite })),
-  nextSchedule: Schema.NullOr(Schema.Finite),
-});
-
-export const LogMessage = Schema.Struct({
-  i: Schema.Finite,
-  kind: Schema.String,
-  text: Schema.String,
-  size: Schema.Finite,
-  date: Schema.String,
-  cut: Schema.Boolean,
-});
-export type LogMessage = typeof LogMessage.Type;
-
-export const Entry = Schema.Struct({
-  i: Schema.Finite,
-  kind: Schema.String,
-  text: Schema.String,
-  size: Schema.Finite,
-  date: Schema.String,
-});
-
-export const ViewLine = Schema.Struct({
-  label: Schema.String,
-  level: Schema.Finite,
-  text: Schema.String,
-  size: Schema.Finite,
-});
-
-export const UsageReport = Schema.Struct({
-  byDay: Schema.Array(
-    Schema.Struct({
-      day: Schema.String,
-      cost: Schema.Finite,
-      calls: Schema.Finite,
-      input: Schema.Finite,
-      output: Schema.Finite,
-      cacheRead: Schema.Finite,
-    }),
-  ),
-  byTool: Schema.Array(Schema.Struct({ tool: Schema.String, calls: Schema.Finite })),
-  byModel: Schema.Array(
-    Schema.Struct({
-      model: Schema.String,
-      cost: Schema.Finite,
-      calls: Schema.Finite,
-      input: Schema.Finite,
-      output: Schema.Finite,
-      cacheRead: Schema.Finite,
-    }),
-  ),
-  byKind: Schema.Array(
-    Schema.Struct({ kind: Schema.String, cost: Schema.Finite, calls: Schema.Finite }),
-  ),
-});
-
-export const ScheduleRow = Schema.Struct({
-  id: Schema.Finite,
-  spec: Schema.String,
-  prompt: Schema.String,
-  nextAt: Schema.Finite,
-});
-
-export const Profile = Schema.Struct({
-  about: Schema.String,
-  rules: Schema.Array(Schema.String),
-});
-
-export const SkillRow = Schema.Struct({
-  name: Schema.String,
-  description: Schema.String,
-  body: Schema.String,
-  pinned: Schema.Boolean,
-  useCount: Schema.Finite,
-  usedAt: Schema.NullOr(Schema.Finite),
-  updated: Schema.Finite,
-});
-
-export const IntentRow = Schema.Struct({
-  id: Schema.Finite,
-  description: Schema.String,
-  triggers: Schema.Array(Schema.String),
-  state: Schema.String,
-  fireCount: Schema.Finite,
-  maxFires: Schema.Finite,
-  cooldown: Schema.Finite,
-  expires: Schema.Finite,
-  lastFired: Schema.NullOr(Schema.Finite),
-});
-
-export const PolicyRow = Schema.Struct({
-  id: Schema.Finite,
-  match: Schema.String,
-  decision: Schema.String,
-});
-
-export const RunRow = Schema.Struct({
-  id: Schema.Finite,
-  scheduleId: Schema.Finite,
-  status: Schema.String,
-  started: Schema.Finite,
-  finished: Schema.NullOr(Schema.Finite),
-  output: Schema.String,
-  error: Schema.NullOr(Schema.String),
-});
-
-export const AgentKind = Schema.Literals(["profile", "skills", "intents", "policies"]);
-export type AgentKind = typeof AgentKind.Type;
-
-export const AgentEdit = Schema.Struct({
-  kind: AgentKind,
-  action: Schema.Literals(["save", "delete", "remove", "cancel"]),
-  id: Schema.optionalKey(Schema.Finite),
-  about: Schema.optionalKey(Schema.String),
-  rules: Schema.optionalKey(Schema.Array(Schema.String)),
-  name: Schema.optionalKey(Schema.String),
-  description: Schema.optionalKey(Schema.String),
-  body: Schema.optionalKey(Schema.String),
-  pinned: Schema.optionalKey(Schema.Boolean),
-  triggers: Schema.optionalKey(Schema.Array(Schema.String)),
-  expires: Schema.optionalKey(Schema.Finite),
-  maxFires: Schema.optionalKey(Schema.Finite),
-  cooldownHours: Schema.optionalKey(Schema.Finite),
-  match: Schema.optionalKey(Schema.String),
-  decision: Schema.optionalKey(Schema.String),
-});
-export type AgentEdit = typeof AgentEdit.Type;
+import {
+  CSRF_HEADER,
+  CSRF_VALUE,
+  ErrorReply,
+  paths,
+  PublishedReply,
+  Reads,
+  SavedReply,
+  type ActionKind,
+  type AgentEdit,
+  type AgentManagement,
+  type AgentOp,
+  type ArtifactAction,
+  type ReadPage,
+  type SettingInput,
+  type SettingKey,
+} from "@mizook/admin-api";
 
 class ApiError extends Data.TaggedError("ApiError")<{ readonly reason: string }> {
   override get message(): string {
@@ -177,7 +42,7 @@ const readJson = (response: HttpClientResponse.HttpClientResponse) =>
 
 const fetchJson = <A, I>(
   schema: Schema.Codec<A, I>,
-  path: string,
+  page: ReadPage,
   params: Readonly<Record<string, string | number>>,
 ): Effect.Effect<A, string> =>
   Effect.gen(function* () {
@@ -186,7 +51,7 @@ const fetchJson = <A, I>(
         .filter(([, value]) => value !== "")
         .map(([key, value]) => [key, String(value)]),
     ).toString();
-    const url = query === "" ? `/admin/api/${path}` : `/admin/api/${path}?${query}`;
+    const url = query === "" ? paths.read(page) : `${paths.read(page)}?${query}`;
     const response = yield* sendRequest(
       HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson),
     );
@@ -208,192 +73,142 @@ export const channelKey = ({ channel }: { readonly channel: string }): string =>
 
 export const channelsQuery = Query.define({
   name: "Channels",
-  data: Schema.Array(Channel),
+  data: Reads.channels,
   error: Schema.String,
-  execute: fetchJson(Schema.Array(Channel), "channels", {}),
+  execute: fetchJson(Reads.channels, "channels", {}),
 });
 
 export const overviewQuery = Query.define({
   name: "Overview",
   args: channelArgs,
   toKey: channelKey,
-  data: Overview,
+  data: Reads.overview,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Overview, "overview", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.overview, "overview", { c: channel }),
 });
 
 export const logQuery = Query.define({
   name: "Log",
   args: { channel: Schema.String, kind: Schema.String, q: Schema.String, before: Schema.String },
-  data: Schema.Array(LogMessage),
+  data: Reads.messages,
   error: Schema.String,
   execute: ({ channel, kind, q, before }) =>
-    fetchJson(Schema.Array(LogMessage), "messages", { c: channel, kind, q, before }),
+    fetchJson(Reads.messages, "messages", { c: channel, kind, q, before }),
 });
 
 export const entryQuery = Query.define({
   name: "Entry",
   args: { channel: Schema.String, entryId: Schema.Finite },
-  data: Entry,
+  data: Reads.message,
   error: Schema.String,
-  execute: ({ channel, entryId }) => fetchJson(Entry, "message", { c: channel, i: entryId }),
+  execute: ({ channel, entryId }) =>
+    fetchJson(Reads.message, "message", { c: channel, i: entryId }),
 });
 
 export const memoryQuery = Query.define({
   name: "Memory",
   args: channelArgs,
-  data: Schema.Array(ViewLine),
+  data: Reads.memory,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(ViewLine), "memory", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.memory, "memory", { c: channel }),
 });
 
 export const usageQuery = Query.define({
   name: "Usage",
   args: { channel: Schema.String, days: Schema.Finite },
-  data: UsageReport,
+  data: Reads.usage,
   error: Schema.String,
-  execute: ({ channel, days }) => fetchJson(UsageReport, "usage", { c: channel, days }),
+  execute: ({ channel, days }) => fetchJson(Reads.usage, "usage", { c: channel, days }),
 });
 
 export const schedulesQuery = Query.define({
   name: "Schedules",
   args: channelArgs,
   toKey: channelKey,
-  data: Schema.Array(ScheduleRow),
+  data: Reads.schedules,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(ScheduleRow), "schedules", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.schedules, "schedules", { c: channel }),
 });
 
 export const profileQuery = Query.define({
   name: "Profile",
-  data: Profile,
+  data: Reads.profile,
   error: Schema.String,
-  execute: fetchJson(Profile, "profile", {}),
+  execute: fetchJson(Reads.profile, "profile", {}),
 });
 
 export const skillsQuery = Query.define({
   name: "Skills",
   args: channelArgs,
   toKey: channelKey,
-  data: Schema.Array(SkillRow),
+  data: Reads.skills,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(SkillRow), "skills", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.skills, "skills", { c: channel }),
 });
 
 export const intentsQuery = Query.define({
   name: "Intents",
   args: channelArgs,
   toKey: channelKey,
-  data: Schema.Array(IntentRow),
+  data: Reads.intents,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(IntentRow), "intents", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.intents, "intents", { c: channel }),
 });
 
 export const policiesQuery = Query.define({
   name: "Policies",
   args: channelArgs,
   toKey: channelKey,
-  data: Schema.Array(PolicyRow),
+  data: Reads.policies,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(PolicyRow), "policies", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.policies, "policies", { c: channel }),
 });
 
 export const runsQuery = Query.define({
   name: "Runs",
   args: channelArgs,
-  data: Schema.Array(RunRow),
+  data: Reads.runs,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(RunRow), "runs", { c: channel, limit: 25 }),
-});
-
-export const Summary = Schema.Struct({
-  doName: Schema.String,
-  name: Schema.String,
-  lastActive: Schema.Finite,
-  messages: Schema.Finite,
-  spend24h: Schema.Finite,
-  spend7d: Schema.Finite,
-  pending: Schema.Finite,
-  approvals: Schema.Finite,
-  schedules: Schema.Finite,
-  budget: Schema.Finite,
-});
-
-export const AuditRow = Schema.Struct({
-  at: Schema.Finite,
-  who: Schema.String,
-  action: Schema.String,
-  target: Schema.Finite,
-  ok: Schema.Boolean,
-});
-
-export const ArtifactRow = Schema.Struct({
-  name: Schema.String,
-  token: Schema.String,
-  version: Schema.Finite,
-  contentType: Schema.String,
-  updated: Schema.Finite,
-  visibility: Schema.Literals(["public", "private"]),
-  url: Schema.String,
-});
-
-export const ArtifactSource = Schema.Struct({
-  artifact: ArtifactRow,
-  text: Schema.String,
-  size: Schema.Finite,
+  execute: ({ channel }) => fetchJson(Reads.runs, "runs", { c: channel, limit: 25 }),
 });
 
 export const artifactsQuery = Query.define({
   name: "Artifacts",
   args: channelArgs,
   toKey: channelKey,
-  data: Schema.Array(ArtifactRow),
+  data: Reads.artifacts,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(ArtifactRow), "artifacts", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.artifacts, "artifacts", { c: channel }),
 });
 
 export const artifactQuery = Query.define({
   name: "Artifact",
   args: { channel: Schema.String, name: Schema.String },
-  data: ArtifactSource,
+  data: Reads.artifact,
   error: Schema.String,
-  execute: ({ channel, name }) => fetchJson(ArtifactSource, "artifact", { c: channel, name }),
+  execute: ({ channel, name }) => fetchJson(Reads.artifact, "artifact", { c: channel, name }),
 });
-
-export const AgentRow = Schema.Struct({
-  doName: Schema.String,
-  slug: Schema.String,
-  name: Schema.String,
-  role: Schema.String,
-  persona: Schema.String,
-  tools: Schema.NullOr(Schema.Array(Schema.String)),
-  isDefault: Schema.Boolean,
-  model: Schema.String,
-  created: Schema.Finite,
-  lastActive: Schema.Finite,
-});
-export type AgentRow = typeof AgentRow.Type;
 
 export const agentsQuery = Query.define({
   name: "Agents",
-  data: Schema.Array(AgentRow),
+  data: Reads.agents,
   error: Schema.String,
-  execute: fetchJson(Schema.Array(AgentRow), "agents", {}),
+  execute: fetchJson(Reads.agents, "agents", {}),
 });
 
 export const summaryQuery = Query.define({
   name: "Summary",
-  data: Schema.Array(Summary),
+  data: Reads.summary,
   error: Schema.String,
-  execute: fetchJson(Schema.Array(Summary), "summary", {}),
+  execute: fetchJson(Reads.summary, "summary", {}),
 });
 
 export const auditQuery = Query.define({
   name: "Audit",
   args: channelArgs,
-  data: Schema.Array(AuditRow),
+  data: Reads.audit,
   error: Schema.String,
-  execute: ({ channel }) => fetchJson(Schema.Array(AuditRow), "audit", { c: channel }),
+  execute: ({ channel }) => fetchJson(Reads.audit, "audit", { c: channel }),
 });
 
 const OVERVIEW_RECENT_MESSAGE_COUNT = 8;
@@ -401,28 +216,16 @@ const OVERVIEW_RECENT_MESSAGE_COUNT = 8;
 export const recentQuery = Query.define({
   name: "Recent",
   args: channelArgs,
-  data: Schema.Array(LogMessage),
+  data: Reads.messages,
   error: Schema.String,
   execute: ({ channel }) =>
-    fetchJson(Schema.Array(LogMessage), "messages", {
+    fetchJson(Reads.messages, "messages", {
       c: channel,
       limit: OVERVIEW_RECENT_MESSAGE_COUNT,
     }),
 });
 
-export const ActionKind = Schema.Literals(["approve", "deny", "cancel", "stop"]);
-export type ActionKind = typeof ActionKind.Type;
-
-export const ArtifactAction = Schema.Literals(["public", "private", "delete"]);
-export type ArtifactAction = typeof ArtifactAction.Type;
-
-export const SettingKey = Schema.Literals(["model", "budget", "timezone", "instructions"]);
-export type SettingKey = typeof SettingKey.Type;
-
-const CSRF_HEADER = { "x-mizook-csrf": "1" };
 const HTTP_CONFLICT = 409;
-
-const ErrorReply = Schema.Struct({ error: Schema.String });
 
 const postSameOrigin = (
   path: string,
@@ -431,8 +234,8 @@ const postSameOrigin = (
 ): Effect.Effect<unknown, string> =>
   Effect.gen(function* () {
     const scope = channel === undefined ? "" : `?c=${encodeURIComponent(channel)}`;
-    const post = HttpClientRequest.post(`/admin/api/${path}${scope}`, {
-      headers: { ...CSRF_HEADER, "content-type": "application/json" },
+    const post = HttpClientRequest.post(`${path}${scope}`, {
+      headers: { [CSRF_HEADER]: CSRF_VALUE, "content-type": "application/json" },
     });
     const response = yield* sendRequest(
       body === undefined ? post : HttpClientRequest.bodyJsonUnsafe(post, body),
@@ -457,54 +260,51 @@ export const postAction = (
 ): Effect.Effect<void, string> =>
   postSameOrigin(
     action === "stop"
-      ? "stop"
-      : `${action === "cancel" ? "schedules" : "approvals"}/${id}/${action}`,
+      ? paths.stop
+      : action === "cancel"
+        ? paths.cancelSchedule(id)
+        : paths.approval(id, action),
     channel,
   ).pipe(Effect.asVoid);
 
 const channelReplyOf = (reply: unknown): string =>
-  String((reply as { said?: string }).said ?? "Saved.");
+  Option.match(Schema.decodeUnknownOption(SavedReply)(reply), {
+    onNone: () => "Saved.",
+    onSome: (saved) => saved.said,
+  });
 
-const publicLinkOf = (reply: unknown): string => String((reply as { url?: string }).url ?? "");
+const publicLinkOf = (reply: unknown): string =>
+  Option.match(Schema.decodeUnknownOption(PublishedReply)(reply), {
+    onNone: () => "",
+    onSome: (published) => published.url,
+  });
 
 export const postNewArtifact = (
   channel: string,
   draft: { name: string; kind: string; content: string },
 ): Effect.Effect<string, string> =>
-  postSameOrigin("artifacts", channel, draft).pipe(Effect.map(publicLinkOf));
+  postSameOrigin(paths.newArtifact, channel, draft).pipe(Effect.map(publicLinkOf));
 
 export const postArtifact = (
   channel: string,
   name: string,
   action: ArtifactAction,
 ): Effect.Effect<void, string> =>
-  postSameOrigin(`artifacts/${encodeURIComponent(name)}/${action}`, channel).pipe(Effect.asVoid);
+  postSameOrigin(paths.artifact(name, action), channel).pipe(Effect.asVoid);
 
 export const postSetting = (
   channel: string,
   key: SettingKey,
   value: string,
-): Effect.Effect<string, string> =>
-  postSameOrigin(`settings/${key}`, channel, { value: value }).pipe(Effect.map(channelReplyOf));
+): Effect.Effect<string, string> => {
+  const body: SettingInput = { value };
+  return postSameOrigin(paths.setting(key), channel, body).pipe(Effect.map(channelReplyOf));
+};
 
 export const postAgent = (channel: string, edit: AgentEdit): Effect.Effect<string, string> => {
   const { kind, ...body } = edit;
-  return postSameOrigin(kind, channel, body).pipe(Effect.map(channelReplyOf));
+  return postSameOrigin(paths.edit(kind), channel, body).pipe(Effect.map(channelReplyOf));
 };
-
-/** What the Agents form sends. `tools: null` is every tool. */
-export const AgentManagement = Schema.Struct({
-  slug: Schema.String,
-  name: Schema.String,
-  role: Schema.String,
-  persona: Schema.String,
-  model: Schema.String,
-  tools: Schema.NullOr(Schema.Array(Schema.String)),
-});
-export type AgentManagement = typeof AgentManagement.Type;
-
-export const AgentOp = Schema.Literals(["create", "update", "delete"]);
-export type AgentOp = typeof AgentOp.Type;
 
 export const postManagedAgent = (
   op: AgentOp,
@@ -512,7 +312,7 @@ export const postManagedAgent = (
   body: AgentManagement | undefined,
 ): Effect.Effect<string, string> =>
   postSameOrigin(
-    op === "create" ? "agents" : `agents/${encodeURIComponent(slug)}/${op}`,
+    op === "create" ? paths.newAgent : paths.agent(slug, op),
     undefined,
     body ?? {},
   ).pipe(Effect.map(channelReplyOf));

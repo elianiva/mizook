@@ -1,3 +1,4 @@
+import { SETTING_KEYS, type SettingKey } from "@mizook/admin-api";
 import { Context, Effect, Layer, Schema } from "effect";
 import type { SqlDriver } from "@mizook/memory/sqlite";
 import type { ConversationId, SubmissionId } from "@earendil-works/pi-durable";
@@ -44,8 +45,7 @@ const THREAD_LINES_KEPT = 100;
 const WEEK = 7 * 24 * 3600 * 1000;
 
 /** The settings each agent keeps, each one overriding its install-wide default. */
-export const SETTING_KEYS = ["model", "instructions", "timezone", "budget"] as const;
-export type SettingKey = (typeof SETTING_KEYS)[number];
+export type { SettingKey };
 
 export const isSettingKey = (key: string): key is SettingKey =>
   (SETTING_KEYS as ReadonlyArray<string>).includes(key);

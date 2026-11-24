@@ -1,6 +1,6 @@
 import { Option, Schema } from "effect";
 
-import { AgentKind, type AgentManagement } from "./api.ts";
+import { AgentKind, type AgentManagement } from "@mizook/admin-api";
 
 const Fields = Schema.Record(Schema.String, Schema.String);
 

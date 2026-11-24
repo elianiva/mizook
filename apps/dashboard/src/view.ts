@@ -10,16 +10,19 @@ import {
   type ScheduleRow,
   type ViewLine,
   type UsageReport,
-  artifactQuery,
-  artifactsQuery,
   type ArtifactRow,
   AgentKind,
+  MESSAGE_KINDS,
   type AgentRow,
-  agentsQuery,
   IntentRow,
   PolicyRow,
   RunRow,
   SkillRow,
+} from "@mizook/admin-api";
+import {
+  artifactQuery,
+  artifactsQuery,
+  agentsQuery,
   auditQuery,
   recentQuery,
   summaryQuery,
@@ -269,7 +272,7 @@ const budgetAlert = (used: number, channel: Option.Option<string>, h: H): Html =
         ],
       );
 
-type OverviewData = typeof Overview.Type;
+type OverviewData = Overview;
 
 const heroView = (data: OverviewData, budget: number, used: number, h: H): Html => {
   const days = data.daily;
@@ -492,8 +495,6 @@ const overviewView = (model: Model, channel: string, h: H): Html =>
     );
   });
 
-const KINDS = ["user", "agent", "tool", "echo", "note"];
-
 /** Kind is a row of links, search runs on Enter: no Filter button to press. */
 const filterView = (model: Model, h: H): Html => {
   const channel = routeChannel(model.route);
@@ -520,7 +521,7 @@ const filterView = (model: Model, h: H): Html => {
         [h.Class(ui.segments), h.AriaLabel("Kind")],
         [
           kindLink("", "All"),
-          ...Array.map(KINDS, (kind) =>
+          ...Array.map(MESSAGE_KINDS, (kind) =>
             h.keyed("span")(kind, [], [kindLink(kind, kindBadge(kind, h))]),
           ),
         ],
@@ -657,7 +658,7 @@ const entryView = (model: Model, channel: string, entryId: number, h: H): Html =
     ],
   );
 
-const KIND_PREFIX = /^(user|agent|tool|echo|note): ?([\s\S]*)$/;
+const KIND_PREFIX = new RegExp(`^(${MESSAGE_KINDS.join("|")}): ?([\\s\\S]*)$`);
 
 const spanOf = (
   startPlusCountLabel: string,
@@ -671,7 +672,7 @@ const levelShade = (level: number): string =>
     ? "var(--colors-border-strong)"
     : `color-mix(in oklab, var(--colors-accent) ${Math.min(30 + level * 14, 100)}%, var(--colors-border-strong))`;
 
-const memoryLine = (line: typeof ViewLine.Type, h: H): Html => {
+const memoryLine = (line: ViewLine, h: H): Html => {
   const { start, count: covered } = spanOf(line.label);
   const said = KIND_PREFIX.exec(line.text);
   const range = covered === 1 ? `#${start}` : `#${start}–${start + covered - 1}`;
@@ -708,7 +709,7 @@ const kilobytes = (bytes: number): string =>
   bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 
 const memoryHero = (
-  rows: ReadonlyArray<typeof ViewLine.Type>,
+  rows: ReadonlyArray<ViewLine>,
   total: number,
   bytes: number,
   levels: Record<number, number>,
@@ -878,7 +879,7 @@ const memoryView = (model: Model, channel: string, h: H): Html =>
     }),
   );
 
-const dailySection = (report: typeof UsageReport.Type, h: H): Html =>
+const dailySection = (report: UsageReport, h: H): Html =>
   sectionView(
     "By day",
     tableView(
@@ -909,7 +910,7 @@ const dailySection = (report: typeof UsageReport.Type, h: H): Html =>
     h,
   );
 
-const toolsSection = (report: typeof UsageReport.Type, h: H): Html =>
+const toolsSection = (report: UsageReport, h: H): Html =>
   sectionView(
     "Tools used",
     Array.match(report.byTool, {
@@ -1057,7 +1058,7 @@ const rangeView = (model: Model, days: number, h: H): Html =>
     ),
   );
 
-const scheduleCard = (model: Model, schedule: typeof ScheduleRow.Type, h: H): Html => {
+const scheduleCard = (model: Model, schedule: ScheduleRow, h: H): Html => {
   const info = describeSpec(schedule.spec);
   return h.keyed("div")(
     String(schedule.id),
@@ -1457,7 +1458,7 @@ const skillsBody = (model: Model, channel: string, h: H): Html => {
                 th("Last used", h),
                 th("Actions", h),
               ],
-              Array.map(list, (skill: typeof SkillRow.Type) =>
+              Array.map(list, (skill: SkillRow) =>
                 h.keyed("tr")(
                   skill.name,
                   [h.Class(ui.row)],
@@ -1521,7 +1522,7 @@ const intentsBody = (model: Model, channel: string, h: H): Html => {
                 th("Expires", h),
                 th("Actions", h),
               ],
-              Array.map(list, (intent: typeof IntentRow.Type) =>
+              Array.map(list, (intent: IntentRow) =>
                 h.keyed("tr")(
                   String(intent.id),
                   [h.Class(ui.row)],
@@ -1575,7 +1576,7 @@ const policiesBody = (model: Model, channel: string, h: H): Html => {
           onNonEmpty: (list) =>
             tableView(
               [th("#", h), th("Decision", h), th("Match", h), th("Actions", h)],
-              Array.map(list, (policy: typeof PolicyRow.Type) =>
+              Array.map(list, (policy: PolicyRow) =>
                 h.keyed("tr")(
                   String(policy.id),
                   [h.Class(ui.row)],
@@ -1809,7 +1810,7 @@ const runStatusColor = (status: string): string =>
         ? "var(--colors-warn)"
         : "var(--colors-fg-muted)";
 
-const duration = (run: typeof RunRow.Type): string => {
+const duration = (run: RunRow): string => {
   if (run.finished === null) return "running";
   const ms = Math.max(0, run.finished - run.started);
   return ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
@@ -1829,7 +1830,7 @@ const runsView = (model: Model, channel: string, h: H): Html =>
             th("Took", h),
             th("Result", h),
           ],
-          Array.map(list, (run: typeof RunRow.Type) =>
+          Array.map(list, (run: RunRow) =>
             h.keyed("tr")(
               String(run.id),
               [h.Class(ui.row)],
@@ -1959,7 +1960,7 @@ const settingsView = (model: Model, channel: string, h: H): Html =>
     ),
   );
 
-const deleteButton = (model: Model, row: typeof ArtifactRow.Type, h: H): Html => {
+const deleteButton = (model: Model, row: ArtifactRow, h: H): Html => {
   const armed = isArmed(model.armed, `artifact-delete:${row.name}`);
   return h.button(
     [
@@ -1984,7 +1985,7 @@ const kindLabel = (contentType: string): string => {
           : (type.split("/")[1] ?? "file");
 };
 
-const visibilityToggle = (row: typeof ArtifactRow.Type, h: H): Html =>
+const visibilityToggle = (row: ArtifactRow, h: H): Html =>
   h.div(
     [h.Class(ui.segmented), h.Role("group"), h.AriaLabel(`Link of ${row.name}`)],
     Array.map(["public", "private"] as const, (choice) => {
@@ -2001,7 +2002,7 @@ const visibilityToggle = (row: typeof ArtifactRow.Type, h: H): Html =>
     }),
   );
 
-const artifactCard = (model: Model, channel: string, row: typeof ArtifactRow.Type, h: H): Html => {
+const artifactCard = (model: Model, channel: string, row: ArtifactRow, h: H): Html => {
   const isPublic = row.visibility === "public";
   return h.keyed("div")(
     row.name,

@@ -3,14 +3,11 @@ import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 
+import { ActionKind, AgentKind, ArtifactAction, SettingKey } from "@mizook/admin-api";
 import {
-  ActionKind,
-  AgentKind,
   agentsQuery,
-  ArtifactAction,
   artifactQuery,
   artifactsQuery,
-  SettingKey,
   auditQuery,
   channelsQuery,
   entryQuery,

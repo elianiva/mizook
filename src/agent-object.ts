@@ -1,3 +1,4 @@
+import type { Overview } from "@mizook/admin-api";
 import { DurableObject } from "cloudflare:workers";
 import { type Context, Effect } from "effect";
 import { Agent } from "./agent.ts";
@@ -304,16 +305,23 @@ export class AgentObject extends DurableObject<Env> {
     return this.runtime.runPromise(Usage.use((usage) => usage.spend));
   }
 
+  private readonly dashboardSql = {
+    all: <T>(query: string, ...args: unknown[]) =>
+      this.ctx.storage.sql.exec(query, ...(args as never[])).toArray() as T[],
+  };
+
+  /** The overview page, typed, for the Worker's pages that read one field of it. */
+  async overview(): Promise<Overview> {
+    return read.overview(this.dashboardSql, Date.now());
+  }
+
   async dashboard(page: string, params: Record<string, string>): Promise<unknown> {
-    const sql = {
-      all: <T>(query: string, ...args: unknown[]) =>
-        this.ctx.storage.sql.exec(query, ...(args as never[])).toArray() as T[],
-    };
+    const sql = this.dashboardSql;
     const now = Date.now();
     const num = (v: string | undefined) => (v === undefined || v === "" ? undefined : Number(v));
     switch (page) {
       case "overview":
-        return read.overview(sql, now);
+        return this.overview();
       case "messages":
         return read.messages(sql, {
           ...(params.kind && { kind: params.kind }),

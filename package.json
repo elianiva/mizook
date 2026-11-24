@@ -15,7 +15,7 @@
     "fmt": "vp check --fix",
     "lint": "vp lint",
     "prepare": "lefthook install",
-    "typecheck": "tsrs --noEmit -p tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.json && effect-tsrs diagnostics --strict --project apps/web/tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.sw.json && tsrs --noEmit -p apps/dashboard/tsconfig.json && effect-tsrs diagnostics --strict --project apps/dashboard/tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json && tsrs --noEmit -p packages/ui/tsconfig.json && effect-tsrs diagnostics --strict --project packages/ui/tsconfig.json && tsrs --noEmit -p packages/design/tsconfig.json && tsrs --noEmit -p packages/chat-sync/tsconfig.json && effect-tsrs diagnostics --strict --project packages/chat-sync/tsconfig.json"
+    "typecheck": "tsrs --noEmit -p tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.json && effect-tsrs diagnostics --strict --project apps/web/tsconfig.json && tsrs --noEmit -p apps/web/tsconfig.sw.json && tsrs --noEmit -p apps/dashboard/tsconfig.json && effect-tsrs diagnostics --strict --project apps/dashboard/tsconfig.json && tsrs --noEmit -p packages/memory/tsconfig.json && effect-tsrs diagnostics --strict --project packages/memory/tsconfig.json && tsrs --noEmit -p packages/ui/tsconfig.json && effect-tsrs diagnostics --strict --project packages/ui/tsconfig.json && tsrs --noEmit -p packages/design/tsconfig.json && tsrs --noEmit -p packages/chat-sync/tsconfig.json && effect-tsrs diagnostics --strict --project packages/chat-sync/tsconfig.json && tsrs --noEmit -p packages/admin-api/tsconfig.json && effect-tsrs diagnostics --strict --project packages/admin-api/tsconfig.json"
   },
   "dependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.87",
@@ -25,6 +25,7 @@
     "@earendil-works/pi-ai": "^1.2.0",
     "@earendil-works/pi-durable": "^1.2.0",
     "@effect/platform-node": "^4.0.4",
+    "@mizook/admin-api": "workspace:*",
     "@mizook/chat-sync": "workspace:*",
     "@mizook/memory": "workspace:*",
     "@opencode/codemode": "2.3.2",

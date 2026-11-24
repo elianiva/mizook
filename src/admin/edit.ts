@@ -1,3 +1,10 @@
+import {
+  IntentInput,
+  PolicyInput,
+  ProfileInput,
+  SkillInput,
+  type EditOutcome,
+} from "@mizook/admin-api";
 import { Effect, Option, Schema } from "effect";
 import type { InvalidInput, StateError } from "../errors.ts";
 import { Host } from "../host.ts";
@@ -5,46 +12,9 @@ import { Intents } from "../intents.ts";
 import { Policies } from "../policies.ts";
 import { pinnedRefusal, Skills } from "../skills.ts";
 
-export type EditOutcome =
-  | { readonly ok: true; readonly said: string }
-  | { readonly ok: false; readonly error: string };
+export type { EditOutcome };
 
 const refused = (error: string): EditOutcome => ({ ok: false, error });
-
-const ProfileInput = Schema.Struct({
-  about: Schema.optionalKey(Schema.String),
-  rules: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-
-const SkillInput = Schema.Struct({
-  action: Schema.optionalKey(Schema.Literals(["save", "delete"])),
-  name: Schema.optionalKey(Schema.String),
-  description: Schema.optionalKey(Schema.String),
-  body: Schema.optionalKey(Schema.String),
-  pinned: Schema.optionalKey(Schema.Boolean),
-});
-
-const IntentInput = Schema.Struct({
-  action: Schema.optionalKey(Schema.Literals(["save", "cancel"])),
-  id: Schema.optionalKey(Schema.Finite),
-  description: Schema.optionalKey(Schema.String),
-  triggers: Schema.optionalKey(Schema.Array(Schema.String)),
-  expires: Schema.optionalKey(Schema.Finite),
-  maxFires: Schema.optionalKey(Schema.Finite),
-  cooldownHours: Schema.optionalKey(Schema.Finite),
-});
-
-const PolicyInput = Schema.Struct({
-  action: Schema.optionalKey(Schema.Literals(["save", "remove"])),
-  id: Schema.optionalKey(Schema.Finite),
-  match: Schema.optionalKey(Schema.String),
-  decision: Schema.optionalKey(Schema.Literals(["allow", "ask", "deny"])),
-});
-
-type ProfileInput = typeof ProfileInput.Type;
-type SkillInput = typeof SkillInput.Type;
-type IntentInput = typeof IntentInput.Type;
-type PolicyInput = typeof PolicyInput.Type;
 
 const said = (text: string): EditOutcome => ({ ok: true, said: text });
 

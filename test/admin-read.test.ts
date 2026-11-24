@@ -1,3 +1,4 @@
+import { Reads, type ReadPage } from "@mizook/admin-api";
 import { Arbitrary, Effect, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
@@ -5,6 +6,7 @@ import {
   audit,
   intents,
   memoryView,
+  message,
   messages,
   overview,
   policies,
@@ -632,6 +634,127 @@ property(
     expect(o.approvals).toEqual(
       approvals.map((a, k) => ({ id: k + 1, summary: a.summary, posted: a.posted === 1 })),
     );
+  }),
+  { runs: 40 },
+);
+
+const asSentOverTheWire = (reply: unknown): unknown => JSON.parse(JSON.stringify(reply));
+
+/** Decodes a reply as the dashboard does, and keeps it whole: no field fails or goes missing. */
+const readsBack = (page: ReadPage, reply: unknown) => {
+  const wire = asSentOverTheWire(reply);
+  expect(Schema.decodeUnknownSync(Reads[page])(wire)).toEqual(wire);
+};
+
+property(
+  "every page an agent serves decodes whole with the dashboard's schema for it",
+  Arbitrary.all({
+    now,
+    days: int(1, 365),
+    log,
+    nodes: Arbitrary.array(Arbitrary.all({ key: nodeKey, text: shortText, size: int(0, 512) }), {
+      maxLength: 8,
+    }),
+    lines: Arbitrary.array(nodeKey, { maxLength: 8 }),
+    settings: Arbitrary.array(Arbitrary.all({ key: name, value: anyText }), { maxLength: 4 }),
+    turns: Arbitrary.array(Arbitrary.all({ chat: anyText, text: logText }), { maxLength: 3 }),
+    approvals: Arbitrary.array(Arbitrary.all({ summary: anyText, posted: int(0, 1) }), {
+      maxLength: 3,
+    }),
+    usage: usageRows(30),
+    skills: Arbitrary.array(
+      Arbitrary.all({ name, text: anyText, usedAt: maybeTime, pinned: int(0, 1) }),
+      { maxLength: 4 },
+    ),
+    intents: Arbitrary.array(
+      Arbitrary.all({ description: anyText, triggers, lastFired: maybeTime }),
+      { maxLength: 4 },
+    ),
+    policies: Arbitrary.array(
+      Arbitrary.all({ match: anyText, decision: oneOf(["allow", "ask", "deny"]) }),
+      { maxLength: 4 },
+    ),
+    audit: Arbitrary.array(Arbitrary.all({ who: anyText, action: anyText, ok: int(0, 1) }), {
+      maxLength: 4,
+    }),
+  }),
+  io(async (w) => {
+    const { db, sql } = setup();
+    db.exec(`CREATE TABLE mem_messages (i INTEGER PRIMARY KEY, kind TEXT, text TEXT, size INTEGER, date TEXT);
+      CREATE TABLE mem_nodes (l INTEGER, i INTEGER, text TEXT, size INTEGER, PRIMARY KEY (l, i));
+      CREATE TABLE mem_views (id INTEGER PRIMARY KEY, json TEXT);
+      CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE app_turns (chat_id TEXT, text TEXT);
+      CREATE TABLE app_approvals (id INTEGER PRIMARY KEY, summary TEXT, posted INTEGER);
+      CREATE TABLE app_usage (at INTEGER, kind TEXT, model TEXT, input INTEGER, output INTEGER, cache_read INTEGER, cost REAL);
+      CREATE TABLE app_skills (
+        name TEXT PRIMARY KEY, description TEXT, body TEXT, created INTEGER, updated INTEGER,
+        used_at INTEGER, use_count INTEGER, pinned INTEGER);
+      CREATE TABLE app_intents (
+        id INTEGER PRIMARY KEY, description TEXT, triggers TEXT, created INTEGER, expires INTEGER,
+        cooldown INTEGER, max_fires INTEGER, fire_count INTEGER, last_fired INTEGER, state TEXT);
+      CREATE TABLE app_policies (id INTEGER PRIMARY KEY, match TEXT, decision TEXT, created INTEGER);
+      CREATE TABLE app_audit (at INTEGER, who TEXT, action TEXT, target INTEGER, ok INTEGER)`);
+    for (const m of w.log)
+      db.prepare(`INSERT INTO mem_messages VALUES (?, ?, ?, ?, ?)`).run(
+        m.i,
+        m.kind,
+        m.text,
+        m.size,
+        new Date(w.now - m.i * 1000).toISOString(),
+      );
+    for (const n of w.nodes)
+      db.prepare(`INSERT OR IGNORE INTO mem_nodes VALUES (?, ?, ?, ?)`).run(
+        n.key.l,
+        n.key.i,
+        n.text,
+        n.size,
+      );
+    db.prepare(`INSERT INTO mem_views VALUES (1, ?)`).run(
+      JSON.stringify({ chat: { lines: w.lines.map((k) => [k.l, k.i]) } }),
+    );
+    for (const s of w.settings)
+      db.prepare(`INSERT OR IGNORE INTO app_meta VALUES (?, ?)`).run(`setting:${s.key}`, s.value);
+    for (const t of w.turns) db.prepare(`INSERT INTO app_turns VALUES (?, ?)`).run(t.chat, t.text);
+    w.approvals.forEach((a, k) =>
+      db.prepare(`INSERT INTO app_approvals VALUES (?, ?, ?)`).run(k + 1, a.summary, a.posted),
+    );
+    for (const u of w.usage)
+      db.prepare(`INSERT INTO app_usage VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        w.now - u.offset,
+        u.kind,
+        u.model,
+        u.input,
+        u.output,
+        u.cacheRead,
+        u.cost,
+      );
+    w.skills.forEach((s, k) =>
+      db
+        .prepare(`INSERT OR IGNORE INTO app_skills VALUES (?, ?, ?, 0, ?, ?, ?, ?)`)
+        .run(s.name, s.text, s.text, k, s.usedAt, k, s.pinned),
+    );
+    w.intents.forEach((t, k) =>
+      db
+        .prepare(`INSERT INTO app_intents VALUES (?, ?, ?, 0, ?, 0, 3, ?, ?, 'armed')`)
+        .run(k + 1, t.description, t.triggers.json, w.now, k, t.lastFired),
+    );
+    w.policies.forEach((p, k) =>
+      db.prepare(`INSERT INTO app_policies VALUES (?, ?, ?, 0)`).run(k + 1, p.match, p.decision),
+    );
+    w.audit.forEach((a, k) =>
+      db.prepare(`INSERT INTO app_audit VALUES (?, ?, ?, ?, ?)`).run(k, a.who, a.action, k, a.ok),
+    );
+
+    readsBack("overview", await overview(sql, w.now));
+    readsBack("messages", await messages(sql, { limit: 50 }));
+    for (const m of w.log) readsBack("message", await message(sql, m.i));
+    readsBack("memory", await memoryView(sql));
+    readsBack("usage", await usage(sql, w.days, w.now));
+    readsBack("skills", await skills(sql));
+    readsBack("intents", await intents(sql));
+    readsBack("policies", await policies(sql));
+    readsBack("audit", await audit(sql));
   }),
   { runs: 40 },
 );

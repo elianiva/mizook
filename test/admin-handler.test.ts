@@ -1,6 +1,9 @@
+import { Reads, type ReadPage } from "@mizook/admin-api";
 import { Arbitrary, Schema } from "effect";
+import { DatabaseSync } from "node:sqlite";
 import { beforeEach, expect, vi } from "vite-plus/test";
 import { handleAdmin } from "../src/admin/handler.ts";
+import { overview } from "../src/admin/read.ts";
 import type { Env } from "../src/env.ts";
 import { property } from "./property.ts";
 
@@ -695,7 +698,7 @@ property(
   async ({ list, automations, overviews }) => {
     const byDoName = new Map(list.map((a, k) => [`agent:${a.id}`, overviews[k]!]));
     const env = world(list, automations, (doName) => ({
-      dashboard: async () => {
+      overview: async () => {
         const o = byDoName.get(doName)!;
         const budget = BUDGETS[o.budget]![0];
         return {
@@ -725,6 +728,73 @@ property(
         };
       }),
     );
+  },
+  { runs: 30 },
+);
+
+const BUILT_HERE = ["channels", "profile", "agents", "summary"] as const;
+const BUILT_HERE_FOR_ONE_AGENT = ["overview", "schedules", "runs"] as const;
+
+property(
+  "every page the Worker builds itself decodes whole with the dashboard's schema for it",
+  Arbitrary.flatMap(agents, (list) =>
+    Arbitrary.all({
+      list: Arbitrary.Constant(list),
+      chosen: oneOf(list),
+      automations: automationsFor(list.map((a) => a.id)),
+      settings: oneOf([{}, { model: "m1" }, { model: "m2", budget: "2.5" }]),
+      rules: Arbitrary.array(text, { maxLength: 3 }),
+    }),
+  ),
+  async ({ list, chosen, automations, settings, rules }) => {
+    const db = new DatabaseSync(":memory:");
+    const sql = {
+      all: <T>(query: string, ...params: unknown[]) =>
+        db.prepare(query).all(...(params as never[])) as T[],
+    };
+    const realOverview = { ...(await overview(sql, 1_800_000_000_000)), settings };
+    const base = world(list, automations);
+    const automationsStub = (
+      base.Automations as unknown as { getByName: () => Record<string, unknown> }
+    ).getByName();
+    const env: Partial<Env> = {
+      ...base,
+      Hub: {
+        getByName: () => ({
+          agents: async () => list.map(agentInfo),
+          profile: async () => ({ about: "about", rules }),
+        }),
+      } as never,
+      Automations: {
+        getByName: () => ({
+          ...automationsStub,
+          runs: async () =>
+            automations.map((a, k) => ({
+              id: k + 1,
+              automationId: a.id,
+              status: k % 2 === 0 ? "ok" : "error",
+              started: a.nextAt,
+              finished: k % 2 === 0 ? a.nextAt + 1 : undefined,
+              output: `out${k}`,
+              error: k % 2 === 0 ? undefined : "failed",
+            })),
+        }),
+      } as never,
+      AgentObject: { getByName: () => ({ overview: async () => realOverview }) } as never,
+    };
+    const pages: ReadonlyArray<[ReadPage, string]> = [
+      ...BUILT_HERE.map((page): [ReadPage, string] => [page, `/admin/api/${page}`]),
+      ...BUILT_HERE_FOR_ONE_AGENT.map((page): [ReadPage, string] => [
+        page,
+        `/admin/api/${page}?c=agent%3A${chosen.id}`,
+      ]),
+    ];
+    for (const [page, path] of pages) {
+      const res = await call(env, path, {}, signedIn);
+      expect(res.status).toBe(200);
+      const wire: unknown = await res.json();
+      expect(Schema.decodeUnknownSync(Reads[page])(wire)).toEqual(wire);
+    }
   },
   { runs: 30 },
 );

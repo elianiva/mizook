@@ -1,4 +1,18 @@
-import { Effect, Option, Predicate } from "effect";
+import {
+  CSRF_HEADER,
+  CSRF_VALUE,
+  NewArtifact,
+  paths,
+  routes,
+  type AgentRow,
+  type Channel,
+  type Overview,
+  type ReadPage,
+  type RunRow,
+  type ScheduleRow,
+  type Summary,
+} from "@mizook/admin-api";
+import { Effect, Option, Predicate, Schema } from "effect";
 import type { Env } from "../env.ts";
 import type { AgentInfo } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
@@ -7,7 +21,7 @@ import { isSettingKey, settingRefusal } from "../state.ts";
 import { verifierFor } from "./access.ts";
 
 /** What the Agents page shows: an agent's identity and configuration, not its activity. */
-const agentRow = (a: AgentInfo, model: string) => ({
+const agentRow = (a: AgentInfo, model: string): AgentRow => ({
   doName: a.doName,
   slug: a.slug,
   name: a.name,
@@ -20,7 +34,7 @@ const agentRow = (a: AgentInfo, model: string) => ({
   lastActive: a.lastActive,
 });
 
-const PAGES = new Set([
+const PAGES = new Set<string>([
   "overview",
   "messages",
   "message",
@@ -34,9 +48,9 @@ const PAGES = new Set([
   "audit",
   "artifacts",
   "artifact",
-]);
+] satisfies ReadonlyArray<ReadPage>);
 
-const agentAsChannelRow = (a: AgentInfo) => ({
+const agentAsChannelRow = (a: AgentInfo): Channel => ({
   doName: a.doName,
   threadId: a.slug,
   name: a.name,
@@ -49,7 +63,11 @@ const json = (body: unknown, status = 200) =>
 const SELF_ONLY_CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-const agentAutomations = async (env: Env, agent: AgentInfo, page: "schedules" | "runs") => {
+const agentAutomations = async (
+  env: Env,
+  agent: AgentInfo,
+  page: "schedules" | "runs",
+): Promise<ReadonlyArray<ScheduleRow> | ReadonlyArray<RunRow>> => {
   const mine = await automationsObject(env).list(agent.id);
   if (page === "schedules")
     return mine
@@ -90,23 +108,15 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
     return json(
       await Promise.all(
         agents.map(async (a) => {
-          const rpc = agentObject(env, a.doName);
-          const o = (await rpc.dashboard("overview", {})) as { settings: Record<string, string> };
+          const o = await agentObject(env, a.doName).overview();
           return agentRow(a, o.settings["model"] ?? "");
         }),
       ),
     );
   if (name === "summary") {
     const overviewRowPerChannel = await Promise.all(
-      channels.map(async (c) => {
-        const rpc = agentObject(env, c.doName);
-        const o = (await rpc.dashboard("overview", {})) as {
-          messages: number;
-          spend: { last24h: number; last7d: number };
-          turns: unknown[];
-          approvals: unknown[];
-          settings: Record<string, string>;
-        };
+      channels.map(async (c): Promise<Summary> => {
+        const o = await agentObject(env, c.doName).overview();
         return {
           doName: c.doName,
           name: c.name,
@@ -133,20 +143,22 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   if (name === "schedules" || name === "runs")
     return json(await agentAutomations(env, agent, name));
   const rpc = agentObject(env, channel.doName);
-  const data = await rpc.dashboard(name, Object.fromEntries(url.searchParams));
-  if (name === "overview" && data !== undefined) {
+  if (name === "overview") {
+    const data = await rpc.overview();
     const activeTimedAutomations = (await automationsObject(env).list(agent.id)).filter(
       (a) => a.active && a.spec.kind !== "webhook",
     );
-    return json({
-      ...(data as object),
+    const reply: Overview = {
+      ...data,
       schedules: activeTimedAutomations.length,
       nextSchedule:
         activeTimedAutomations.length === 0
           ? null
           : Math.min(...activeTimedAutomations.map((a) => a.nextAt)),
-    });
+    };
+    return json(reply);
   }
+  const data = await rpc.dashboard(name, Object.fromEntries(url.searchParams));
   return data === undefined ? json({ error: "not found" }, 404) : json(data);
 };
 
@@ -179,7 +191,7 @@ const bodyOf = (request: Request): Promise<unknown> =>
   );
 
 const isSameOriginScriptRequest = (request: Request, url: URL) =>
-  request.headers.get("x-mizook-csrf") === "1" && request.headers.get("origin") === url.origin;
+  request.headers.get(CSRF_HEADER) === CSRF_VALUE && request.headers.get("origin") === url.origin;
 
 const isStringList = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -236,11 +248,9 @@ const manageAgent = async (
 const act = async (request: Request, url: URL, who: string, env: Env): Promise<Response> => {
   if (!isSameOriginScriptRequest(request, url)) return json({ error: "forbidden" }, 403);
 
-  if (url.pathname === "/admin/api/agents")
+  if (url.pathname === paths.newAgent)
     return manageAgent(env, who, "create", "", await bodyOf(request));
-  const agentOp = /^\/admin\/api\/agents\/([a-z][a-z0-9_]{1,31})\/(update|delete)$/.exec(
-    url.pathname,
-  );
+  const agentOp = routes.agent.exec(url.pathname);
   if (agentOp)
     return manageAgent(
       env,
@@ -255,22 +265,19 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
   if (!channel) return json({ error: "no such channel" }, 404);
   const rpc = agentObject(env, channel.doName);
 
-  if (url.pathname === "/admin/api/stop") {
+  if (url.pathname === paths.stop) {
     return (await rpc.stop(who)) ? json({ ok: true }) : json({ error: "already gone" }, 409);
   }
 
-  if (url.pathname === "/admin/api/artifacts") {
-    const body = (await bodyOf(request)) as
-      | { name?: unknown; kind?: unknown; content?: unknown }
-      | undefined;
-    const kind = body?.kind === "html" || body?.kind === "markdown" ? body.kind : undefined;
-    if (!kind || typeof body?.name !== "string" || typeof body.content !== "string")
-      return json({ error: "bad request" }, 400);
-    const made = await rpc.publishArtifact(who, body.name.trim(), body.content, KIND_TYPES[kind]);
+  if (url.pathname === paths.newArtifact) {
+    const draft = Schema.decodeUnknownOption(NewArtifact)(await bodyOf(request));
+    if (Option.isNone(draft)) return json({ error: "bad request" }, 400);
+    const { name, kind, content } = draft.value;
+    const made = await rpc.publishArtifact(who, name.trim(), content, KIND_TYPES[kind]);
     return made.ok ? json(made) : json({ error: made.error }, 400);
   }
 
-  const edit = /^\/admin\/api\/(profile|skills|intents|policies)$/.exec(url.pathname);
+  const edit = routes.edit.exec(url.pathname);
   if (edit) {
     const body = await bodyOf(request);
     if (!Predicate.isObject(body)) return json({ error: "bad request" }, 400);
@@ -278,17 +285,14 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
     return result.ok ? json(result) : json(result, 400);
   }
 
-  const artifact =
-    /^\/admin\/api\/artifacts\/([a-z0-9][a-z0-9._-]{0,60})\/(public|private|delete)$/.exec(
-      url.pathname,
-    );
+  const artifact = routes.artifact.exec(url.pathname);
   if (artifact) {
     return (await rpc.artifact(who, artifact[1]!, artifact[2]!))
       ? json({ ok: true })
       : json({ error: "already gone" }, 409);
   }
 
-  const setting = /^\/admin\/api\/settings\/([a-z]+)$/.exec(url.pathname);
+  const setting = routes.setting.exec(url.pathname);
   if (setting) {
     const key = setting[1]!;
     if (!isSettingKey(key)) return json({ error: "not found" }, 404);
@@ -302,10 +306,7 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
     return json({ ok: true, said: await rpc.setting(who, key, value === "" ? undefined : value) });
   }
 
-  const match =
-    /^\/admin\/api\/(?:approvals\/(\d+)\/(approve|deny)|schedules\/(\d+)\/(cancel))$/.exec(
-      url.pathname,
-    );
+  const match = routes.approvalOrSchedule.exec(url.pathname);
   const action = match && ACTIONS[(match[2] ?? match[4])!];
   if (!match || !action) return json({ error: "not found" }, 404);
   if (action === "cancel_schedule") {
@@ -338,7 +339,7 @@ export const handleAdmin = async (request: Request, env: Env): Promise<Response>
 
   const url = new URL(request.url);
   if (request.method === "POST") return act(request, url, who, env);
-  const apiRoute = /^\/admin\/api\/([a-z]+)$/.exec(url.pathname);
+  const apiRoute = routes.read.exec(url.pathname);
   if (apiRoute) return api(apiRoute[1]!, url, env);
   return serveDashboardApp(request, env);
 };

@@ -32,6 +32,9 @@ importers:
       '@effect/platform-node':
         specifier: ^4.0.4
         version: 4.1.4(effect@4.1.4)(redis@6.3.0)
+      '@mizook/admin-api':
+        specifier: workspace:*
+        version: link:packages/admin-api
       '@mizook/chat-sync':
         specifier: workspace:*
         version: link:packages/chat-sync
@@ -90,6 +93,9 @@ importers:
 
   apps/dashboard:
     dependencies:
+      '@mizook/admin-api':
+        specifier: workspace:*
+        version: link:../../packages/admin-api
       '@mizook/design':
         specifier: workspace:*
         version: link:../../packages/design
@@ -191,6 +197,12 @@ importers:
       workbox-routing:
         specifier: 7.4.1
         version: 7.4.1
+
+  packages/admin-api:
+    dependencies:
+      effect:
+        specifier: 4.1.4
+        version: 4.1.4
 
   packages/chat-sync:
     dependencies:
