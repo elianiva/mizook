@@ -503,7 +503,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     },
     Refreshed: () => ({ model }),
     FailedRefresh: () => ({ model }),
-    Recovered: () => ({ model, notice: Option.none() }),
+    Recovered: () => ({ model: { ...model, notice: Option.none() } }),
     FailedRecover: ({ reason }) => ({ model: withNotice(model, reason) }),
 
     WentOffline: () => ({ model: { ...model, offline: true } }),
@@ -823,8 +823,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 export const subscriptions = Subscription.make<Model, Message, ChatSync>()((entry) => ({
   connection: Subscription.persistentEntry(
     Stream.merge(
-      Stream.fromEventListener(window, "online").pipe(Stream.map(() => Message.WentOnline())),
-      Stream.fromEventListener(window, "offline").pipe(Stream.map(() => Message.WentOffline())),
+      Stream.merge(
+        Stream.fromEventListener(window, "online").pipe(Stream.map(() => Message.WentOnline())),
+        Stream.fromEventListener(window, "offline").pipe(Stream.map(() => Message.WentOffline())),
+      ),
+      // Reopening the app fires no `online` event, yet the socket died while it was closed.
+      Stream.fromEventListener(document, "visibilitychange").pipe(
+        Stream.filter(() => document.visibilityState === "visible" && navigator.onLine),
+        Stream.map(() => Message.WentOnline()),
+      ),
     ),
   ),
   sync: entry(
