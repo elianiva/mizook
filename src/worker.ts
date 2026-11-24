@@ -44,7 +44,7 @@ const ANY_ORIGIN_READ_ONLY_CORS = {
 };
 
 const WEB_CONTENT_SECURITY_POLICY =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const SERVICE_WORKER_PATH = "/sw.js";
 const WEB_MANIFEST_PATH = "/manifest.webmanifest";
