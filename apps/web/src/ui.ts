@@ -64,9 +64,10 @@ export const ui = {
     paddingLeft: "20px",
     borderBottom: "1px solid {colors.border}",
   }),
-  brandRow: css({ display: "flex", alignItems: "center", gap: "10px" }),
-  mark: css({ width: "10px", height: "10px", backgroundColor: "accent", flexShrink: 0 }),
   brand: css({
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
     color: "heading",
     fontSize: "md",
     fontWeight: 800,

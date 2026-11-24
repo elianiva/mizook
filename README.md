@@ -1,4 +1,9 @@
-# Mizook
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg" />
+    <img src="docs/logo-light.svg" alt="Mizook" width="300" />
+  </picture>
+</h1>
 
 A personal assistant in Telegram and on the web, on Cloudflare Workers. It is one or more agents,
 each a chat that never ends: an agent remembers everything said to it in every topic it answers in,

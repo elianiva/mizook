@@ -66,7 +66,7 @@ import { currentChannel } from "./update.ts";
 import { channelsQuery } from "./api.ts";
 import type { GlyphName } from "@mizook/design/icons";
 import { AGENT_SLUG, agentFormReady, type AgentForm } from "./forms.ts";
-import { icon } from "./icon.ts";
+import { icon, logo } from "./icon.ts";
 import { type Destination, matches, sections } from "./palette.ts";
 import { NavState } from "./nav.ts";
 import { isArmed } from "./confirmation.ts";
@@ -2373,7 +2373,7 @@ const railView = (model: Model, h: H, swipe = false): Html =>
       h.div(
         [h.Class(ui.railTop)],
         [
-          h.a([h.Class(ui.brand), h.Href("/c")], [h.span([h.Class(ui.mark)]), "Mizook"]),
+          h.a([h.Class(ui.brand), h.Href("/c")], [logo(h)]),
           channelSelect(model, h),
           jumpButton(model, h),
         ],

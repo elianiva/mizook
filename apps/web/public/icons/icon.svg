@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" fill="#c0175f"/>
-  <polygon points="95.03,416.97 416.97,95.03 440.97,119.03 119.03,440.97" fill="#fff9f5"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512"><rect width="32" height="32" fill="#e60076"/><path d="M4 4h24v17H12l-6 5v-5H4z" fill="none" stroke="#fff9f5" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"/><rect x="8" y="8" width="16" height="2" fill="#fff9f5"/><rect x="8" y="12" width="7.5" height="2" fill="#fff9f5"/><rect x="16.5" y="12" width="7.5" height="2" fill="#fff9f5"/><rect x="8" y="16" width="3.25" height="2" fill="rgba(255,249,245,.45)"/><rect x="12.25" y="16" width="3.25" height="2" fill="rgba(255,249,245,.45)"/><rect x="16.5" y="16" width="3.25" height="2" fill="rgba(255,249,245,.45)"/><rect x="20.75" y="16" width="3.25" height="2" fill="rgba(255,249,245,.45)"/></svg>

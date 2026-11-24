@@ -17,7 +17,7 @@ import { button } from "../styled-system/recipes";
 
 import type { Approval, ChatMessage, ThreadState, ThreadSummary } from "./api.ts";
 import { clock, dayGroup, previewText, timeAgo } from "./format.ts";
-import { icon } from "./icon.ts";
+import { icon, logo } from "./icon.ts";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
 import { isArmed } from "./confirmation.ts";
@@ -176,10 +176,7 @@ const sidebarBody = (model: Model, h: H, inDrawer: boolean): Html => {
       h.div(
         [h.Class(ui.sideTop)],
         [
-          h.div(
-            [h.Class(ui.brandRow)],
-            [h.span([h.Class(ui.mark)], []), h.span([h.Class(ui.brand)], ["Mizook"])],
-          ),
+          h.div([h.Class(ui.brand)], [logo(h)]),
           h.button(
             [
               h.Type("button"),

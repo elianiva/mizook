@@ -346,7 +346,6 @@ export const ui = {
   crumb: css({ textStyle: "caps", color: "fgMuted" }),
   crumbSlash: css({ color: "borderStrong" }),
   crumbPage: css({ textStyle: "caps", color: "heading" }),
-  mark: css({ width: "10px", height: "10px", backgroundColor: "accent", flexShrink: 0 }),
   brand: css({
     display: "flex",
     alignItems: "center",
