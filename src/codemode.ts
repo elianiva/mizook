@@ -1,7 +1,10 @@
 import { CodeMode, Tool, toolError } from "@opencode/codemode";
 import { clipToolOutput } from "@mizook/memory";
 import { Effect, Schema } from "effect";
-import { executorSpecs, toolSpecs } from "./tools.ts";
+import { executorSpecs } from "./policy-tools.ts";
+import { programTools, toolPaths } from "./tools.ts";
+
+export { toolPaths };
 
 export type Call = (
   name: string,
@@ -14,11 +17,6 @@ export const allows = (list: ReadonlyArray<string> | undefined, path: string): b
   const everyToolAllowed = list === undefined;
   return everyToolAllowed || list.includes(path) || list.includes(namespaceOf(path));
 };
-
-export const toolPaths: ReadonlyArray<string> = [
-  ...toolSpecs.map((spec) => spec.path),
-  ...executorSpecs.map((spec) => `executor.${spec.tool}`),
-];
 
 const toolsByNamespace = (list: ReadonlyArray<string> | undefined, call: Call) => {
   const byNamespace: Record<string, Record<string, Tool.Tool>> = {};
@@ -37,8 +35,9 @@ const toolsByNamespace = (list: ReadonlyArray<string> | undefined, call: Call) =
         ),
     });
   };
-  for (const spec of toolSpecs) {
-    add(spec.path, spec.description, spec.args, (_, args) => call(spec.name, args));
+  for (const tool of programTools) {
+    if (tool.path === undefined) continue;
+    add(tool.path, tool.description, tool.args, (_, args) => call(tool.name, args));
   }
   for (const spec of executorSpecs) {
     add(`executor.${spec.tool}`, spec.description, spec.input, (_, input) =>

@@ -3,13 +3,9 @@ import { Arbitrary, Effect, Schema } from "effect";
 import { expect } from "vite-plus/test";
 import { allows, catalogText, runProgram, toolPaths, type Call } from "../src/codemode.ts";
 import { ToolError } from "../src/errors.ts";
-import {
-  agentTools,
-  AutomationIdArgs,
-  DateArgs,
-  ZOOM_DESCRIPTION,
-  ZoomArgs,
-} from "../src/tools.ts";
+import { AutomationIdArgs } from "../src/automation-tools.ts";
+import { DateArgs, ZOOM_DESCRIPTION, ZoomArgs } from "../src/memory-tools.ts";
+import { agentTools } from "../src/tools.ts";
 import { property } from "./property.ts";
 
 const recorder = (failure: string) => {
