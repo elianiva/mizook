@@ -713,19 +713,7 @@ const agentPicker = (model: Model, h: H, config: PartsConfig<Message>): Html => 
   );
 };
 
-const PROMPTS: ReadonlyArray<readonly [GlyphName, string]> = [
-  ["search", "Compare the iPhone 17 Pro and Pixel 11 Pro cameras"],
-  ["external", "Read this page and summarize it: https://"],
-  ["bars", "Chart my spending this month"],
-];
-
-const promptButton = (h: H, glyph: GlyphName, text: string): Html =>
-  h.button(
-    [h.Type("button"), h.Class(ui.prompt), h.OnClick(Message.ClickedPrompt({ text }))],
-    [h.span([h.Class(ui.promptIcon)], [icon(h, glyph, 18)]), h.span([], [text])],
-  );
-
-/** Home puts the input first: the hero, the composer, then the prompts. */
+/** Home puts the input first: the hero, then the composer. */
 const homeView = (model: Model, h: H, config: PartsConfig<Message>, failure?: string): Html =>
   h.section(
     [h.Class(ui.home)],
@@ -741,14 +729,7 @@ const homeView = (model: Model, h: H, config: PartsConfig<Message>, failure?: st
             ],
           ),
           ...(failure === undefined
-            ? [
-                agentPicker(model, h, config),
-                composerBox(model, h, config, false),
-                h.div(
-                  [h.Class(ui.prompts)],
-                  PROMPTS.map(([glyph, text]) => promptButton(h, glyph, text)),
-                ),
-              ]
+            ? [agentPicker(model, h, config), composerBox(model, h, config, false)]
             : [
                 h.div(
                   [h.Class(ui.errorBox), h.Role("alert")],

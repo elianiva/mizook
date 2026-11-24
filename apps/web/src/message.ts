@@ -54,7 +54,6 @@ export const Message = defineMessageUnion({
     approvalId: Schema.Finite,
     action: Schema.Literals(["approve", "always", "deny"]),
   },
-  ClickedPrompt: { text: Schema.String },
   ClickedChoice: { text: Schema.String },
   ClickedDismissNotice: {},
   ClickedLatest: {},

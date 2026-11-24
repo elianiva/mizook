@@ -193,7 +193,7 @@ const COMPOSER = 'textarea[aria-label="Message"]';
 /**
  * Puts the caret in the composer. A touch screen would raise its keyboard for
  * focus the user did not ask for, so `always` is for the moments they did:
- * they just sent, picked a prompt, or pressed the shortcut.
+ * they just sent or pressed the shortcut.
  */
 const FocusComposer = Command.define("FocusComposer", {
   args: { always: Schema.Boolean },
@@ -787,14 +787,6 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       return {
         model: { ...model, notice: Option.none() },
         commands: [Approve({ threadId: active.value, approvalId, action })],
-      };
-    },
-
-    ClickedPrompt: ({ text }) => {
-      const filled = uiChange(model, "textarea", "composer", { value: text });
-      return {
-        model: { ...model, ui: filled.ui, notice: Option.none() },
-        commands: [...filled.commands, FocusComposer({ always: true })],
       };
     },
 

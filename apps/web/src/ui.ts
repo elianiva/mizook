@@ -811,35 +811,6 @@ export const ui = {
   }),
   selectCheck: css({ marginLeft: "auto", display: "inline-flex", color: "accent" }),
 
-  // Prompts are cells of one hairline grid, like the site's link row.
-  prompts: css({
-    display: "grid",
-    gridTemplateColumns: { base: "1fr", md: "repeat(3, 1fr)" },
-    borderTop: "1px solid {colors.border}",
-    borderLeft: "1px solid {colors.border}",
-  }),
-  prompt: css({
-    display: "flex",
-    flexDirection: { base: "row", md: "column" },
-    alignItems: { base: "center", md: "flex-start" },
-    justifyContent: "space-between",
-    gap: "12px",
-    minHeight: { base: "52px", md: "112px" },
-    padding: "14px",
-    border: 0,
-    borderRight: "1px solid {colors.border}",
-    borderBottom: "1px solid {colors.border}",
-    backgroundColor: "transparent",
-    color: "fg",
-    fontSize: "sm",
-    lineHeight: "1.4",
-    textAlign: "left",
-    cursor: "pointer",
-    ...motion,
-    _hover: { backgroundColor: "accentSubtle", color: "accent" },
-  }),
-  promptIcon: css({ display: "inline-flex", color: "accent", flexShrink: 0 }),
-
   composer: css({
     flexShrink: 0,
     paddingInline: { base: "12px", md: "28px" },
