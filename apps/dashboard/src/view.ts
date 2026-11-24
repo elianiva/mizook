@@ -1,6 +1,8 @@
 import { Array, Option, Order, Predicate, Record, pipe } from "effect";
 import { AsyncData } from "foldkit";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
+import { icon, logo } from "@mizook/ui/icon";
+import { isArmed } from "@mizook/ui/confirmation";
 
 import {
   type LogMessage,
@@ -69,10 +71,8 @@ import { currentChannel } from "./update.ts";
 import { channelsQuery } from "./api.ts";
 import type { GlyphName } from "@mizook/design/icons";
 import { AGENT_SLUG, agentFormReady, type AgentForm } from "./forms.ts";
-import { icon, logo } from "./icon.ts";
 import { type Destination, matches, sections } from "./palette.ts";
 import { NavState } from "./nav.ts";
-import { isArmed } from "./confirmation.ts";
 import { PaletteState } from "./palette-machine.ts";
 
 const channelsRead = channelsQuery.read;

@@ -14,13 +14,13 @@ import {
 } from "@mizook/ui";
 import { cx } from "../styled-system/css";
 import { button } from "../styled-system/recipes";
+import type { Approval, ChatMessage, ThreadState, ThreadSummary } from "@mizook/chat-sync";
+import { icon, logo } from "@mizook/ui/icon";
+import { isArmed } from "@mizook/ui/confirmation";
 
-import type { Approval, ChatMessage, ThreadState, ThreadSummary } from "./api.ts";
 import { clock, dayGroup, previewText, timeAgo } from "./format.ts";
-import { icon, logo } from "./icon.ts";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
-import { isArmed } from "./confirmation.ts";
 import { TurnState } from "./turn-machine.ts";
 import { AppRoute, routeThread } from "./route.ts";
 import { ui } from "./ui.ts";

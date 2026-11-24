@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { Confirmation } from "@mizook/ui/confirmation";
 
 import {
   agentsQuery,
@@ -21,7 +22,6 @@ import {
   usageQuery,
 } from "./api.ts";
 import { OpenAgentForm, OpenAgentManagerForm } from "./forms.ts";
-import { Confirmation } from "./confirmation.ts";
 import { NavState } from "./nav.ts";
 import { PaletteState } from "./palette-machine.ts";
 import { AppRoute } from "./route.ts";

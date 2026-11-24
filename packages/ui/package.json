@@ -10,13 +10,17 @@
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing.ts",
-    "./swipe": "./src/swipe.ts"
+    "./swipe": "./src/swipe.ts",
+    "./icon": "./src/icon.ts",
+    "./confirmation": "./src/confirmation.ts",
+    "./app-root": "./src/app-root.ts"
   },
   "scripts": {
     "typecheck": "tsrs --noEmit -p tsconfig.json && effect-tsrs diagnostics --strict --project tsconfig.json",
     "test": "vp test"
   },
   "dependencies": {
+    "@mizook/design": "workspace:*",
     "@ui-sdk/core": "0.1.0-beta.7"
   },
   "devDependencies": {

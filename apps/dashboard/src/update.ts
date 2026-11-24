@@ -6,6 +6,7 @@ import { Machine } from "foldkit/experimental";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
 import { type Url, toString as urlToString } from "foldkit/url";
+import { Confirmation, ExpireArmed, isArmed } from "@mizook/ui/confirmation";
 
 import {
   ActionKind,
@@ -58,7 +59,6 @@ import { Message } from "./message.ts";
 import { patch, patchKeyed } from "./optimistic.ts";
 import { Model } from "./model.ts";
 import { NavState } from "./nav.ts";
-import { Confirmation, isArmed } from "./confirmation.ts";
 import { GO_KEYS, matches, sections } from "./palette.ts";
 import { PaletteState, paletteMachine } from "./palette-machine.ts";
 import {
@@ -73,18 +73,11 @@ import {
 
 const OVERVIEW_REFRESH = Duration.seconds(10);
 const NOTICE_FOR = Duration.seconds(6);
-const ARMED_FOR = Duration.seconds(4);
 
 const ExpireNotice = Command.define("ExpireNotice", {
   args: { text: Schema.String },
   messages: [Message.ExpiredNotice],
   execute: ({ text }) => Effect.sleep(NOTICE_FOR).pipe(Effect.as(Message.ExpiredNotice({ text }))),
-});
-
-const ExpireArmed = Command.define("ExpireArmed", {
-  args: { key: Schema.String },
-  messages: [Message.ExpiredArmed],
-  execute: ({ key }) => Effect.sleep(ARMED_FOR).pipe(Effect.as(Message.ExpiredArmed({ key }))),
 });
 
 /** Focuses an element once the next frame has drawn it. */

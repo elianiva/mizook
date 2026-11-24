@@ -3,8 +3,8 @@ import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 import { Message as UiMessage } from "@mizook/ui";
+import { ThreadSummary } from "@mizook/chat-sync";
 
-import { ThreadSummary } from "./api.ts";
 import { SyncView } from "./sync.ts";
 
 export const Message = defineMessageUnion({

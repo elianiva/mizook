@@ -14,14 +14,13 @@ import {
   Message as UiMessage,
   type UiRegistry,
 } from "@mizook/ui";
-import { WebChat, type ChatState } from "@mizook/chat-sync";
+import { WebChat, type Bootstrap, type ChatState, type ThreadState } from "@mizook/chat-sync";
 import { swipeDrawer } from "@mizook/ui/swipe";
+import { Confirmation, arm, isArmed } from "@mizook/ui/confirmation";
 
-import { type Bootstrap, type ThreadState } from "./api.ts";
 import { ChatSync } from "./sync.ts";
 import { kit } from "./kit.ts";
 import { Message } from "./message.ts";
-import { Confirmation, isArmed } from "./confirmation.ts";
 import { Model } from "./model.ts";
 import { TurnState, turnMachine } from "./turn-machine.ts";
 import { AppRoute, routeHref, routeThread, urlToAppRoute } from "./route.ts";
@@ -224,7 +223,6 @@ const settleComposer = (model: Model) =>
 
 const COPIED_FOR = Duration.millis(1600);
 const TOAST_FOR = Duration.seconds(3);
-const ARMED_FOR = Duration.seconds(4);
 
 const ExpireCopied = Command.define("ExpireCopied", {
   args: { id: Schema.Finite, count: Schema.Finite },
@@ -237,12 +235,6 @@ const ExpireToast = Command.define("ExpireToast", {
   args: { text: Schema.String },
   messages: [Message.ExpiredToast],
   execute: ({ text }) => Effect.sleep(TOAST_FOR).pipe(Effect.as(Message.ExpiredToast({ text }))),
-});
-
-const ExpireArmed = Command.define("ExpireArmed", {
-  args: { key: Schema.String },
-  messages: [Message.ExpiredArmed],
-  execute: ({ key }) => Effect.sleep(ARMED_FOR).pipe(Effect.as(Message.ExpiredArmed({ key }))),
 });
 
 const CopyText = Command.define("CopyText", {
@@ -753,10 +745,11 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           commands: [...gone.commands, ArchiveThread({ id: active.value })],
         };
       }
+      // The menu stays open and its item asks "sure?"; the question lapses by itself.
+      const armed = arm(active.value);
       return {
-        // The menu stays open and its item asks "sure?"; the question lapses by itself.
-        model: { ...model, armedArchive: Confirmation.Armed({ key: active.value }) },
-        commands: [ExpireArmed({ key: active.value })],
+        model: { ...model, armedArchive: armed.confirmation },
+        commands: [armed.command],
       };
     },
 

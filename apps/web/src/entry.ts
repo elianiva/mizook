@@ -1,5 +1,6 @@
-import { Data, Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import { Runtime } from "foldkit";
+import { appRoot } from "@mizook/ui/app-root";
 
 import { kit } from "./kit.ts";
 import { Flags, Message, Model, init, subscriptions, update, view } from "./main.ts";
@@ -8,17 +9,8 @@ import { layer as chatSyncLayer } from "./sync.ts";
 import "@pierre/words/styles.css";
 import "./styles.css";
 
-class AppRootMissing extends Data.TaggedError("AppRootMissing") {
-  override get message(): string {
-    return "The app root is missing.";
-  }
-}
-
 const start = Effect.gen(function* () {
-  const container = yield* Option.fromNullishOr(document.getElementById("root")).pipe(
-    Effect.fromOption,
-    Effect.mapError(() => new AppRootMissing()),
-  );
+  const container = yield* appRoot;
   const ui = kit.layer(container);
   const application = Runtime.makeApplication({
     Model,

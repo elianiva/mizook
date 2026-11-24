@@ -1,10 +1,9 @@
 import { Schema } from "effect";
 import { AsyncData } from "foldkit";
+import { Bootstrap, ChatState, ThreadState } from "@mizook/chat-sync";
+import { Confirmation } from "@mizook/ui/confirmation";
 
-import { ChatState } from "@mizook/chat-sync";
-import { Bootstrap, ThreadState } from "./api.ts";
 import { kit } from "./kit.ts";
-import { Confirmation } from "./confirmation.ts";
 import { TurnState } from "./turn-machine.ts";
 import { AppRoute } from "./route.ts";
 
