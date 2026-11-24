@@ -542,59 +542,69 @@ const approvalView = (h: H, approval: Approval): Html =>
 
 const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
   const messages = collapseAgentMessages(state.messages);
-  return h.section(
+  return h.div(
+    [h.Class(ui.messagesWrap)],
     [
-      h.Class(ui.messages),
-      // A thread of its own starts at its bottom and follows it.
-      h.Key(`messages-${state.thread.id}`),
-      h.OnMount(FollowLatest()),
-      h.AriaLive("polite"),
-    ],
-    [
-      h.div(
-        [h.Class(ui.messagesInner)],
+      h.section(
         [
-          ...messages.map((message, index) =>
-            messageView(
-              message,
-              h,
-              agentRoleLabel(state.thread),
-              messages[index - 1]?.role === message.role,
-              Option.exists(model.copied, (copied) => copied.id === message.id),
-            ),
+          h.Class(ui.messages),
+          // A thread of its own starts at its bottom and follows it.
+          h.Key(`messages-${state.thread.id}`),
+          h.OnMount(FollowLatest({ threadId: state.thread.id })),
+          h.AriaLive("polite"),
+        ],
+        [
+          h.div(
+            [h.Class(ui.messagesInner)],
+            [
+              ...messages.map((message, index) =>
+                messageView(
+                  message,
+                  h,
+                  agentRoleLabel(state.thread),
+                  messages[index - 1]?.role === message.role,
+                  Option.exists(model.copied, (copied) => copied.id === message.id),
+                ),
+              ),
+              ...(state.streaming !== undefined
+                ? [
+                    h.article(
+                      [h.Key("live"), h.Class(ui.message({ role: "agent", continued: true }))],
+                      [h.div([h.Class(ui.blocks)], replyView(h, state.streaming, true))],
+                    ),
+                  ]
+                : []),
+              ...(state.running
+                ? [
+                    h.div(
+                      [h.Class(ui.working), h.Role("status")],
+                      [
+                        h.span([h.Class(ui.workingMark)], []),
+                        h.span([h.Class(ui.workingMark)], []),
+                        h.span([h.Class(ui.workingMark)], []),
+                        h.span([h.Class(ui.srOnly)], ["Working"]),
+                      ],
+                    ),
+                  ]
+                : []),
+            ],
           ),
-          ...(state.streaming !== undefined
-            ? [
-                h.article(
-                  [h.Key("live"), h.Class(ui.message({ role: "agent", continued: true }))],
-                  [h.div([h.Class(ui.blocks)], replyView(h, state.streaming, true))],
-                ),
-              ]
-            : []),
-          ...(state.running
-            ? [
-                h.div(
-                  [h.Class(ui.working), h.Role("status")],
-                  [
-                    h.span([h.Class(ui.workingMark)], []),
-                    h.span([h.Class(ui.workingMark)], []),
-                    h.span([h.Class(ui.workingMark)], []),
-                    h.span([h.Class(ui.srOnly)], ["Working"]),
-                  ],
-                ),
-              ]
-            : []),
+          h.div([h.Id("messages-end"), h.Class(ui.messagesEnd)], []),
         ],
       ),
-      h.div([h.Id("messages-end"), h.Class(ui.messagesEnd)], []),
-      ...(state.messages.length > 2
-        ? [
+      ...(model.atBottom
+        ? []
+        : [
             h.div(
               [h.Class(ui.jump)],
-              [iconButton(h, "arrowDown", "Latest", Message.ClickedLatest(), "line")],
+              [
+                h.div(
+                  [h.Class(ui.jumpInner)],
+                  [iconButton(h, "arrowDown", "Latest", Message.ClickedLatest(), "line")],
+                ),
+              ],
             ),
-          ]
-        : []),
+          ]),
     ],
   );
 };

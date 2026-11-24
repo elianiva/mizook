@@ -417,6 +417,7 @@ export const init = (flags: Flags, url: Url) => {
     turn: turnMachine.initial,
     notice: Option.none(),
     offline: typeof navigator !== "undefined" && !navigator.onLine,
+    atBottom: true,
     touch: typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
     saved: false,
     armedArchive: Confirmation.Resting(),
@@ -492,6 +493,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         route,
         thread,
         notice: Option.none(),
+        atBottom: true,
         armedArchive: Confirmation.Resting(),
       };
       const drawer = setDrawer(next, false);
@@ -500,6 +502,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     CompletedNavigation: () => ({ model }),
     CompletedScroll: () => ({ model }),
+    ScrolledThread: ({ threadId, atBottom }) =>
+      Option.contains(activeThread(model), threadId)
+        ? { model: { ...model, atBottom } }
+        : { model },
 
     Synced: ({ view }) => {
       const notice = Option.isSome(view.error) ? view.error : model.notice;
@@ -598,6 +604,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         route,
         thread,
         notice: Option.none(),
+        atBottom: true,
         armedArchive: Confirmation.Resting(),
       };
       const drawer = setDrawer(next, false);
@@ -628,6 +635,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         thread: AsyncData.Idle(),
         turn: stepTurn(model, message),
         notice: Option.none(),
+        atBottom: true,
         armedArchive: Confirmation.Resting(),
         renameThreadId: Option.none(),
       };
@@ -673,6 +681,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           ...writing,
           route,
           thread: AsyncData.Idle(),
+          atBottom: true,
           armedArchive: Confirmation.Resting(),
         },
         commands: [
@@ -766,7 +775,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       return { model: sent.model, commands: [...filled.commands, ...(sent.commands ?? [])] };
     },
 
-    ClickedLatest: () => ({ model, commands: [ScrollToBottom()] }),
+    ClickedLatest: () => ({
+      model: { ...model, atBottom: true },
+      commands: [ScrollToBottom()],
+    }),
 
     ClickedCopy: ({ id, text }) => ({ model, commands: [CopyText({ id, text })] }),
 

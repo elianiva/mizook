@@ -21,6 +21,8 @@ export const Model = Schema.Struct({
   turn: TurnState,
   notice: Schema.Option(Schema.String),
   offline: Schema.Boolean,
+  /** The reader is at the bottom of the open thread, following its newest message. */
+  atBottom: Schema.Boolean,
   /** A touch screen: Enter adds a line, and only the Send button sends. */
   touch: Schema.Boolean,
   saved: Schema.Boolean,

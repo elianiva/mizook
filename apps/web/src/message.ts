@@ -13,6 +13,7 @@ export const Message = defineMessageUnion({
   CompletedNavigation: {},
   CompletedScroll: {},
   CompletedFocus: {},
+  ScrolledThread: { threadId: Schema.String, atBottom: Schema.Boolean },
 
   Synced: { view: SyncView },
   RefreshTick: {},

@@ -270,8 +270,15 @@ export const ui = {
     },
   }),
 
-  messages: css({
+  // The window the thread scrolls in, with the Latest button floating over its corner.
+  messagesWrap: css({
     position: "relative",
+    flex: "1",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  }),
+  messages: css({
     flex: "1",
     minHeight: 0,
     display: "flex",
@@ -279,27 +286,37 @@ export const ui = {
     overflowX: "hidden",
     overflowY: "auto",
     paddingInline: { base: "16px", md: "28px" },
-    paddingBlock: "32px",
+    paddingTop: "32px",
   }),
   messagesInner: css({
     ...container,
     // A short thread sits just above the composer; a long one scrolls from the top.
     marginTop: "auto",
+    paddingBottom: "32px",
     display: "flex",
     flexDirection: "column",
     gap: "28px",
     "& > *": { minWidth: 0 },
   }),
-  // Room to breathe after the last message; the thread scrolls to this end.
+  // The last node at the very end, so scrolling it into view lands on the bottom.
   messagesEnd: css({ minHeight: "1px" }),
+  // Anchored to the pane, not the scroller: it must stay put while the thread scrolls.
   jump: css({
     position: "absolute",
-    right: { base: "16px", md: "28px" },
+    insetInline: 0,
     bottom: "16px",
     zIndex: 2,
     display: "flex",
+    justifyContent: "center",
+    paddingInline: { base: "16px", md: "28px" },
     pointerEvents: "none",
-    "& > button": { pointerEvents: "auto" },
+    "& button": { pointerEvents: "auto" },
+  }),
+  // Lines the button up with the message column above the composer.
+  jumpInner: css({
+    ...container,
+    display: "flex",
+    justifyContent: "flex-end",
   }),
   message: cva({
     base: {
