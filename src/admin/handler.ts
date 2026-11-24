@@ -1,28 +1,9 @@
 import { Effect, Option, Predicate } from "effect";
 import type { Env } from "../env.ts";
-import type { AgentChange, AgentInfo, AgentSpec, Profile } from "../host.ts";
+import type { AgentInfo } from "../host.ts";
 import { KIND_TYPES } from "../artifact-render.ts";
-import type { AutomationsObject } from "../automations-object.ts";
+import { agentObject, automationsObject, hubObject } from "../objects.ts";
 import { verifierFor } from "./access.ts";
-
-interface ChannelRpc {
-  dashboard(page: string, params: Record<string, string>): Promise<unknown>;
-  act(who: string, action: string, id: number): Promise<boolean>;
-  stop(who: string): Promise<boolean>;
-  artifact(who: string, name: string, action: string): Promise<boolean>;
-  publishArtifact(
-    who: string,
-    name: string,
-    content: string,
-    contentType: string,
-  ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
-  edit(
-    who: string,
-    kind: string,
-    input: unknown,
-  ): Promise<{ ok: true; said: string } | { ok: false; error: string }>;
-  setting(who: string, key: string, value: string | undefined): Promise<string>;
-}
 
 /** What the Agents page shows: an agent's identity and configuration, not its activity. */
 const agentRow = (a: AgentInfo, model: string) => ({
@@ -67,11 +48,8 @@ const json = (body: unknown, status = 200) =>
 const SELF_ONLY_CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-const automationsOf = (env: Env) =>
-  env.Automations.getByName("automations") as unknown as AutomationsObject;
-
 const agentAutomations = async (env: Env, agent: AgentInfo, page: "schedules" | "runs") => {
-  const mine = await automationsOf(env).list(agent.id);
+  const mine = await automationsObject(env).list(agent.id);
   if (page === "schedules")
     return mine
       .filter((a) => a.active)
@@ -87,7 +65,7 @@ const agentAutomations = async (env: Env, agent: AgentInfo, page: "schedules" | 
         nextAt: a.spec.kind === "webhook" ? 0 : a.nextAt,
       }));
   const ids = new Set(mine.map((a) => a.id));
-  return (await automationsOf(env).runs(50))
+  return (await automationsObject(env).runs(50))
     .filter((r) => ids.has(r.automationId))
     .slice(0, 25)
     .map((r) => ({
@@ -102,10 +80,7 @@ const agentAutomations = async (env: Env, agent: AgentInfo, page: "schedules" | 
 };
 
 const api = async (name: string, url: URL, env: Env): Promise<Response> => {
-  const hub = env.Hub.getByName("hub") as unknown as {
-    agents(): Promise<AgentInfo[]>;
-    profile(): Promise<Profile>;
-  };
+  const hub = hubObject(env);
   const agents = await hub.agents();
   const channels = agents.map(agentAsChannelRow);
   if (name === "channels") return json(channels);
@@ -114,7 +89,7 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
     return json(
       await Promise.all(
         agents.map(async (a) => {
-          const rpc = env.AgentObject.getByName(a.doName) as unknown as ChannelRpc;
+          const rpc = agentObject(env, a.doName);
           const o = (await rpc.dashboard("overview", {})) as { settings: Record<string, string> };
           return agentRow(a, o.settings["model"] ?? "");
         }),
@@ -123,7 +98,7 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   if (name === "summary") {
     const overviewRowPerChannel = await Promise.all(
       channels.map(async (c) => {
-        const rpc = env.AgentObject.getByName(c.doName) as unknown as ChannelRpc;
+        const rpc = agentObject(env, c.doName);
         const o = (await rpc.dashboard("overview", {})) as {
           messages: number;
           spend: { last24h: number; last7d: number };
@@ -140,7 +115,7 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
           spend7d: o.spend.last7d,
           pending: o.turns.length,
           approvals: o.approvals.length,
-          schedules: (await automationsOf(env).list(c.doName.replace(/^agent:/, ""))).filter(
+          schedules: (await automationsObject(env).list(c.doName.replace(/^agent:/, ""))).filter(
             (a) => a.active,
           ).length,
           budget: Number(o.settings["budget"]) || 0,
@@ -156,10 +131,10 @@ const api = async (name: string, url: URL, env: Env): Promise<Response> => {
   const agent = agents.find((a) => a.doName === channel.doName)!;
   if (name === "schedules" || name === "runs")
     return json(await agentAutomations(env, agent, name));
-  const rpc = env.AgentObject.getByName(channel.doName) as unknown as ChannelRpc;
+  const rpc = agentObject(env, channel.doName);
   const data = await rpc.dashboard(name, Object.fromEntries(url.searchParams));
   if (name === "overview" && data !== undefined) {
-    const activeTimedAutomations = (await automationsOf(env).list(agent.id)).filter(
+    const activeTimedAutomations = (await automationsObject(env).list(agent.id)).filter(
       (a) => a.active && a.spec.kind !== "webhook",
     );
     return json({
@@ -223,13 +198,6 @@ const bodyOf = (request: Request): Promise<unknown> =>
 const isSameOriginScriptRequest = (request: Request, url: URL) =>
   request.headers.get("x-mizook-csrf") === "1" && request.headers.get("origin") === url.origin;
 
-type HubRpc = {
-  agents(): Promise<AgentInfo[]>;
-  createAgent(spec: AgentSpec): Promise<AgentChange>;
-  updateAgent(key: string, patch: Partial<AgentSpec>): Promise<AgentChange>;
-  deleteAgent(key: string): Promise<AgentChange>;
-};
-
 const isStringList = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
@@ -241,7 +209,7 @@ const manageAgent = async (
   slug: string,
   input: unknown,
 ): Promise<Response> => {
-  const hub = env.Hub.getByName("hub") as unknown as HubRpc;
+  const hub = hubObject(env);
   const body = (Predicate.isObject(input) ? input : {}) as Record<string, unknown>;
   const text = (key: string) => (typeof body[key] === "string" ? (body[key] as string) : undefined);
   const toolsGiven = "tools" in body;
@@ -273,9 +241,7 @@ const manageAgent = async (
   if (!change.ok) return json({ error: change.error }, 400);
   const agent = change.agent;
   if (op === "delete") return json({ ok: true, said: `Deleted /${agent.slug}.` });
-  const rpc = env.AgentObject.getByName(agent.doName) as unknown as ChannelRpc & {
-    reload(): Promise<void>;
-  };
+  const rpc = agentObject(env, agent.doName);
   if (model !== undefined) await rpc.setting(who, "model", model === "" ? undefined : model);
   if (op === "update") await rpc.reload();
   return json({
@@ -301,10 +267,10 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
       await bodyOf(request),
     );
 
-  const hub = env.Hub.getByName("hub") as unknown as { agents(): Promise<AgentInfo[]> };
+  const hub = hubObject(env);
   const channel = (await hub.agents()).find((a) => a.doName === url.searchParams.get("c"));
   if (!channel) return json({ error: "no such channel" }, 404);
-  const rpc = env.AgentObject.getByName(channel.doName) as unknown as ChannelRpc;
+  const rpc = agentObject(env, channel.doName);
 
   if (url.pathname === "/admin/api/stop") {
     return (await rpc.stop(who)) ? json({ ok: true }) : json({ error: "already gone" }, 409);
@@ -361,12 +327,12 @@ const act = async (request: Request, url: URL, who: string, env: Env): Promise<R
   if (!match || !action) return json({ error: "not found" }, 404);
   if (action === "cancel_schedule") {
     const id = Number(match[3]);
-    const automation = await automationsOf(env).get(id);
+    const automation = await automationsObject(env).get(id);
     const agentId = channel.doName.replace(/^agent:/, "");
     const actsForThisAgent =
       !!automation && automation.action.kind !== "webhook" && automation.action.agent === agentId;
     if (!actsForThisAgent) return json({ error: "already gone" }, 409);
-    return (await automationsOf(env).cancel(id))
+    return (await automationsObject(env).cancel(id))
       ? json({ ok: true })
       : json({ error: "already gone" }, 409);
   }

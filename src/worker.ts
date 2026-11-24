@@ -7,7 +7,7 @@ import { artifactHeaders, renderArtifact } from "./artifact-render.ts";
 import { DATA_KEY, dataKey, dataPrefix, MAX_KEYS } from "./artifact-data.ts";
 import { hookTokenValid } from "./hooks.ts";
 import { routeOf } from "./route.ts";
-import type { HubApi } from "./agent-object.ts";
+import { agentObject, automationsObject, hubObject } from "./objects.ts";
 import { handleAdmin } from "./admin/handler.ts";
 import { accessWho, verifierFor } from "./admin/access.ts";
 
@@ -128,9 +128,8 @@ export default {
       const routing = await Effect.runPromise(Effect.option(routeOf(body)));
       if (Option.isNone(routing)) return new Response("Bad request", { status: 400 });
       const { place, command, agentId } = routing.value;
-      const hub = env.Hub.getByName("hub") as unknown as HubApi;
-      const agentForUpdate = await hub.route(place, command, agentId);
-      return env.AgentObject.getByName(agentForUpdate.doName).fetch(
+      const agentForUpdate = await hubObject(env).route(place, command, agentId);
+      return agentObject(env, agentForUpdate.doName).fetch(
         new Request(request.url, { method: "POST", headers: request.headers, body }),
       );
     }
@@ -211,10 +210,9 @@ export default {
         return new Response("Not found", { status: 404 });
       }
       const body = (await request.text()).slice(0, MAX_HOOK_BODY_CHARS);
-      const automations = env.Automations.getByName("automations") as unknown as {
-        hook(id: number, body: string): Promise<boolean>;
-      };
-      return new Response((await automations.hook(id, body)) ? "ok" : "ignored", { status: 202 });
+      return new Response((await automationsObject(env).hook(id, body)) ? "ok" : "ignored", {
+        status: 202,
+      });
     }
 
     if (request.method === "GET" || request.method === "HEAD")

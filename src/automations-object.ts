@@ -9,15 +9,11 @@ import { Settings } from "./config.ts";
 import type { Env } from "./env.ts";
 import { ActionError } from "./errors.ts";
 import { hookToken } from "./hooks.ts";
+import { agentDoName, agentObject, hubObject } from "./objects.ts";
 import { Runner, Targets } from "./runner.ts";
 import { Runs, type Run } from "./runs.ts";
 import type { Action, Spec } from "./schedule.ts";
 import { Web } from "./search.ts";
-
-interface AgentTarget {
-  runTurn(place: string, text: string, requestId: string): Promise<string>;
-  postTo(place: string, text: string): Promise<void>;
-}
 
 export type AutomationChange = { ok: true; automation: Automation } | { ok: false; error: string };
 
@@ -34,10 +30,8 @@ export class AutomationsObject extends DurableObject<Env> {
       const current = await ctx.storage.getAlarm();
       if (current === null || at < current) await ctx.storage.setAlarm(at);
     };
-    const agent = (id: string) =>
-      env.AgentObject.getByName(`agent:${id}`) as unknown as AgentTarget;
-    const hub = () =>
-      env.Hub.getByName("hub") as unknown as { agent(key: string): Promise<unknown> };
+    const agent = (id: string) => agentObject(env, agentDoName(id));
+    const hub = () => hubObject(env);
     const failed = (what: string) => (cause: unknown) =>
       new ActionError({
         reason: `${what}: ${cause instanceof Error ? cause.message : String(cause)}`,

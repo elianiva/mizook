@@ -19,7 +19,8 @@ import { ProtocolError } from "@yielded/sync";
 import { Effect, Predicate, Schema } from "effect";
 import type { Env } from "../env.ts";
 import type { AgentInfo, WebThreadInfo } from "../host.ts";
-import type { WebState, WebStatus, WebTurnResult } from "./types.ts";
+import { agentDoName, agentObject, hubObject } from "../objects.ts";
+import type { WebState, WebStatus } from "./types.ts";
 
 export const INTERNAL_PRINCIPAL = "internal";
 
@@ -29,29 +30,7 @@ const ServerState = Schema.Struct({
 });
 type ServerState = typeof ServerState.Type;
 
-interface HubChatApi {
-  agents(): Promise<AgentInfo[]>;
-  webThreads(): Promise<WebThreadInfo[]>;
-  webDefaultAgent(): Promise<AgentInfo>;
-}
-
-interface AgentChatApi {
-  webTurn(
-    place: string,
-    text: string,
-    requestId: string,
-    where: string,
-    first: boolean,
-  ): Promise<WebTurnResult>;
-  webState(place: string, after: number): Promise<WebState>;
-  webStatus(place: string): Promise<WebStatus>;
-  webStop(place: string): Promise<boolean>;
-  act(who: string, action: string, id: number): Promise<boolean>;
-}
-
-const hubOf = (env: Env) => env.Hub.getByName("hub") as unknown as HubChatApi;
-const agentOf = (env: Env, thread: ThreadSummary) =>
-  env.AgentObject.getByName(`agent:${thread.agent.id}`) as unknown as AgentChatApi;
+const agentOf = (env: Env, thread: ThreadSummary) => agentObject(env, agentDoName(thread.agent.id));
 
 const promise = <A>(operation: string, f: () => Promise<A>) =>
   Effect.tryPromise({
@@ -111,7 +90,7 @@ const transcriptOfThread = (state: ServerState, threadId: string): ThreadTranscr
 
 const initialize = (env: Env) =>
   Effect.gen(function* () {
-    const hub = hubOf(env);
+    const hub = hubObject(env);
     const [agents, webDefault, threads] = yield* promise("read the web chat", () =>
       Promise.all([hub.agents(), hub.webDefaultAgent(), hub.webThreads()]),
     );
@@ -119,10 +98,7 @@ const initialize = (env: Env) =>
       threads,
       (thread) =>
         promise("read a saved web thread", () =>
-          (env.AgentObject.getByName(thread.agent.doName) as unknown as AgentChatApi).webState(
-            `web:${thread.id}`,
-            0,
-          ),
+          agentObject(env, thread.agent.doName).webState(`web:${thread.id}`, 0),
         ).pipe(Effect.map((state) => ({ thread, state }))),
       { concurrency: 4 },
     );
@@ -364,7 +340,7 @@ const refresh = (env: Env, state: ServerState, payload: { readonly threadId?: st
       });
     }
 
-    const hub = hubOf(env);
+    const hub = hubObject(env);
     const [agents, webDefault] = yield* promise("refresh the agent list", () =>
       Promise.all([hub.agents(), hub.webDefaultAgent()]),
     );

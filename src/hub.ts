@@ -7,6 +7,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { AGENT_SLUG, menuWith, RESERVED_COMMANDS } from "./command-list.ts";
 import type { AgentChange, AgentInfo, AgentSpec, Profile, WebThreadInfo } from "./host.ts";
 import type { Env } from "./env.ts";
+import { agentDoName, agentObject } from "./objects.ts";
 import { WEB_PERSONA, WEB_ROLE } from "./persona.ts";
 import { Skills, type Skill } from "./skills.ts";
 
@@ -168,7 +169,7 @@ export class Hub extends DurableObject<Env> {
       role: row.role,
       persona: row.persona,
       tools,
-      doName: `agent:${row.id}`,
+      doName: agentDoName(row.id),
       isDefault: row.id === this.defaultId,
       bound,
       created: row.created,
@@ -340,9 +341,7 @@ export class Hub extends DurableObject<Env> {
         this.defaultId,
       );
     this.ctx.storage.sql.exec(`DELETE FROM agents WHERE id = ?`, row.id);
-    const target = this.env.AgentObject.getByName(gone.doName) as unknown as {
-      destroy(): Promise<void>;
-    };
+    const target = agentObject(this.env, gone.doName);
     await Effect.runPromise(
       Effect.tryPromise(() => target.destroy()).pipe(
         Effect.catch((error) => Effect.logError(`destroying ${gone.slug} failed`, error)),

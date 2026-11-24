@@ -5,19 +5,10 @@ import { Backup } from "./backup.ts";
 import { Bot, RECOVER_AFTER_MS } from "./bot.ts";
 import type { Env } from "./env.ts";
 import { StateError, ToolError } from "./errors.ts";
-import {
-  EMPTY_PROFILE,
-  Host,
-  shortPlace,
-  type AgentChange,
-  type AgentInfo,
-  type AgentSpec,
-  type AutomationsApi,
-  type Profile,
-} from "./host.ts";
-import type { Skill, Skills } from "./skills.ts";
+import { EMPTY_PROFILE, Host, shortPlace, type AgentInfo, type AutomationsApi } from "./host.ts";
+import type { Skills } from "./skills.ts";
 import { makeRuntime, type AppRuntime } from "./runtime.ts";
-import type { AutomationsObject } from "./automations-object.ts";
+import { agentObject, automationsObject, hubObject } from "./objects.ts";
 import { Usage, type Spend } from "./usage.ts";
 import { Artifacts } from "./artifacts.ts";
 import { Commands } from "./commands.ts";
@@ -32,39 +23,9 @@ const RELOAD_DELAY_MS = 1_500;
 
 type Hosted = Context.Service.Shape<typeof Host>;
 
-export interface HubApi {
-  agents(): Promise<AgentInfo[]>;
-  createAgent(spec: AgentSpec): Promise<AgentChange>;
-  updateAgent(key: string, patch: Partial<AgentSpec>): Promise<AgentChange>;
-  deleteAgent(key: string): Promise<AgentChange>;
-  skillList(): Promise<ReadonlyArray<Skill>>;
-  skillGet(name: string): Promise<Skill | undefined>;
-  skillSave(name: string, description: string, body: string): Promise<Skill>;
-  skillRemove(name: string): Promise<boolean>;
-  skillTouch(name: string): Promise<void>;
-  skillPin(name: string): Promise<void>;
-  agent(key: string): Promise<AgentInfo | undefined>;
-  route(
-    place: string,
-    command: string | undefined,
-    agentId: string | undefined,
-  ): Promise<AgentInfo>;
-  bind(place: string, key: string | undefined): Promise<AgentInfo | undefined>;
-  placeName(place: string): Promise<string | undefined>;
-  setPlaceName(place: string, name: string): Promise<void>;
-  profile(): Promise<Profile>;
-  setProfile(about: string | undefined, rules: string[] | undefined): Promise<Profile>;
-}
+type HubStub = ReturnType<typeof hubObject>;
 
-interface AgentApi {
-  ask(question: string): Promise<string>;
-  spend(): Promise<Spend>;
-  setting(who: string, key: string, value: string | undefined): Promise<string>;
-  reload(): Promise<void>;
-}
-
-const automationsApi = (stub: () => DurableObjectStub<AutomationsObject>): AutomationsApi => {
-  const rpc = () => stub() as unknown as AutomationsObject;
+const automationsApi = (rpc: () => ReturnType<typeof automationsObject>): AutomationsApi => {
   return {
     create: (spec, action) =>
       Effect.promise(() => rpc().create(spec, action)).pipe(
@@ -91,7 +52,7 @@ const automationsApi = (stub: () => DurableObjectStub<AutomationsObject>): Autom
   };
 };
 
-const hubSkillsAsAgentSkills = (hub: () => HubApi): Skills["Service"] => {
+const hubSkillsAsAgentSkills = (hub: () => HubStub): Skills["Service"] => {
   const call = <A>(operation: string, f: () => Promise<A>) =>
     Effect.tryPromise({ try: f, catch: (cause) => new StateError({ operation, cause }) });
   return {
@@ -147,8 +108,8 @@ export class AgentObject extends DurableObject<Env> {
     return this.ctx.id.name ?? "agent:main";
   }
 
-  private hub(): HubApi {
-    return this.env.Hub.getByName("hub") as unknown as HubApi;
+  private hub(): HubStub {
+    return hubObject(this.env);
   }
 
   private reloadRuntimeAfterReply(): void {
@@ -169,7 +130,7 @@ export class AgentObject extends DurableObject<Env> {
     const self = this.self;
     const reload = () => this.reloadRuntimeAfterReply();
     const exportLink = this.runtimeEffect(Backup.use((backup) => backup.exportLink));
-    const peer = (doName: string) => this.env.AgentObject.getByName(doName) as unknown as AgentApi;
+    const peer = (doName: string) => agentObject(this.env, doName);
     return {
       self,
       reload: Effect.sync(reload),
@@ -201,7 +162,7 @@ export class AgentObject extends DurableObject<Env> {
           try: () => hub().setProfile(about, rules === undefined ? undefined : [...rules]),
           catch: (cause) => new StateError({ operation: "profile", cause }),
         }),
-      automations: automationsApi(() => this.env.Automations.getByName("automations")),
+      automations: automationsApi(() => automationsObject(this.env)),
       ask: (agent, question) =>
         Effect.gen(function* () {
           const all = yield* Effect.promise(() => hub().agents());
