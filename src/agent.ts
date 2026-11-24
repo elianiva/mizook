@@ -6,7 +6,6 @@ import type {
   SubmissionId,
 } from "@earendil-works/pi-durable";
 import { clipToolOutput, Memory, type StoreError } from "@mizook/memory";
-import type { ChatPart } from "@mizook/chat-sync";
 import { Context, DateTime, Effect, Layer } from "effect";
 import { Settings } from "./config.ts";
 import { WebChatClient } from "./chat/web-chat-client.ts";
@@ -16,7 +15,7 @@ import { formatDate } from "./format.ts";
 import { Handlers } from "./handlers.ts";
 import { Host, type Profile } from "./host.ts";
 import { Intents, type Intent } from "./intents.ts";
-import { textOfParts, turnParts } from "./live-parts.ts";
+import { replyText } from "./reply-text.ts";
 import { Models } from "./models.ts";
 import { Skills } from "./skills.ts";
 import { askTools } from "./tools.ts";
@@ -70,9 +69,8 @@ const threadText = (lines: ReadonlyArray<ThreadLine>): string => {
 };
 
 const WEB_THREAD_NOTE =
-  "This is a web thread. The <thread> above is everything said here; your memory of the rest of the chat is not shown. Search it with tools.memory.search only when the user refers to something outside this thread. You have no send_to_user here: write your answer as Markdown text, which the user sees as you write it, with your thinking and the programs you run.";
+  "This is a web thread. The <thread> above is everything said here; your memory of the rest of the chat is not shown. Search it with tools.memory.search only when the user refers to something outside this thread. You have no send_to_user here: write your answer as Markdown text, which the user sees as you write it. Your thinking and the programs you run stay hidden.";
 
-const LIVE_PUBLISH_INTERVAL_MS = 250;
 const LIVE_WINDOW_ENTRIES = 500;
 
 const JOIN_RUNNING_TURN = "steer";
@@ -182,50 +180,47 @@ export class Agent extends Context.Service<
         });
 
       /**
-       * Shows a web turn as it happens: each commit of the conversation becomes the
-       * thread's live parts. Publishes are spaced and kept in order, and the last
-       * one always goes out; the turn's final message replaces them.
+       * Shows a web reply as it is written: each commit of the conversation that
+       * changes its text is published, one at a time and in order. A commit that
+       * lands while one is in flight replaces any still waiting, and the turn's
+       * final message replaces them all.
        */
       const streamToWeb = (place: string, conversation: Conversation) =>
         call("watch", () =>
           conversation.watch(context, { min: LIVE_WINDOW_ENTRIES, max: 2 * LIVE_WINDOW_ENTRIES }),
         ).pipe(
           Effect.map((watch) => {
-            let queue: Promise<unknown> = Promise.resolve();
-            let pending: ReadonlyArray<ChatPart> | undefined;
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            let sentAt = 0;
-            const publish = () => {
-              timer = undefined;
-              const parts = pending;
-              pending = undefined;
-              if (parts === undefined) return;
-              sentAt = Date.now();
-              queue = queue.then(() =>
-                run(
+            let sent = "";
+            let pending: string | undefined;
+            let inFlight: Promise<void> | undefined;
+            const publish = async () => {
+              while (pending !== undefined) {
+                const text = pending;
+                pending = undefined;
+                sent = text;
+                await run(
                   webChat
-                    .setLive(place, parts)
-                    .pipe(Effect.tapError((error) => Effect.logWarning("live web turn", error))),
-                ).catch(() => undefined),
-              );
+                    .setLive(place, text)
+                    .pipe(Effect.tapError((error) => Effect.logWarning("live web reply", error))),
+                ).catch(() => undefined);
+              }
+              inFlight = undefined;
             };
             watch.start(async (call) => {
               if (call.kind !== "value") return;
-              pending = turnParts(
+              const text = replyText(
                 call.value.entries,
                 call.value.docs["pi.live"] as unknown as LiveState | undefined,
               );
-              timer ??= setTimeout(
-                publish,
-                Math.max(0, sentAt + LIVE_PUBLISH_INTERVAL_MS - Date.now()),
-              );
+              if (text === (pending ?? sent)) return;
+              pending = text;
+              inFlight ??= publish();
             });
             return {
               stop: call("stop watching", async () => {
-                clearTimeout(timer);
                 pending = undefined;
                 await watch.stop();
-                await queue;
+                await inFlight;
               }),
             };
           }),
@@ -411,14 +406,13 @@ export class Agent extends Context.Service<
         if (!turn.logged) {
           yield* logTranscript(chatId, entries);
           if (live !== undefined) {
-            // The web shows everything the turn did, so its one message is the turn itself.
-            const parts: ReadonlyArray<ChatPart> =
+            // The web showed the reply as it was written, so its one message is that text.
+            const reply = replyText(entries);
+            const text =
               last?.status === "done"
-                ? turnParts(entries)
-                : [...turnParts(entries), { _tag: "Text", text: fallbackReply }];
-            yield* parts.length === 0
-              ? webChat.setLive(chatId, [])
-              : webChat.appendAgent(chatId, textOfParts(parts), parts);
+                ? reply
+                : [reply, fallbackReply].filter((part) => part !== "").join("\n\n");
+            yield* text === "" ? webChat.setLive(chatId, "") : webChat.appendAgent(chatId, text);
           }
           yield* state.putTurn({ ...turn, logged: true });
         }

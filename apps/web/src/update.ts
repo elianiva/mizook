@@ -350,9 +350,7 @@ const threadStateOf = (chat: ChatState, threadId: string): Option.Option<ThreadS
     messages: transcript.messages,
     running: transcript.running,
     approvals: transcript.approvals,
-    ...(chat.transcripts[threadId]?.live !== undefined && {
-      live: chat.transcripts[threadId].live,
-    }),
+    ...(transcript.streaming !== undefined && { streaming: transcript.streaming }),
   });
 };
 
@@ -371,27 +369,6 @@ const threadDataFor = (
             onSome: (data) => AsyncData.Success({ data }),
           }),
       }),
-  });
-
-const liveSize = (state: AsyncData.AsyncData<ThreadState, string>): number =>
-  Option.match(AsyncData.getData(state), {
-    onNone: () => 0,
-    onSome: (thread) =>
-      (thread.live ?? []).reduce(
-        (total, part) =>
-          total +
-          (part._tag === "Tool"
-            ? part.input.length + (part.output?.length ?? 0)
-            : part.text.length),
-        0,
-      ),
-  });
-
-const lastMessageId = (state: AsyncData.AsyncData<ThreadState, string>): number =>
-  Option.match(AsyncData.getData(state), {
-    onNone: () => 0,
-    onSome: (thread) =>
-      thread.messages.reduce((highest, message) => Math.max(highest, message.id), 0),
   });
 
 const applyBootstrap = (
@@ -533,8 +510,6 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       const bootstrap = bootstrapOf(chat);
       const thread = threadDataFor(model, view.state);
       const applied = applyBootstrap({ ...model, chat: view.state, thread }, bootstrap, thread);
-      const previous = lastMessageId(model.thread);
-      const next = lastMessageId(thread);
       return {
         model: {
           ...applied.model,
@@ -543,12 +518,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           saved: view.saved,
           notice,
         },
-        commands: [
-          ...(applied.commands ?? []),
-          ...(next > previous || liveSize(thread) > liveSize(model.thread)
-            ? [ScrollToBottom()]
-            : []),
-        ],
+        commands: applied.commands ?? [],
       };
     },
 

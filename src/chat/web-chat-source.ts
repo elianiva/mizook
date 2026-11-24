@@ -1,7 +1,6 @@
 import {
   ChatEvent,
   ChatMessage,
-  ChatPart,
   ChatState,
   ThreadSummary,
   ThreadTranscript,
@@ -409,24 +408,21 @@ const appendAgent = (
   payload: {
     readonly threadId: string;
     readonly text: string;
-    readonly parts?: ReadonlyArray<ChatPart>;
   },
 ) =>
   Effect.gen(function* () {
     const thread = threadOf(state, payload.threadId);
     if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
     const text = payload.text.trim();
-    const parts = payload.parts ?? [];
-    if (text === "" && parts.length === 0) return yield* Effect.fail({ reason: "Nothing to add." });
+    if (text === "") return yield* Effect.fail({ reason: "Nothing to add." });
     const at = Date.now();
     const message: ChatMessage = {
       id: state.nextMessageId,
       role: "agent",
       text,
       at,
-      ...(parts.length > 0 && { parts }),
     };
-    const transcript = withLive(transcriptOfThread(state, thread.id), []);
+    const transcript = withLive(transcriptOfThread(state, thread.id), "");
     const updated: ThreadSummary = {
       ...thread,
       title: titleOf(thread, text),
@@ -485,20 +481,25 @@ const setStatus = (
 
 const setLive = (
   state: ServerState,
-  payload: { readonly threadId: string; readonly parts: ReadonlyArray<ChatPart> },
+  payload: { readonly threadId: string; readonly text: string },
 ) =>
   Effect.gen(function* () {
     const thread = threadOf(state, payload.threadId);
     if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
     const transcript = transcriptOfThread(state, thread.id);
-    if (same(transcript.live ?? [], payload.parts))
-      return Server.commit({ state, events: [], result: undefined });
+    const shown = transcript.streaming ?? "";
+    if (shown === payload.text) return Server.commit({ state, events: [], result: undefined });
+    // A reply grows a token at a time, so most events carry only the new tokens.
+    const change =
+      shown !== "" && payload.text.startsWith(shown)
+        ? { append: payload.text.slice(shown.length) }
+        : { text: payload.text };
     return Server.commit({
       state: {
         ...state,
-        chat: withTranscript(state.chat, thread.id, withLive(transcript, payload.parts)),
+        chat: withTranscript(state.chat, thread.id, withLive(transcript, payload.text)),
       },
-      events: [ChatEvent.cases.Live.make({ threadId: thread.id, parts: payload.parts })],
+      events: [ChatEvent.cases.Live.make({ threadId: thread.id, ...change })],
       result: undefined,
     });
   });

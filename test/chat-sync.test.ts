@@ -70,3 +70,22 @@ test("an agents event replaces the list and default without touching threads", (
   expect(next.defaultAgent.slug).toBe("other");
   expect(next.threads).toEqual(base.threads);
 });
+
+test("live events extend, replace and clear the reply in progress, and the reply's message ends it", () => {
+  const live = (fields: { text?: string; append?: string }) =>
+    ChatEvent.cases.Live.make({ threadId: thread.id, ...fields });
+  const started = applyEvent(base, live({ text: "Hel" }));
+  const grown = applyEvent(started, live({ append: "lo, wor" }));
+  expect(grown.transcripts[thread.id]?.streaming).toBe("Hello, wor");
+  expect(applyEvent(grown, live({ text: "Retry" })).transcripts[thread.id]?.streaming).toBe(
+    "Retry",
+  );
+  expect(applyEvent(grown, live({})).transcripts[thread.id]).not.toHaveProperty("streaming");
+  const reply: ChatMessage = { id: 8, role: "agent", text: "Hello, world", at: 3 };
+  const done = applyEvent(
+    grown,
+    ChatEvent.cases.Message.make({ threadId: thread.id, message: reply }),
+  );
+  expect(done.transcripts[thread.id]).not.toHaveProperty("streaming");
+  expect(done.transcripts[thread.id]?.messages).toEqual([reply]);
+});

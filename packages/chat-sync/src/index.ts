@@ -36,33 +36,12 @@ export const ThreadSummary = Schema.Struct({
 });
 export type ThreadSummary = typeof ThreadSummary.Type;
 
-/**
- * One step of an agent's turn, in the order the agent took it: what it thought,
- * what it ran, what it wrote. A web turn shows all three as they happen.
- */
-export const ChatPart = Schema.TaggedUnion({
-  Thinking: { text: Schema.String },
-  Text: { text: Schema.String },
-  Tool: {
-    id: Schema.String,
-    name: Schema.String,
-    /** The program an `execute` call runs, or the call's arguments as JSON. */
-    input: Schema.String,
-    /** Absent while the call runs. */
-    output: Schema.optionalKey(Schema.String),
-    failed: Schema.optionalKey(Schema.Boolean),
-  },
-});
-export type ChatPart = typeof ChatPart.Type;
-
 export const ChatMessage = Schema.Struct({
   id: Schema.Finite,
   role: Schema.Literals(["user", "agent"]),
-  /** For an agent message with `parts`, the text parts joined. */
   text: Schema.String,
   at: Schema.Finite,
   requestId: Schema.optionalKey(Schema.String),
-  parts: Schema.optionalKey(Schema.Array(ChatPart)),
 });
 export type ChatMessage = typeof ChatMessage.Type;
 
@@ -78,8 +57,8 @@ export const ThreadTranscript = Schema.Struct({
   messages: Schema.Array(ChatMessage),
   running: Schema.Boolean,
   approvals: Schema.Array(Approval),
-  /** The turn in progress, as far as it has got. Gone once the turn's message lands. */
-  live: Schema.optionalKey(Schema.Array(ChatPart)),
+  /** The reply in progress, as far as it has got. Gone once the turn's message lands. */
+  streaming: Schema.optionalKey(Schema.String),
 });
 export type ThreadTranscript = typeof ThreadTranscript.Type;
 
@@ -105,7 +84,7 @@ export const ThreadState = Schema.Struct({
   messages: Schema.Array(ChatMessage),
   running: Schema.Boolean,
   approvals: Schema.Array(Approval),
-  live: Schema.optionalKey(Schema.Array(ChatPart)),
+  streaming: Schema.optionalKey(Schema.String),
 });
 export type ThreadState = typeof ThreadState.Type;
 
@@ -113,7 +92,15 @@ export const ChatEvent = Schema.TaggedUnion({
   Thread: { thread: ThreadSummary },
   Message: { threadId: Schema.String, message: ChatMessage },
   Status: { threadId: Schema.String, running: Schema.Boolean, approvals: Schema.Array(Approval) },
-  Live: { threadId: Schema.String, parts: Schema.Array(ChatPart) },
+  /**
+   * The reply in progress: `append` extends it, `text` replaces it, and an
+   * event with neither clears it.
+   */
+  Live: {
+    threadId: Schema.String,
+    text: Schema.optionalKey(Schema.String),
+    append: Schema.optionalKey(Schema.String),
+  },
   Agents: { agents: Schema.Array(Agent), defaultAgent: DefaultAgent },
 });
 export type ChatEvent = typeof ChatEvent.Type;
@@ -186,15 +173,14 @@ const AppendAgentMessage = Action.make("appendAgent", {
   payload: Schema.Struct({
     threadId: Schema.String,
     text: Schema.String,
-    parts: Schema.optionalKey(Schema.Array(ChatPart)),
   }),
   success: Schema.Struct({ message: ChatMessage }),
   error: ActionError,
 });
 
-/** The turn in progress. An empty list clears it. */
+/** The reply in progress. An empty text clears it. */
 const SetLive = Action.make("setLive", {
-  payload: Schema.Struct({ threadId: Schema.String, parts: Schema.Array(ChatPart) }),
+  payload: Schema.Struct({ threadId: Schema.String, text: Schema.String }),
   success: Schema.Void,
   error: ActionError,
 });
@@ -272,12 +258,9 @@ export const withTranscript = (
   transcripts: { ...state.transcripts, [threadId]: transcript },
 });
 
-export const withLive = (
-  transcript: ThreadTranscript,
-  parts: ReadonlyArray<ChatPart>,
-): ThreadTranscript => {
-  const { live: _gone, ...rest } = transcript;
-  return parts.length === 0 ? rest : { ...rest, live: parts };
+export const withLive = (transcript: ThreadTranscript, text: string): ThreadTranscript => {
+  const { streaming: _gone, ...rest } = transcript;
+  return text === "" ? rest : { ...rest, streaming: text };
 };
 
 export const applyEvent = (state: ChatState, event: ChatEvent): ChatState =>
@@ -288,14 +271,13 @@ export const applyEvent = (state: ChatState, event: ChatEvent): ChatState =>
       if (transcript.messages.some((existing) => existing.id === message.id)) return state;
       // An agent's message is the turn's result, so the live view of it is done.
       const next = { ...transcript, messages: [...transcript.messages, message] };
-      return withTranscript(state, threadId, message.role === "agent" ? withLive(next, []) : next);
+      return withTranscript(state, threadId, message.role === "agent" ? withLive(next, "") : next);
     },
-    Live: ({ threadId, parts }) =>
-      withTranscript(
-        state,
-        threadId,
-        withLive(state.transcripts[threadId] ?? emptyTranscript, parts),
-      ),
+    Live: ({ threadId, text, append }) => {
+      const transcript = state.transcripts[threadId] ?? emptyTranscript;
+      const next = append === undefined ? (text ?? "") : (transcript.streaming ?? "") + append;
+      return withTranscript(state, threadId, withLive(transcript, next));
+    },
     Status: ({ threadId, running, approvals }) =>
       withTranscript(state, threadId, {
         ...(state.transcripts[threadId] ?? emptyTranscript),

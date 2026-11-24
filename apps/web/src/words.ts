@@ -42,9 +42,3 @@ export const renderWords = (source: string, streaming: boolean): string => {
     renderer.dispose();
   }
 };
-
-/** A program or its output as a highlighted code block. */
-export const renderCode = (code: string, lang: string): string => {
-  const fence = "`".repeat(Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1)));
-  return renderWords(`${fence}${lang}\n${code}\n${fence}`, false);
-};

@@ -1,4 +1,4 @@
-import { WebChat, type Approval, type ChatPart } from "@mizook/chat-sync";
+import { WebChat, type Approval } from "@mizook/chat-sync";
 import { Cloudflare } from "@yielded/sync-platform-cloudflare";
 import { Context, Effect, Layer, Predicate, Schedule } from "effect";
 import { StateError } from "../errors.ts";
@@ -21,12 +21,8 @@ const internalIdentity = {
 export class WebChatClient extends Context.Service<
   WebChatClient,
   {
-    appendAgent(
-      place: string,
-      text: string,
-      parts?: ReadonlyArray<ChatPart>,
-    ): Effect.Effect<void, StateError>;
-    setLive(place: string, parts: ReadonlyArray<ChatPart>): Effect.Effect<void, StateError>;
+    appendAgent(place: string, text: string): Effect.Effect<void, StateError>;
+    setLive(place: string, text: string): Effect.Effect<void, StateError>;
     setStatus(
       place: string,
       running: boolean,
@@ -62,16 +58,15 @@ export class WebChatClient extends Context.Service<
               ),
             );
         return WebChatClient.of({
-          appendAgent: (place, text, parts) =>
+          appendAgent: (place, text) =>
             execute("append a web message", WebChat.actions.appendAgent, {
               threadId: threadIdOf(place),
               text,
-              ...(parts !== undefined && { parts }),
             }),
-          setLive: (place, parts) =>
-            execute("publish the live web turn", WebChat.actions.setLive, {
+          setLive: (place, text) =>
+            execute("publish the live web reply", WebChat.actions.setLive, {
               threadId: threadIdOf(place),
-              parts,
+              text,
             }),
           setStatus: (place, running, approvals) =>
             execute("publish the web turn status", WebChat.actions.setStatus, {

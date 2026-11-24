@@ -3,7 +3,6 @@ export {
   Approval,
   Bootstrap,
   ChatMessage,
-  ChatPart,
   ChatState,
   ThreadState,
   ThreadSummary,

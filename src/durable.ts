@@ -26,7 +26,9 @@ import { agentTools } from "./tools.ts";
 
 const STREAM_TIMEOUT_MS = 180_000;
 const MAX_MODEL_RETRIES = 3;
-const PROGRESS_COMMIT_INTERVAL_MS = 500;
+// A web reply streams each token as it arrives; tool output only needs to show it is moving.
+const ANSWER_COMMIT_INTERVAL_MS = 0;
+const TOOL_OUTPUT_COMMIT_INTERVAL_MS = 500;
 const COMPACT_FRESH_CONVERSATIONS = false;
 const NEVER_REPLAY = "unsafe";
 
@@ -164,8 +166,8 @@ export class Durable extends Context.Service<
                     stream: { timeoutMs: STREAM_TIMEOUT_MS },
                     retry: { maxRetries: MAX_MODEL_RETRIES },
                     progress: {
-                      partialIntervalMs: PROGRESS_COMMIT_INTERVAL_MS,
-                      outputIntervalMs: PROGRESS_COMMIT_INTERVAL_MS,
+                      partialIntervalMs: ANSWER_COMMIT_INTERVAL_MS,
+                      outputIntervalMs: TOOL_OUTPUT_COMMIT_INTERVAL_MS,
                     },
                   },
                   onReport: (error) => console.error("pi-durable", error),

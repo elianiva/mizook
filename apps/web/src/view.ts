@@ -15,7 +15,7 @@ import {
 import { cx } from "../styled-system/css";
 import { button } from "../styled-system/recipes";
 
-import type { Approval, ChatMessage, ChatPart, ThreadState, ThreadSummary } from "./api.ts";
+import type { Approval, ChatMessage, ThreadState, ThreadSummary } from "./api.ts";
 import { clock, dayGroup, previewText, timeAgo } from "./format.ts";
 import { icon } from "./icon.ts";
 import { Message } from "./message.ts";
@@ -25,8 +25,8 @@ import { TurnState } from "./turn-machine.ts";
 import { AppRoute, routeThread } from "./route.ts";
 import { ui } from "./ui.ts";
 import { type Block, type Segment, segmentsOf } from "./generative.ts";
+import { FollowLatest } from "./follow-latest.ts";
 import { StreamMarkdown } from "./stream-markdown.ts";
-import { renderCode } from "./words.ts";
 
 type H = HtmlBuilder<Message>;
 
@@ -424,62 +424,8 @@ const segmentView = (h: H, segment: Segment, streaming: boolean): Html =>
         )
       : h.div([h.Class(ui.pending), h.AriaBusy(true)], []);
 
-const codeView = (h: H, code: string, lang: string): Html =>
-  h.div(
-    [
-      h.Class(ui.markdown),
-      h.Attribute("data-markdown", "root"),
-      h.InnerHTML(renderCode(code, lang)),
-    ],
-    [],
-  );
-
-const firstLine = (text: string): string => text.trim().split("\n")[0]?.slice(0, 80) ?? "";
-
-/** One step of a turn. Only the last text of a turn still arriving is streaming. */
-const partView = (h: H, part: ChatPart, index: number, streaming: boolean): Html => {
-  switch (part._tag) {
-    case "Text":
-      return h.div(
-        [h.Key(`part-${index}`), h.Class(ui.blocks)],
-        segmentsOf(part.text).map((segment) => segmentView(h, segment, streaming)),
-      );
-    case "Thinking":
-      return h.details(
-        [h.Key(`part-${index}`), h.Class(ui.turnStep)],
-        [
-          h.summary([h.Class(ui.turnStepSummary)], [h.span([], ["Thinking"])]),
-          markdownView(h, part.text, streaming),
-        ],
-      );
-    case "Tool":
-      return h.details(
-        [h.Key(`part-${index}`), h.Class(ui.turnStep)],
-        [
-          h.summary(
-            [h.Class(ui.turnStepSummary)],
-            [
-              h.span([], [part.name]),
-              h.span([h.Class(ui.turnStepHint)], [firstLine(part.input)]),
-              ...(part.output === undefined
-                ? [h.span([h.Class(ui.turnStepHint)], ["running"])]
-                : part.failed === true
-                  ? [h.span([h.Class(ui.turnStepFailed)], ["failed"])]
-                  : []),
-            ],
-          ),
-          codeView(h, part.input, part.name === "execute" ? "js" : "json"),
-          ...(part.output === undefined ? [] : [codeView(h, part.output, "text")]),
-        ],
-      );
-  }
-};
-
-const partsView = (h: H, parts: ReadonlyArray<ChatPart>, streaming: boolean): ReadonlyArray<Html> =>
-  parts.map((part, index) => partView(h, part, index, streaming && index === parts.length - 1));
-
-const partsOf = (message: ChatMessage): ReadonlyArray<ChatPart> =>
-  message.parts ?? (message.text === "" ? [] : [{ _tag: "Text", text: message.text }]);
+const replyView = (h: H, text: string, streaming: boolean): ReadonlyArray<Html> =>
+  segmentsOf(text).map((segment) => segmentView(h, segment, streaming));
 
 const messageView = (
   message: ChatMessage,
@@ -512,12 +458,7 @@ const messageView = (
                   [h.span([h.Class(ui.metaMark)], []), h.span([], [agent]), time],
                 ),
               ]),
-          h.div(
-            [h.Class(ui.blocks)],
-            message.parts === undefined
-              ? segmentsOf(message.text).map((segment) => segmentView(h, segment, false))
-              : partsView(h, message.parts, false),
-          ),
+          h.div([h.Class(ui.blocks)], replyView(h, message.text, false)),
           h.div(
             [h.Class(ui.messageActions)],
             [
@@ -551,9 +492,6 @@ const collapseAgentMessages = (
       collapsed[collapsed.length - 1] = {
         ...previous,
         text: `${previous.text}\n\n${message.text}`,
-        ...(previous.parts !== undefined || message.parts !== undefined
-          ? { parts: [...partsOf(previous), ...partsOf(message)] }
-          : {}),
       };
     } else {
       collapsed.push(message);
@@ -605,7 +543,13 @@ const approvalView = (h: H, approval: Approval): Html =>
 const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
   const messages = collapseAgentMessages(state.messages);
   return h.section(
-    [h.Class(ui.messages), h.Key("messages"), h.AriaLive("polite")],
+    [
+      h.Class(ui.messages),
+      // A thread of its own starts at its bottom and follows it.
+      h.Key(`messages-${state.thread.id}`),
+      h.OnMount(FollowLatest()),
+      h.AriaLive("polite"),
+    ],
     [
       h.div(
         [h.Class(ui.messagesInner)],
@@ -619,11 +563,11 @@ const threadMessages = (model: Model, state: ThreadState, h: H): Html => {
               Option.exists(model.copied, (copied) => copied.id === message.id),
             ),
           ),
-          ...(state.live !== undefined && state.live.length > 0
+          ...(state.streaming !== undefined
             ? [
                 h.article(
                   [h.Key("live"), h.Class(ui.message({ role: "agent", continued: true }))],
-                  [h.div([h.Class(ui.blocks)], partsView(h, state.live, true))],
+                  [h.div([h.Class(ui.blocks)], replyView(h, state.streaming, true))],
                 ),
               ]
             : []),
