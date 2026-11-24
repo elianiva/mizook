@@ -1,6 +1,6 @@
 import { DurableObjectSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { Memory } from "@mizook/memory";
-import { sqliteStore, type SqlDriver } from "@mizook/memory/sqlite";
+import { sqliteStore } from "@mizook/memory/sqlite";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ConfigProvider, type Context, Effect, Layer, ManagedRuntime } from "effect";
 import { Agent } from "./agent.ts";
@@ -29,6 +29,7 @@ import { Web } from "./search.ts";
 import { WebThreads } from "./chat/threads.ts";
 import { WebChatClient } from "./chat/web-chat-client.ts";
 import { Skills } from "./skills.ts";
+import { Sql, type SqlDriver } from "./sql.ts";
 import { SummarizerLive } from "./summarizer.ts";
 import { PERSONA } from "./persona.ts";
 import { TOOL_GUIDE } from "./tools.ts";
@@ -44,6 +45,8 @@ export const makeRuntime = (
     all: <T>(query: string, ...params: unknown[]) =>
       sharedDatabase.all(query, ...(params as never[])) as Promise<T[]>,
   };
+  const sqlLayer = Sql.layer(sql);
+  const usage = Usage.layer.pipe(Layer.provideMerge(sqlLayer));
 
   const varsSet = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
   const fromEnv = Settings.layer.pipe(
@@ -53,7 +56,7 @@ export const makeRuntime = (
     Settings,
     Effect.gen(function* () {
       const base = yield* Settings;
-      const own = yield* readSettings(sql);
+      const own = yield* readSettings;
       const budget = Number(own.budget);
       return Settings.of({
         ...base,
@@ -63,7 +66,7 @@ export const makeRuntime = (
         ...(own.budget !== undefined && Number.isFinite(budget) && { budgetDaily: budget }),
       });
     }).pipe(Effect.provide(fromEnv)),
-  );
+  ).pipe(Layer.provide(sqlLayer));
   const models = Models.layer.pipe(Layer.provideMerge(settings));
   const memory = Layer.unwrap(
     Effect.gen(function* () {
@@ -86,9 +89,7 @@ export const makeRuntime = (
       });
     }),
   ).pipe(
-    Layer.provide(
-      Layer.merge(sqliteStore(sql), SummarizerLive.pipe(Layer.provide(Usage.layer(sql)))),
-    ),
+    Layer.provide(Layer.merge(sqliteStore(sql), SummarizerLive.pipe(Layer.provide(usage)))),
     Layer.provideMerge(models),
   );
 
@@ -101,12 +102,11 @@ export const makeRuntime = (
     Layer.provideMerge(Handlers.layer),
     Layer.provideMerge(Outbox.layer),
     Layer.provideMerge(Executor.layer),
-    Layer.provideMerge(Approvals.layer(sql)),
+    Layer.provideMerge(Approvals.layer),
     Layer.provideMerge(Backup.layer),
-    Layer.provideMerge(Usage.layer(sql)),
     Layer.provideMerge(hostLayer),
-    Layer.provideMerge(Layer.merge(WebChatClient.layer(env), WebThreads.layer(sql))),
-    Layer.provideMerge(Artifacts.layer(sql)),
+    Layer.provideMerge(Layer.merge(WebChatClient.layer(env), WebThreads.layer)),
+    Layer.provideMerge(Artifacts.layer),
     Layer.provideMerge(
       Layer.merge(
         Layer.merge(Blobs.r2(env.Files), Media.layer(env.AI)),
@@ -115,11 +115,12 @@ export const makeRuntime = (
     ),
     Layer.provideMerge(Web.layer),
     Layer.provideMerge(FetchHttpClient.layer),
-    Layer.provideMerge(Layer.merge(Intents.layer(sql), Policies.layer(sql))),
-    Layer.provideMerge(Skills.layer(sql)),
-    Layer.provideMerge(State.layer(sql)),
+    Layer.provideMerge(Layer.merge(Intents.layer, Policies.layer)),
+    Layer.provideMerge(Skills.layer),
+    Layer.provideMerge(State.layer),
     Layer.provideMerge(sqliteStore(sql)),
     Layer.provideMerge(memory),
+    Layer.provideMerge(usage),
   );
   return ManagedRuntime.make(app);
 };

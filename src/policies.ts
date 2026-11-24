@@ -1,7 +1,6 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { InvalidInput, StateError } from "./errors.ts";
-import { stateSql } from "./sql.ts";
+import { Sql } from "./sql.ts";
 
 export type Decision = "allow" | "ask" | "deny";
 
@@ -55,85 +54,80 @@ export class Policies extends Context.Service<
     decide(target: string): Effect.Effect<Decision | undefined, StateError>;
   }
 >()("mizook/Policies") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      Policies,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
+  static readonly layer = Layer.effect(
+    Policies,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      yield* sql.migrate("policies", [
+        `CREATE TABLE IF NOT EXISTS app_policies (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, match TEXT NOT NULL,
+             decision TEXT NOT NULL, created INTEGER NOT NULL,
+             UNIQUE (match, decision))`,
+      ]);
 
-        yield* run("migrate policies", () =>
-          sql.all(
-            `CREATE TABLE IF NOT EXISTS app_policies (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, match TEXT NOT NULL,
-               decision TEXT NOT NULL, created INTEGER NOT NULL,
-               UNIQUE (match, decision))`,
-          ),
-        );
+      const selectRows = sql.rows(Row);
+      const query = (operation: string, text: string, ...params: unknown[]) =>
+        selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toPolicy)));
 
-        const selectRows = rows(Row);
-        const query = (operation: string, text: string, ...params: unknown[]) =>
-          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toPolicy)));
+      const list = query(
+        "list policies",
+        `SELECT id, match, decision FROM app_policies ORDER BY id`,
+      );
 
-        const list = query(
-          "list policies",
-          `SELECT id, match, decision FROM app_policies ORDER BY id`,
-        );
-
-        return Policies.of({
-          list,
-          add: (raw, decision) =>
-            Effect.gen(function* () {
-              const match = yield* checkMatch(raw);
-              yield* run("add policy", () =>
-                sql.all(
-                  `INSERT OR IGNORE INTO app_policies (match, decision, created) VALUES (?, ?, ?)`,
-                  match,
-                  decision,
-                  Date.now(),
-                ),
-              );
-              const rows = yield* query(
-                "read added policy",
-                `SELECT id, match, decision FROM app_policies WHERE match = ? AND decision = ?`,
-                match,
-                decision,
-              );
-              return rows[0]!;
-            }),
-          update: (id, raw, decision) =>
-            Effect.gen(function* () {
-              const match = yield* checkMatch(raw);
-              const all = yield* list;
-              if (!all.some((policy) => policy.id === id)) return undefined;
-              if (all.some((p) => p.id !== id && p.match === match && p.decision === decision))
-                return yield* refuse("That rule already exists.");
-              const rows = yield* query(
-                "update policy",
-                `UPDATE app_policies SET match = ?, decision = ? WHERE id = ?
+      return Policies.of({
+        list,
+        add: (raw, decision) =>
+          Effect.gen(function* () {
+            const match = yield* checkMatch(raw);
+            yield* sql.exec(
+              "add policy",
+              `INSERT OR IGNORE INTO app_policies (match, decision, created) VALUES (?, ?, ?)`,
+              match,
+              decision,
+              Date.now(),
+            );
+            const rows = yield* query(
+              "read added policy",
+              `SELECT id, match, decision FROM app_policies WHERE match = ? AND decision = ?`,
+              match,
+              decision,
+            );
+            return rows[0]!;
+          }),
+        update: (id, raw, decision) =>
+          Effect.gen(function* () {
+            const match = yield* checkMatch(raw);
+            const all = yield* list;
+            if (!all.some((policy) => policy.id === id)) return undefined;
+            if (all.some((p) => p.id !== id && p.match === match && p.decision === decision))
+              return yield* refuse("That rule already exists.");
+            const rows = yield* query(
+              "update policy",
+              `UPDATE app_policies SET match = ?, decision = ? WHERE id = ?
                  RETURNING id, match, decision`,
-                match,
-                decision,
-                id,
-              );
-              return rows[0];
-            }),
-          remove: (id) =>
-            run("remove policy", () =>
-              sql.all(`DELETE FROM app_policies WHERE id = ? RETURNING id`, id),
-            ).pipe(Effect.map((rows) => rows.length > 0)),
-          decide: (target) =>
-            Effect.gen(function* () {
-              const needle = target.toLowerCase();
-              const all = yield* list;
-              const hits = all.filter(
-                (policy) => policy.match !== "" && needle.includes(policy.match),
-              );
-              if (hits.some((policy) => policy.decision === "deny")) return "deny";
-              if (hits.some((policy) => policy.decision === "ask")) return "ask";
-              if (hits.some((policy) => policy.decision === "allow")) return "allow";
-              return undefined;
-            }),
-        });
-      }),
-    );
+              match,
+              decision,
+              id,
+            );
+            return rows[0];
+          }),
+        remove: (id) =>
+          sql
+            .exec("remove policy", `DELETE FROM app_policies WHERE id = ? RETURNING id`, id)
+            .pipe(Effect.map((rows) => rows.length > 0)),
+        decide: (target) =>
+          Effect.gen(function* () {
+            const needle = target.toLowerCase();
+            const all = yield* list;
+            const hits = all.filter(
+              (policy) => policy.match !== "" && needle.includes(policy.match),
+            );
+            if (hits.some((policy) => policy.decision === "deny")) return "deny";
+            if (hits.some((policy) => policy.decision === "ask")) return "ask";
+            if (hits.some((policy) => policy.decision === "allow")) return "allow";
+            return undefined;
+          }),
+      });
+    }),
+  );
 }

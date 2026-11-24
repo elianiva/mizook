@@ -1,5 +1,4 @@
 import { DurableObject } from "cloudflare:workers";
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -14,6 +13,7 @@ import { Runner, Targets } from "./runner.ts";
 import { Runs, type Run } from "./runs.ts";
 import type { Action, Spec } from "./schedule.ts";
 import { Web } from "./search.ts";
+import { Sql, type SqlDriver } from "./sql.ts";
 
 export type AutomationChange = { ok: true; automation: Automation } | { ok: false; error: string };
 
@@ -85,7 +85,9 @@ export class AutomationsObject extends DurableObject<Env> {
     this.runtime = ManagedRuntime.make(
       Runner.layer.pipe(
         Layer.provideMerge(
-          Layer.merge(Automations.layer(sql, moveAlarmEarlierTo), Runs.layer(sql)),
+          Layer.merge(Automations.layer(moveAlarmEarlierTo), Runs.layer).pipe(
+            Layer.provide(Sql.layer(sql)),
+          ),
         ),
         Layer.provide(Layer.succeed(Targets, targets)),
         Layer.provide(Web.layer.pipe(Layer.provide(Layer.merge(settings, FetchHttpClient.layer)))),

@@ -10,7 +10,7 @@ import {
   type UsageReport,
   type ViewLine,
 } from "@mizook/admin-api";
-import type { SqlDriver } from "@mizook/memory/sqlite";
+import type { SqlDriver } from "../sql.ts";
 import { Effect, Option, Schema } from "effect";
 
 const rowsOrEmpty = <T>(sql: SqlDriver, text: string, ...params: unknown[]): Promise<T[]> =>

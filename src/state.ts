@@ -1,9 +1,8 @@
 import { SETTING_KEYS, type SettingKey } from "@mizook/admin-api";
 import { Context, Effect, Layer, Schema } from "effect";
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import type { ConversationId, SubmissionId } from "@earendil-works/pi-durable";
 import { InvalidInput, type StateError } from "./errors.ts";
-import { stateSql } from "./sql.ts";
+import { Sql } from "./sql.ts";
 
 export interface PendingTurn {
   readonly chatId: string;
@@ -67,6 +66,22 @@ export const settingRefusal = (key: SettingKey, value: string): string | undefin
   return undefined;
 };
 
+const STATE_MIGRATION = [
+  `CREATE TABLE IF NOT EXISTS app_turns (
+     chat_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, conversation_id INTEGER NOT NULL,
+     request_id TEXT NOT NULL, text TEXT NOT NULL, submissions TEXT NOT NULL,
+     logged INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS app_thread (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, place TEXT NOT NULL,
+     role TEXT NOT NULL, text TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS app_thread_place ON app_thread (place, id)`,
+  `CREATE TABLE IF NOT EXISTS app_audit (
+     at INTEGER NOT NULL, who TEXT NOT NULL, action TEXT NOT NULL,
+     target INTEGER NOT NULL, ok INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS app_seen (id TEXT PRIMARY KEY, at INTEGER NOT NULL)`,
+];
+
 export class State extends Context.Service<
   State,
   {
@@ -95,78 +110,55 @@ export class State extends Context.Service<
     firstSeen(id: string): Effect.Effect<boolean, StateError>;
   }
 >()("mizook/State") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      State,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
-        const turnRows = rows(Row);
+  static readonly layer = Layer.effect(
+    State,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      const turnRows = sql.rows(Row);
+      yield* sql.migrate("state", STATE_MIGRATION);
 
-        yield* run("migrate", async () => {
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_turns (
-               chat_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, conversation_id INTEGER NOT NULL,
-               request_id TEXT NOT NULL, text TEXT NOT NULL, submissions TEXT NOT NULL,
-               logged INTEGER NOT NULL DEFAULT 0)`,
-          );
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-          );
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_thread (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, place TEXT NOT NULL,
-               role TEXT NOT NULL, text TEXT NOT NULL)`,
-          );
-          await sql.all(`CREATE INDEX IF NOT EXISTS app_thread_place ON app_thread (place, id)`);
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_audit (
-               at INTEGER NOT NULL, who TEXT NOT NULL, action TEXT NOT NULL,
-               target INTEGER NOT NULL, ok INTEGER NOT NULL)`,
-          );
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_seen (id TEXT PRIMARY KEY, at INTEGER NOT NULL)`,
-          );
-        });
-
-        return State.of({
-          turn: (chatId) =>
-            turnRows("turn", `SELECT * FROM app_turns WHERE chat_id = ?`, chatId).pipe(
-              Effect.map((found) => found[0] && toTurn(found[0])),
-            ),
-          turns: turnRows("turns", `SELECT * FROM app_turns`).pipe(
-            Effect.map((found) => found.map(toTurn)),
+      return State.of({
+        turn: (chatId) =>
+          turnRows("turn", `SELECT * FROM app_turns WHERE chat_id = ?`, chatId).pipe(
+            Effect.map((found) => found[0] && toTurn(found[0])),
           ),
-          putTurn: (t) =>
-            run("putTurn", async () => {
-              await sql.all(
-                `INSERT INTO app_turns (chat_id, thread_id, conversation_id, request_id, text, submissions, logged)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT (chat_id) DO UPDATE SET
-                   thread_id = excluded.thread_id, conversation_id = excluded.conversation_id,
-                   request_id = excluded.request_id, text = excluded.text,
-                   submissions = excluded.submissions, logged = excluded.logged`,
-                t.chatId,
-                t.threadId,
-                t.conversationId,
-                t.requestId,
-                t.text,
-                JSON.stringify(t.submissions),
-                t.logged ? 1 : 0,
-              );
-            }),
-          deleteTurn: (chatId) =>
-            run("deleteTurn", async () => {
-              await sql.all(`DELETE FROM app_turns WHERE chat_id = ?`, chatId);
-            }),
-          thread: (place) =>
-            rows(Schema.Struct({ role: Schema.String, text: Schema.String }))(
+        turns: turnRows("turns", `SELECT * FROM app_turns`).pipe(
+          Effect.map((found) => found.map(toTurn)),
+        ),
+        putTurn: (t) =>
+          sql
+            .exec(
+              "putTurn",
+              `INSERT INTO app_turns (chat_id, thread_id, conversation_id, request_id, text, submissions, logged)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (chat_id) DO UPDATE SET
+                 thread_id = excluded.thread_id, conversation_id = excluded.conversation_id,
+                 request_id = excluded.request_id, text = excluded.text,
+                 submissions = excluded.submissions, logged = excluded.logged`,
+              t.chatId,
+              t.threadId,
+              t.conversationId,
+              t.requestId,
+              t.text,
+              JSON.stringify(t.submissions),
+              t.logged ? 1 : 0,
+            )
+            .pipe(Effect.asVoid),
+        deleteTurn: (chatId) =>
+          sql
+            .exec("deleteTurn", `DELETE FROM app_turns WHERE chat_id = ?`, chatId)
+            .pipe(Effect.asVoid),
+        thread: (place) =>
+          sql
+            .rows(Schema.Struct({ role: Schema.String, text: Schema.String }))(
               "thread",
               `SELECT role, text FROM (
                  SELECT id, role, text FROM app_thread WHERE place = ? ORDER BY id DESC LIMIT ?
                ) ORDER BY id ASC`,
               place,
               THREAD_LINES_KEPT,
-            ).pipe(
+            )
+            .pipe(
               Effect.map((found) =>
                 found.map((r) => ({
                   role: r.role === "agent" ? ("agent" as const) : ("user" as const),
@@ -174,102 +166,100 @@ export class State extends Context.Service<
                 })),
               ),
             ),
-          say: (place, role, text) =>
-            run("say", async () => {
-              await sql.all(
-                `INSERT INTO app_thread (place, role, text) VALUES (?, ?, ?)`,
-                place,
-                role,
-                text,
-              );
-              await sql.all(
-                `DELETE FROM app_thread WHERE place = ? AND id <= (
-                   SELECT id FROM app_thread WHERE place = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
-                place,
-                place,
-                THREAD_LINES_KEPT,
-              );
-            }),
-          meta: (key) =>
-            run("meta", async () => {
-              const rows = await sql.all<{ value: string }>(
-                `SELECT value FROM app_meta WHERE key = ?`,
-                key,
-              );
-              return rows[0]?.value;
-            }),
-          deleteMeta: (key) =>
-            run("deleteMeta", async () => {
-              await sql.all(`DELETE FROM app_meta WHERE key = ?`, key);
-            }),
-          setMeta: (key, value) =>
-            run("setMeta", async () => {
-              await sql.all(
-                `INSERT INTO app_meta (key, value) VALUES (?, ?)
-                 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-                key,
-                value,
-              );
-            }),
-          settings: readSettings(sql),
-          setSetting: (key, value) => {
-            if (value === undefined)
-              return run("clear setting", () =>
-                sql.all(`DELETE FROM app_meta WHERE key = ?`, `setting:${key}`),
-              ).pipe(Effect.asVoid);
-            const reason = settingRefusal(key, value);
-            if (reason !== undefined) return Effect.fail(new InvalidInput({ reason }));
-            return run("save setting", () =>
-              sql.all(
-                `INSERT INTO app_meta (key, value) VALUES (?, ?)
-                 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-                `setting:${key}`,
-                value,
-              ),
-            ).pipe(Effect.asVoid);
-          },
-          audit: (who, action, target, ok) =>
-            run("audit", async () => {
-              const now = Date.now();
-              await sql.all(`DELETE FROM app_audit WHERE at < ?`, now - 90 * 24 * 3600 * 1000);
-              await sql.all(
-                `INSERT INTO app_audit (at, who, action, target, ok) VALUES (?, ?, ?, ?, ?)`,
-                now,
-                who,
-                action,
-                target,
-                ok ? 1 : 0,
-              );
-            }),
-          firstSeen: (id) =>
-            run("firstSeen", async () => {
-              const now = Date.now();
-              await sql.all(`DELETE FROM app_seen WHERE at < ?`, now - WEEK);
-              const inserted = await sql.all(
-                `INSERT INTO app_seen (id, at) VALUES (?, ?) ON CONFLICT (id) DO NOTHING RETURNING id`,
-                id,
-                now,
-              );
-              return inserted.length > 0;
-            }),
-        });
-      }),
-    );
+        say: (place, role, text) =>
+          Effect.gen(function* () {
+            yield* sql.exec(
+              "say",
+              `INSERT INTO app_thread (place, role, text) VALUES (?, ?, ?)`,
+              place,
+              role,
+              text,
+            );
+            yield* sql.exec(
+              "say",
+              `DELETE FROM app_thread WHERE place = ? AND id <= (
+                 SELECT id FROM app_thread WHERE place = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+              place,
+              place,
+              THREAD_LINES_KEPT,
+            );
+          }),
+        meta: (key) =>
+          sql
+            .exec<{ value: string }>("meta", `SELECT value FROM app_meta WHERE key = ?`, key)
+            .pipe(Effect.map((rows) => rows[0]?.value)),
+        deleteMeta: (key) =>
+          sql.exec("deleteMeta", `DELETE FROM app_meta WHERE key = ?`, key).pipe(Effect.asVoid),
+        setMeta: (key, value) =>
+          sql
+            .exec(
+              "setMeta",
+              `INSERT INTO app_meta (key, value) VALUES (?, ?)
+               ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+              key,
+              value,
+            )
+            .pipe(Effect.asVoid),
+        settings: readSettings.pipe(Effect.provideService(Sql, sql)),
+        setSetting: (key, value) => {
+          if (value === undefined)
+            return sql
+              .exec("clear setting", `DELETE FROM app_meta WHERE key = ?`, `setting:${key}`)
+              .pipe(Effect.asVoid);
+          const reason = settingRefusal(key, value);
+          if (reason !== undefined) return Effect.fail(new InvalidInput({ reason }));
+          return sql
+            .exec(
+              "save setting",
+              `INSERT INTO app_meta (key, value) VALUES (?, ?)
+               ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+              `setting:${key}`,
+              value,
+            )
+            .pipe(Effect.asVoid);
+        },
+        audit: (who, action, target, ok) =>
+          Effect.gen(function* () {
+            const now = Date.now();
+            yield* sql.exec(
+              "audit",
+              `DELETE FROM app_audit WHERE at < ?`,
+              now - 90 * 24 * 3600 * 1000,
+            );
+            yield* sql.exec(
+              "audit",
+              `INSERT INTO app_audit (at, who, action, target, ok) VALUES (?, ?, ?, ?, ?)`,
+              now,
+              who,
+              action,
+              target,
+              ok ? 1 : 0,
+            );
+          }),
+        firstSeen: (id) =>
+          Effect.gen(function* () {
+            const now = Date.now();
+            yield* sql.exec("firstSeen", `DELETE FROM app_seen WHERE at < ?`, now - WEEK);
+            const inserted = yield* sql.exec(
+              "firstSeen",
+              `INSERT INTO app_seen (id, at) VALUES (?, ?) ON CONFLICT (id) DO NOTHING RETURNING id`,
+              id,
+              now,
+            );
+            return inserted.length > 0;
+          }),
+      });
+    }),
+  );
 }
 
-export const readSettings = (sql: SqlDriver) => {
-  const { run, rows } = stateSql(sql);
-  return run("read settings", () =>
-    sql.all(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
-  ).pipe(
-    Effect.andThen(
-      rows(Schema.Struct({ key: Schema.String, value: Schema.String }))(
-        "read settings",
-        `SELECT key, value FROM app_meta WHERE key GLOB 'setting:*'`,
-      ),
-    ),
-    Effect.map((found) =>
-      Object.fromEntries(found.map((r) => [r.key.slice("setting:".length), r.value])),
-    ),
+/** The agent's own settings. Migrates first: the settings are read before `State` is built. */
+export const readSettings = Effect.gen(function* () {
+  const sql = yield* Sql;
+  yield* sql.migrate("state", STATE_MIGRATION);
+  const found = yield* sql.rows(Schema.Struct({ key: Schema.String, value: Schema.String }))(
+    "read settings",
+    `SELECT key, value FROM app_meta WHERE key GLOB 'setting:*'`,
   );
-};
+  return Object.fromEntries(found.map((r) => [r.key.slice("setting:".length), r.value]));
+});

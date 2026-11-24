@@ -1,9 +1,8 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { InvalidInput, StateError } from "./errors.ts";
 import { formatDate } from "./format.ts";
 import { IntentEvents, IntentState, stepIntent } from "./intent-lifecycle.ts";
-import { stateSql } from "./sql.ts";
+import { Sql } from "./sql.ts";
 
 export type { IntentState };
 
@@ -141,162 +140,155 @@ export class Intents extends Context.Service<
     match(text: string, now: Date): Effect.Effect<ReadonlyArray<Intent>, StateError>;
   }
 >()("mizook/Intents") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      Intents,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
+  static readonly layer = Layer.effect(
+    Intents,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      yield* sql.migrate("intents", [
+        `CREATE TABLE IF NOT EXISTS app_intents (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT NOT NULL,
+             triggers TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL,
+             cooldown INTEGER NOT NULL, max_fires INTEGER NOT NULL,
+             fire_count INTEGER NOT NULL DEFAULT 0, last_fired INTEGER,
+             state TEXT NOT NULL DEFAULT 'armed')`,
+      ]);
 
-        yield* run("migrate intents", () =>
-          sql.all(
-            `CREATE TABLE IF NOT EXISTS app_intents (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT NOT NULL,
-               triggers TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL,
-               cooldown INTEGER NOT NULL, max_fires INTEGER NOT NULL,
-               fire_count INTEGER NOT NULL DEFAULT 0, last_fired INTEGER,
-               state TEXT NOT NULL DEFAULT 'armed')`,
-          ),
-        );
+      const selectRows = sql.rows(Row);
+      const query = (operation: string, text: string, ...params: unknown[]) =>
+        selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toIntent)));
 
-        const selectRows = rows(Row);
-        const query = (operation: string, text: string, ...params: unknown[]) =>
-          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toIntent)));
+      const one = (operation: string, text: string, ...params: unknown[]) =>
+        query(operation, text, ...params).pipe(Effect.map((rows) => rows[0]));
 
-        const one = (operation: string, text: string, ...params: unknown[]) =>
-          query(operation, text, ...params).pipe(Effect.map((rows) => rows[0]));
+      const setState = (id: number, state: IntentState) =>
+        sql.exec("set intent state", `UPDATE app_intents SET state = ? WHERE id = ?`, state, id);
 
-        const setState = (id: number, state: IntentState) =>
-          run("set intent state", () =>
-            sql.all(`UPDATE app_intents SET state = ? WHERE id = ?`, state, id),
-          );
-
-        return Intents.of({
-          create: (description, triggers, options) =>
-            Effect.gen(function* () {
-              const input = yield* checkIntent({
-                description,
-                triggers,
-                expires: options.expiresAt,
-                cooldown: options.cooldownMs,
-                maxFires: options.maxFires,
-              });
-              const now = Date.now();
-              const made = yield* one(
-                "create intent",
-                `INSERT INTO app_intents
+      return Intents.of({
+        create: (description, triggers, options) =>
+          Effect.gen(function* () {
+            const input = yield* checkIntent({
+              description,
+              triggers,
+              expires: options.expiresAt,
+              cooldown: options.cooldownMs,
+              maxFires: options.maxFires,
+            });
+            const now = Date.now();
+            const made = yield* one(
+              "create intent",
+              `INSERT INTO app_intents
                    (description, triggers, created, expires, cooldown, max_fires)
                  VALUES (?, ?, ?, ?, ?, ?)
                  RETURNING id, description, triggers, created, expires, cooldown,
                    max_fires, fire_count, last_fired, state`,
-                input.description,
-                JSON.stringify(input.triggers),
-                now,
-                input.expires,
-                Math.round(input.cooldown),
-                input.maxFires,
-              );
-              return made!;
-            }),
-          list: query("list intents", `${SELECT} ORDER BY id`),
-          update: (id, changes) =>
-            Effect.gen(function* () {
-              const input = yield* checkIntent(changes);
-              const current = yield* one("intent", `${SELECT} WHERE id = ?`, id);
-              if (!current) return undefined;
-              const state = yield* stepIntent(
-                current.state,
-                IntentEvents.Edit({
-                  fireCount: current.fireCount,
-                  maxFires: input.maxFires,
-                  isPastExpiry: input.expires < Date.now(),
-                }),
-              );
-              return yield* one(
-                "update intent",
-                `UPDATE app_intents
+              input.description,
+              JSON.stringify(input.triggers),
+              now,
+              input.expires,
+              Math.round(input.cooldown),
+              input.maxFires,
+            );
+            return made!;
+          }),
+        list: query("list intents", `${SELECT} ORDER BY id`),
+        update: (id, changes) =>
+          Effect.gen(function* () {
+            const input = yield* checkIntent(changes);
+            const current = yield* one("intent", `${SELECT} WHERE id = ?`, id);
+            if (!current) return undefined;
+            const state = yield* stepIntent(
+              current.state,
+              IntentEvents.Edit({
+                fireCount: current.fireCount,
+                maxFires: input.maxFires,
+                isPastExpiry: input.expires < Date.now(),
+              }),
+            );
+            return yield* one(
+              "update intent",
+              `UPDATE app_intents
                  SET description = ?, triggers = ?, expires = ?, cooldown = ?, max_fires = ?, state = ?
                  WHERE id = ?
                  RETURNING id, description, triggers, created, expires, cooldown,
                    max_fires, fire_count, last_fired, state`,
-                input.description,
-                JSON.stringify(input.triggers),
-                input.expires,
-                Math.round(input.cooldown),
-                input.maxFires,
-                state ?? current.state,
-                id,
-              );
-            }),
-          restore: (input) =>
-            one(
-              "restore intent",
-              `INSERT INTO app_intents
+              input.description,
+              JSON.stringify(input.triggers),
+              input.expires,
+              Math.round(input.cooldown),
+              input.maxFires,
+              state ?? current.state,
+              id,
+            );
+          }),
+        restore: (input) =>
+          one(
+            "restore intent",
+            `INSERT INTO app_intents
                  (description, triggers, created, expires, cooldown, max_fires,
                   fire_count, last_fired, state)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                RETURNING id, description, triggers, created, expires, cooldown,
                  max_fires, fire_count, last_fired, state`,
-              input.description,
-              JSON.stringify(input.triggers),
-              input.created,
-              input.expires,
-              input.cooldown,
-              input.maxFires,
-              input.fireCount,
-              input.lastFired ?? null,
-              input.state,
-            ).pipe(
-              Effect.filterOrFail(
-                (found): found is Intent => found !== undefined,
-                () => new StateError({ operation: "restore intent", cause: "no row" }),
-              ),
+            input.description,
+            JSON.stringify(input.triggers),
+            input.created,
+            input.expires,
+            input.cooldown,
+            input.maxFires,
+            input.fireCount,
+            input.lastFired ?? null,
+            input.state,
+          ).pipe(
+            Effect.filterOrFail(
+              (found): found is Intent => found !== undefined,
+              () => new StateError({ operation: "restore intent", cause: "no row" }),
             ),
-          cancel: (id) =>
-            Effect.gen(function* () {
-              const current = yield* one("intent", `${SELECT} WHERE id = ?`, id);
-              const state = current && (yield* stepIntent(current.state, IntentEvents.Cancel()));
-              if (!state) return false;
-              yield* setState(id, state);
-              return true;
-            }),
-          match: (text, now) =>
-            Effect.gen(function* () {
-              const at = now.getTime();
-              const armed = yield* query(
-                "armed intents",
-                `${SELECT} WHERE state = 'armed' ORDER BY id`,
-              );
-              const fired: Intent[] = [];
-              for (const intent of armed) {
-                if (intent.expires < at) {
-                  const expired = yield* stepIntent(intent.state, IntentEvents.Expire());
-                  if (expired) yield* setState(intent.id, expired);
-                  continue;
-                }
-                if (intent.lastFired !== undefined && at - intent.lastFired < intent.cooldown) {
-                  continue;
-                }
-                if (!allTriggersMentioned(text, intent.triggers)) continue;
-                const fireCount = intent.fireCount + 1;
-                const state = yield* stepIntent(
-                  intent.state,
-                  IntentEvents.Fire({ fireCount, maxFires: intent.maxFires }),
-                );
-                if (!state) continue;
-                yield* run("fire intent", () =>
-                  sql.all(
-                    `UPDATE app_intents SET fire_count = ?, last_fired = ?, state = ? WHERE id = ?`,
-                    fireCount,
-                    at,
-                    state,
-                    intent.id,
-                  ),
-                );
-                fired.push({ ...intent, fireCount, lastFired: at, state });
+          ),
+        cancel: (id) =>
+          Effect.gen(function* () {
+            const current = yield* one("intent", `${SELECT} WHERE id = ?`, id);
+            const state = current && (yield* stepIntent(current.state, IntentEvents.Cancel()));
+            if (!state) return false;
+            yield* setState(id, state);
+            return true;
+          }),
+        match: (text, now) =>
+          Effect.gen(function* () {
+            const at = now.getTime();
+            const armed = yield* query(
+              "armed intents",
+              `${SELECT} WHERE state = 'armed' ORDER BY id`,
+            );
+            const fired: Intent[] = [];
+            for (const intent of armed) {
+              if (intent.expires < at) {
+                const expired = yield* stepIntent(intent.state, IntentEvents.Expire());
+                if (expired) yield* setState(intent.id, expired);
+                continue;
               }
-              return fired;
-            }),
-        });
-      }),
-    );
+              if (intent.lastFired !== undefined && at - intent.lastFired < intent.cooldown) {
+                continue;
+              }
+              if (!allTriggersMentioned(text, intent.triggers)) continue;
+              const fireCount = intent.fireCount + 1;
+              const state = yield* stepIntent(
+                intent.state,
+                IntentEvents.Fire({ fireCount, maxFires: intent.maxFires }),
+              );
+              if (!state) continue;
+              yield* sql.exec(
+                "fire intent",
+                `UPDATE app_intents SET fire_count = ?, last_fired = ?, state = ? WHERE id = ?`,
+                fireCount,
+                at,
+                state,
+                intent.id,
+              );
+              fired.push({ ...intent, fireCount, lastFired: at, state });
+            }
+            return fired;
+          }),
+      });
+    }),
+  );
 }

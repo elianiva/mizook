@@ -1,6 +1,7 @@
-import { Arbitrary, Effect, Schema } from "effect";
+import { Arbitrary, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Approvals } from "../src/approvals.ts";
 import { routeOf } from "../src/route.ts";
 import { property } from "./property.ts";
@@ -11,7 +12,7 @@ const withApprovals = <A, E>(effect: Effect.Effect<A, E, Approvals>) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  return effect.pipe(Effect.provide(Approvals.layer(sql)));
+  return effect.pipe(Effect.provide(Approvals.layer.pipe(Layer.provide(Sql.layer(sql)))));
 };
 
 const text = Arbitrary.schema(Schema.String).pipe(

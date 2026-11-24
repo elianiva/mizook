@@ -1,6 +1,7 @@
 import { Arbitrary, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { edit } from "../src/admin/edit.ts";
 import { checkProfile, Host, type Profile } from "../src/host.ts";
 import { Intents } from "../src/intents.ts";
@@ -61,11 +62,9 @@ const world = (profile: { current: Profile }) => {
         }),
       ),
   });
-  return Layer.mergeAll(
-    Skills.layer(sql),
-    Intents.layer(sql),
-    Policies.layer(sql),
-    Layer.succeed(Host, host),
+  return Layer.mergeAll(Skills.layer, Intents.layer, Policies.layer).pipe(
+    Layer.provide(Sql.layer(sql)),
+    Layer.merge(Layer.succeed(Host, host)),
   );
 };
 

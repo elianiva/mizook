@@ -1,6 +1,7 @@
-import { Arbitrary, Effect, Schema } from "effect";
+import { Arbitrary, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Runs, type RunStatus } from "../src/runs.ts";
 import { property } from "./property.ts";
 
@@ -10,7 +11,7 @@ const go = <A, E>(effect: Effect.Effect<A, E, Runs>) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  return Effect.provide(effect, Runs.layer(sql));
+  return Effect.provide(effect, Runs.layer.pipe(Layer.provide(Sql.layer(sql))));
 };
 
 const survivesUtf8 = (s: string) => new TextDecoder().decode(new TextEncoder().encode(s)) === s;

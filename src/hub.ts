@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { SqlDriver } from "@mizook/memory/sqlite";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -11,6 +10,7 @@ import { agentDoName, agentObject } from "./objects.ts";
 import type { InvalidInput, Refusable, StateError } from "./errors.ts";
 import { WEB_PERSONA, WEB_ROLE } from "./persona.ts";
 import { Skills, type Skill } from "./skills.ts";
+import { Sql, type SqlDriver } from "./sql.ts";
 
 const DEFAULT_SLUG = "mizook";
 
@@ -142,7 +142,9 @@ export class Hub extends DurableObject<Env> {
         sql.exec(query, ...(params as never[])).toArray() as T[],
     };
     this.skills = Effect.runPromise(
-      Skills.use(Effect.succeed).pipe(Effect.provide(Skills.layer(hubSqlDriver))),
+      Skills.use(Effect.succeed).pipe(
+        Effect.provide(Skills.layer.pipe(Layer.provide(Sql.layer(hubSqlDriver)))),
+      ),
     );
     const republishMenu = this.syncMenu();
     ctx.waitUntil(republishMenu);

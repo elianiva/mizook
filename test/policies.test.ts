@@ -1,6 +1,7 @@
-import { Arbitrary, Effect, Exit, Schema } from "effect";
+import { Arbitrary, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Policies, type Decision, type Policy } from "../src/policies.ts";
 import { property } from "./property.ts";
 
@@ -10,7 +11,7 @@ const withPolicies = <A, E>(effect: Effect.Effect<A, E, Policies>) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  return effect.pipe(Effect.provide(Policies.layer(sql)));
+  return effect.pipe(Effect.provide(Policies.layer.pipe(Layer.provide(Sql.layer(sql)))));
 };
 
 const WORDS = ["gmail", "gmail.send", "send", "delete", "calendar.list", "list", ""] as const;

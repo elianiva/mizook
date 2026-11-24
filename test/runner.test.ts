@@ -1,6 +1,7 @@
 import { Arbitrary, Effect, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Automations } from "../src/automations.ts";
 import { ActionError } from "../src/errors.ts";
 import { Runner, Targets } from "../src/runner.ts";
@@ -43,7 +44,9 @@ const setup = (options: { failTurn?: string } = {}) => {
       })),
   });
   const layer = Runner.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(Automations.layer(sql), Runs.layer(sql))),
+    Layer.provideMerge(
+      Layer.mergeAll(Automations.layer(), Runs.layer).pipe(Layer.provide(Sql.layer(sql))),
+    ),
     Layer.provide(Layer.merge(Layer.succeed(Targets, targets), Layer.succeed(Web, web))),
   );
   const run = <A, E>(effect: Effect.Effect<A, E, Runner | Automations | Runs>) =>

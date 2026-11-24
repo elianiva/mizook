@@ -1,7 +1,6 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import type { StateError } from "../errors.ts";
-import { stateSql } from "../sql.ts";
+import { Sql } from "../sql.ts";
 import type { WebMessage } from "./types.ts";
 
 const Row = Schema.Struct({
@@ -34,37 +33,33 @@ export class WebThreads extends Context.Service<
     ): Effect.Effect<ReadonlyArray<WebMessage>, StateError>;
   }
 >()("mizook/WebThreads") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      WebThreads,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
+  static readonly layer = Layer.effect(
+    WebThreads,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      yield* sql.migrate("web_messages", [
+        `CREATE TABLE IF NOT EXISTS web_messages (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             place TEXT NOT NULL,
+             role TEXT NOT NULL,
+             text TEXT NOT NULL,
+             at INTEGER NOT NULL)`,
+        `CREATE INDEX IF NOT EXISTS web_messages_place ON web_messages (place, id)`,
+      ]);
 
-        yield* run("migrate web messages", async () => {
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS web_messages (
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               place TEXT NOT NULL,
-               role TEXT NOT NULL,
-               text TEXT NOT NULL,
-               at INTEGER NOT NULL)`,
-          );
-          await sql.all(
-            `CREATE INDEX IF NOT EXISTS web_messages_place ON web_messages (place, id)`,
-          );
-        });
-
-        return WebThreads.of({
-          messages: (place, after, limit = MAX_MESSAGES) =>
-            rows(Row)(
+      return WebThreads.of({
+        messages: (place, after, limit = MAX_MESSAGES) =>
+          sql
+            .rows(Row)(
               "web messages",
               `SELECT id, role, text, at FROM web_messages
                WHERE place = ? AND id > ? ORDER BY id ASC LIMIT ?`,
               place,
               Math.max(after, 0),
               Math.min(Math.max(limit, 1), MAX_MESSAGES),
-            ).pipe(Effect.map((found) => found.map(toMessage))),
-        });
-      }),
-    );
+            )
+            .pipe(Effect.map((found) => found.map(toMessage))),
+      });
+    }),
+  );
 }

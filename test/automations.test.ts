@@ -1,6 +1,7 @@
-import { Arbitrary, Effect, Exit, Schema } from "effect";
+import { Arbitrary, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Automations } from "../src/automations.ts";
 import { Action, type Spec } from "../src/schedule.ts";
 import { property } from "./property.ts";
@@ -11,7 +12,7 @@ const go = <A, E>(f: Effect.Effect<A, E, Automations>) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  return Effect.provide(f, Automations.layer(sql));
+  return Effect.provide(f, Automations.layer().pipe(Layer.provide(Sql.layer(sql))));
 };
 
 const MINUTE = 60_000;

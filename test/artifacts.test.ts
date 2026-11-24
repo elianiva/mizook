@@ -1,6 +1,7 @@
 import { Arbitrary, ConfigProvider, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import {
   artifactHeaders,
   ChartSpec,
@@ -33,7 +34,8 @@ const go = <A, E>(f: Effect.Effect<A, E, Artifacts | Blobs>) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  const layer = Artifacts.layer(sql).pipe(
+  const layer = Artifacts.layer.pipe(
+    Layer.provide(Sql.layer(sql)),
     Layer.provideMerge(Blobs.memory),
     Layer.provide(settings),
   );

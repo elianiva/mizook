@@ -1,7 +1,6 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { InvalidInput, StateError } from "./errors.ts";
-import { stateSql } from "./sql.ts";
+import { Sql } from "./sql.ts";
 
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_SKILL_DESCRIPTION = 200;
@@ -80,84 +79,87 @@ export class Skills extends Context.Service<
     readonly index: Effect.Effect<ReadonlyArray<{ name: string; description: string }>, StateError>;
   }
 >()("mizook/Skills") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      Skills,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
+  static readonly layer = Layer.effect(
+    Skills,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      yield* sql.migrate("skills", [
+        `CREATE TABLE IF NOT EXISTS app_skills (
+             name TEXT PRIMARY KEY, description TEXT NOT NULL, body TEXT NOT NULL,
+             created INTEGER NOT NULL, updated INTEGER NOT NULL,
+             used_at INTEGER, use_count INTEGER NOT NULL DEFAULT 0,
+             pinned INTEGER NOT NULL DEFAULT 0)`,
+      ]);
 
-        yield* run("migrate skills", () =>
-          sql.all(
-            `CREATE TABLE IF NOT EXISTS app_skills (
-               name TEXT PRIMARY KEY, description TEXT NOT NULL, body TEXT NOT NULL,
-               created INTEGER NOT NULL, updated INTEGER NOT NULL,
-               used_at INTEGER, use_count INTEGER NOT NULL DEFAULT 0,
-               pinned INTEGER NOT NULL DEFAULT 0)`,
-          ),
-        );
+      const selectRows = sql.rows(Row);
+      const query = (operation: string, text: string, ...params: unknown[]) =>
+        selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toSkill)));
 
-        const selectRows = rows(Row);
-        const query = (operation: string, text: string, ...params: unknown[]) =>
-          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toSkill)));
+      const one = (operation: string, name: string) =>
+        query(operation, `${SELECT} WHERE name = ?`, name).pipe(Effect.map((rows) => rows[0]));
 
-        const one = (operation: string, name: string) =>
-          query(operation, `${SELECT} WHERE name = ?`, name).pipe(Effect.map((rows) => rows[0]));
-
-        return Skills.of({
-          list: query("list skills", `${SELECT} ORDER BY name`),
-          get: (name) => one("get skill", name),
-          save: (name, description, body) =>
-            Effect.gen(function* () {
-              const skill = yield* checkSkill(name, description, body);
-              const now = Date.now();
-              const rows = yield* query(
-                "save skill",
-                `INSERT INTO app_skills (name, description, body, created, updated)
+      return Skills.of({
+        list: query("list skills", `${SELECT} ORDER BY name`),
+        get: (name) => one("get skill", name),
+        save: (name, description, body) =>
+          Effect.gen(function* () {
+            const skill = yield* checkSkill(name, description, body);
+            const now = Date.now();
+            const rows = yield* query(
+              "save skill",
+              `INSERT INTO app_skills (name, description, body, created, updated)
                  VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT (name) DO UPDATE SET
                    description = excluded.description, body = excluded.body,
                    updated = excluded.updated
                  RETURNING name, description, body, created, updated, used_at, use_count, pinned`,
-                skill.name,
-                skill.description,
-                skill.body,
-                now,
-                now,
-              );
-              return rows[0]!;
-            }),
-          remove: (name) =>
-            Effect.gen(function* () {
-              const found = yield* one("find skill", name);
-              if (!found) return false;
-              if (found.pinned) return yield* refuse(pinnedRefusal(name));
-              const gone = yield* run("remove skill", () =>
-                sql.all(`DELETE FROM app_skills WHERE name = ? RETURNING name`, name),
-              );
-              return gone.length > 0;
-            }),
-          touch: (name) =>
-            run("touch skill", () =>
-              sql.all(
-                `UPDATE app_skills SET used_at = ?, use_count = use_count + 1 WHERE name = ?`,
-                Date.now(),
-                name,
-              ),
-            ).pipe(Effect.asVoid),
-          pin: (name) =>
-            run("pin skill", () =>
-              sql.all(`UPDATE app_skills SET pinned = 1 WHERE name = ?`, name),
-            ).pipe(Effect.asVoid),
-          setPinned: (name, pinned) =>
-            run("pin skill", () =>
-              sql.all(`UPDATE app_skills SET pinned = ? WHERE name = ?`, pinned ? 1 : 0, name),
-            ).pipe(Effect.asVoid),
-          index: run("skill index", () =>
-            sql.all<{ name: string; description: string }>(
-              `SELECT name, description FROM app_skills ORDER BY name`,
-            ),
-          ),
-        });
-      }),
-    );
+              skill.name,
+              skill.description,
+              skill.body,
+              now,
+              now,
+            );
+            return rows[0]!;
+          }),
+        remove: (name) =>
+          Effect.gen(function* () {
+            const found = yield* one("find skill", name);
+            if (!found) return false;
+            if (found.pinned) return yield* refuse(pinnedRefusal(name));
+            const gone = yield* sql.exec(
+              "remove skill",
+              `DELETE FROM app_skills WHERE name = ? RETURNING name`,
+              name,
+            );
+            return gone.length > 0;
+          }),
+        touch: (name) =>
+          sql
+            .exec(
+              "touch skill",
+              `UPDATE app_skills SET used_at = ?, use_count = use_count + 1 WHERE name = ?`,
+              Date.now(),
+              name,
+            )
+            .pipe(Effect.asVoid),
+        pin: (name) =>
+          sql
+            .exec("pin skill", `UPDATE app_skills SET pinned = 1 WHERE name = ?`, name)
+            .pipe(Effect.asVoid),
+        setPinned: (name, pinned) =>
+          sql
+            .exec(
+              "pin skill",
+              `UPDATE app_skills SET pinned = ? WHERE name = ?`,
+              pinned ? 1 : 0,
+              name,
+            )
+            .pipe(Effect.asVoid),
+        index: sql.exec<{ name: string; description: string }>(
+          "skill index",
+          `SELECT name, description FROM app_skills ORDER BY name`,
+        ),
+      });
+    }),
+  );
 }

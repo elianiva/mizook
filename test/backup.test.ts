@@ -1,7 +1,8 @@
-import { Store, sqliteStore, type SqlDriver } from "@mizook/memory";
+import { Store, sqliteStore } from "@mizook/memory";
 import { Arbitrary, ConfigProvider, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql, type SqlDriver } from "../src/sql.ts";
 import { Artifacts } from "../src/artifacts.ts";
 import { Backup } from "../src/backup.ts";
 import { Blobs } from "../src/blobs.ts";
@@ -34,12 +35,13 @@ const channel = (blobs: Layer.Layer<Blobs>) => {
       db.prepare(query).all(...(params as never[])) as T[],
   };
   return Backup.layer.pipe(
-    Layer.provideMerge(Artifacts.layer(sql)),
-    Layer.provideMerge(Skills.layer(sql)),
-    Layer.provideMerge(Intents.layer(sql)),
-    Layer.provideMerge(Policies.layer(sql)),
-    Layer.provideMerge(State.layer(sql)),
+    Layer.provideMerge(Artifacts.layer),
+    Layer.provideMerge(Skills.layer),
+    Layer.provideMerge(Intents.layer),
+    Layer.provideMerge(Policies.layer),
+    Layer.provideMerge(State.layer),
     Layer.provideMerge(sqliteStore(sql)),
+    Layer.provide(Sql.layer(sql)),
     Layer.provideMerge(blobs),
     Layer.provide(settings),
     Layer.provide(Layer.succeed(Host, fakeHost())),

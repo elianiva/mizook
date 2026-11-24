@@ -1,6 +1,7 @@
 import { Arbitrary, Clock, Duration, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Outbox, typingPause } from "../src/outbox.ts";
 import { State } from "../src/state.ts";
 import { property } from "./property.ts";
@@ -21,7 +22,7 @@ const withOutbox = <A, E>(f: Effect.Effect<A, E, Outbox>, sleeps: number[]) => {
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  const layer = Outbox.layer.pipe(Layer.provide(State.layer(sql)));
+  const layer = Outbox.layer.pipe(Layer.provide(State.layer.pipe(Layer.provide(Sql.layer(sql)))));
   return Effect.provide(f, layer).pipe(Effect.provideService(Clock.Clock, recordingClock(sleeps)));
 };
 

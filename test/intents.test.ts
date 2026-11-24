@@ -1,6 +1,7 @@
-import { Arbitrary, Effect, Exit, Schema } from "effect";
+import { Arbitrary, Effect, Exit, Layer, Schema } from "effect";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vite-plus/test";
+import { Sql } from "../src/sql.ts";
 import { Intents, matchesTrigger, type Intent, type IntentState } from "../src/intents.ts";
 import { property } from "./property.ts";
 
@@ -10,7 +11,7 @@ const withIntents = <A, E>(f: (db: DatabaseSync) => Effect.Effect<A, E, Intents>
     all: <T>(query: string, ...params: unknown[]) =>
       db.prepare(query).all(...(params as never[])) as T[],
   };
-  return f(db).pipe(Effect.provide(Intents.layer(sql)));
+  return f(db).pipe(Effect.provide(Intents.layer.pipe(Layer.provide(Sql.layer(sql)))));
 };
 
 const HOUR = 3_600_000;

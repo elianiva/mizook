@@ -1,7 +1,6 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema, Semaphore } from "effect";
 import { ScheduleError, StateError } from "./errors.ts";
-import { stateSql } from "./sql.ts";
+import { Sql } from "./sql.ts";
 import {
   ActionJson,
   firstFire,
@@ -65,30 +64,27 @@ export class Automations extends Context.Service<
     readonly nextAt: Effect.Effect<number | undefined, StateError>;
   }
 >()("mizook/Automations") {
-  static readonly layer = (
-    sql: SqlDriver,
-    moveAlarmEarlierTo: (at: number) => Promise<void> = async () => {},
-  ) =>
+  static readonly layer = (moveAlarmEarlierTo: (at: number) => Promise<void> = async () => {}) =>
     Layer.effect(
       Automations,
       Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
-
-        yield* run("migrate automations", async () => {
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_automations (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, spec TEXT NOT NULL, action TEXT NOT NULL,
-               next_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-               created INTEGER NOT NULL, last_hash TEXT)`,
-          );
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_fires (at INTEGER NOT NULL, key TEXT NOT NULL)`,
-          );
-        });
+        const sql = yield* Sql;
+        yield* sql.migrate("automations", [
+          `CREATE TABLE IF NOT EXISTS app_automations (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, spec TEXT NOT NULL, action TEXT NOT NULL,
+             next_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+             created INTEGER NOT NULL, last_hash TEXT)`,
+          `CREATE TABLE IF NOT EXISTS app_fires (at INTEGER NOT NULL, key TEXT NOT NULL)`,
+        ]);
+        const arm = (at: number) =>
+          Effect.tryPromise({
+            try: () => moveAlarmEarlierTo(at),
+            catch: (cause) => new StateError({ operation: "arm", cause }),
+          });
 
         const oneWakeAtATime = (yield* Semaphore.make(1)).withPermits(1);
 
-        const selectRows = rows(Row);
+        const selectRows = sql.rows(Row);
         const query = (operation: string, text: string, ...params: unknown[]) =>
           selectRows(operation, text, ...params).pipe(
             Effect.map((found) => found.map(toAutomation)),
@@ -119,7 +115,7 @@ export class Automations extends Context.Service<
                 at,
                 now.getTime(),
               );
-              yield* run("arm", () => moveAlarmEarlierTo(at));
+              yield* arm(at);
               return made!;
             }),
           list: active,
@@ -131,16 +127,21 @@ export class Automations extends Context.Service<
               id,
             ).pipe(Effect.map((rows) => rows[0])),
           cancel: (id) =>
-            run("cancel automation", () =>
-              sql.all(`DELETE FROM app_automations WHERE id = ? RETURNING id`, id),
-            ).pipe(Effect.map((rows) => rows.length > 0)),
+            sql
+              .exec(
+                "cancel automation",
+                `DELETE FROM app_automations WHERE id = ? RETURNING id`,
+                id,
+              )
+              .pipe(Effect.map((rows) => rows.length > 0)),
           pause: (id) =>
-            run("pause automation", () =>
-              sql.all(
+            sql
+              .exec(
+                "pause automation",
                 `UPDATE app_automations SET active = 0 WHERE id = ? AND active = 1 RETURNING id`,
                 id,
-              ),
-            ).pipe(Effect.map((rows) => rows.length > 0)),
+              )
+              .pipe(Effect.map((rows) => rows.length > 0)),
           resume: (id, now) =>
             Effect.gen(function* () {
               const found = yield* query(
@@ -155,14 +156,13 @@ export class Automations extends Context.Service<
                   reason: `automation #${id} has no next time; create a new one`,
                 });
               }
-              yield* run("resume automation", () =>
-                sql.all(
-                  `UPDATE app_automations SET active = 1, next_at = ? WHERE id = ?`,
-                  next.getTime(),
-                  id,
-                ),
+              yield* sql.exec(
+                "resume automation",
+                `UPDATE app_automations SET active = 1, next_at = ? WHERE id = ?`,
+                next.getTime(),
+                id,
               );
-              yield* run("arm", () => moveAlarmEarlierTo(next.getTime()));
+              yield* arm(next.getTime());
               return true;
             }),
           claim: (now) =>
@@ -173,42 +173,56 @@ export class Automations extends Context.Service<
                   const nextSlot = yield* nextFire(s.spec, now).pipe(
                     Effect.orElseSucceed(() => undefined),
                   );
-                  yield* run("advance automation", () =>
-                    nextSlot
-                      ? sql.all(
-                          `UPDATE app_automations SET next_at = ? WHERE id = ?`,
-                          nextSlot.getTime(),
-                          s.id,
-                        )
-                      : sql.all(`UPDATE app_automations SET active = 0 WHERE id = ?`, s.id),
-                  );
+                  yield* nextSlot
+                    ? sql.exec(
+                        "advance automation",
+                        `UPDATE app_automations SET next_at = ? WHERE id = ?`,
+                        nextSlot.getTime(),
+                        s.id,
+                      )
+                    : sql.exec(
+                        "advance automation",
+                        `UPDATE app_automations SET active = 0 WHERE id = ?`,
+                        s.id,
+                      );
                 }
                 return due;
               }),
             ),
           watchChanged: (id, hash) =>
-            run("watch", async () => {
-              const row = (
-                await sql.all<{ last_hash: string | null }>(
-                  `SELECT last_hash FROM app_automations WHERE id = ?`,
-                  id,
-                )
-              )[0];
-              await sql.all(`UPDATE app_automations SET last_hash = ? WHERE id = ?`, hash, id);
+            Effect.gen(function* () {
+              const [row] = yield* sql.exec<{ last_hash: string | null }>(
+                "watch",
+                `SELECT last_hash FROM app_automations WHERE id = ?`,
+                id,
+              );
+              yield* sql.exec(
+                "watch",
+                `UPDATE app_automations SET last_hash = ? WHERE id = ?`,
+                hash,
+                id,
+              );
               return row?.last_hash != null && row.last_hash !== hash;
             }),
           allow: (now, limit, key) =>
-            run("rate limit", async () => {
-              await sql.all(`DELETE FROM app_fires WHERE at < ?`, now.getTime() - HOUR);
-              const count =
-                (
-                  await sql.all<{ n: number }>(
-                    `SELECT COUNT(*) AS n FROM app_fires WHERE key = ?`,
-                    key,
-                  )
-                )[0]?.n ?? 0;
-              if (count >= limit) return false;
-              await sql.all(`INSERT INTO app_fires (at, key) VALUES (?, ?)`, now.getTime(), key);
+            Effect.gen(function* () {
+              yield* sql.exec(
+                "rate limit",
+                `DELETE FROM app_fires WHERE at < ?`,
+                now.getTime() - HOUR,
+              );
+              const [counted] = yield* sql.exec<{ n: number }>(
+                "rate limit",
+                `SELECT COUNT(*) AS n FROM app_fires WHERE key = ?`,
+                key,
+              );
+              if ((counted?.n ?? 0) >= limit) return false;
+              yield* sql.exec(
+                "rate limit",
+                `INSERT INTO app_fires (at, key) VALUES (?, ?)`,
+                now.getTime(),
+                key,
+              );
               return true;
             }),
           nextAt: Effect.map(active, (all) => all.find(firesByClock)?.nextAt),

@@ -1,7 +1,6 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import { StateError } from "./errors.ts";
-import { stateSql } from "./sql.ts";
+import { Sql } from "./sql.ts";
 
 const DAY_MS = 86_400_000;
 const RUN_RETENTION_MS = 90 * DAY_MS;
@@ -56,55 +55,56 @@ export class Runs extends Context.Service<
     }): Effect.Effect<ReadonlyArray<Run>, StateError>;
   }
 >()("mizook/Runs") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      Runs,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
+  static readonly layer = Layer.effect(
+    Runs,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      yield* sql.migrate("runs", [
+        `CREATE TABLE IF NOT EXISTS app_runs (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, automation_id INTEGER NOT NULL,
+             started INTEGER NOT NULL, finished INTEGER, status TEXT NOT NULL,
+             output TEXT NOT NULL DEFAULT '', error TEXT)`,
+      ]);
+      yield* sql.exec(
+        "forget old runs",
+        `DELETE FROM app_runs WHERE started < ?`,
+        Date.now() - RUN_RETENTION_MS,
+      );
 
-        yield* run("migrate runs", async () => {
-          await sql.all(
-            `CREATE TABLE IF NOT EXISTS app_runs (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, automation_id INTEGER NOT NULL,
-               started INTEGER NOT NULL, finished INTEGER, status TEXT NOT NULL,
-               output TEXT NOT NULL DEFAULT '', error TEXT)`,
-          );
-          await sql.all(`DELETE FROM app_runs WHERE started < ?`, Date.now() - RUN_RETENTION_MS);
-        });
+      const selectRows = sql.rows(Row);
+      const query = (operation: string, text: string, ...params: unknown[]) =>
+        selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toRun)));
 
-        const selectRows = rows(Row);
-        const query = (operation: string, text: string, ...params: unknown[]) =>
-          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toRun)));
-
-        return Runs.of({
-          start: (automationId) =>
-            query(
-              "start run",
-              `INSERT INTO app_runs (automation_id, started, status) VALUES (?, ?, 'running')
+      return Runs.of({
+        start: (automationId) =>
+          query(
+            "start run",
+            `INSERT INTO app_runs (automation_id, started, status) VALUES (?, ?, 'running')
                RETURNING id, automation_id, started, finished, status, output, error`,
-              automationId,
+            automationId,
+            Date.now(),
+          ).pipe(Effect.map((rows) => rows[0]!.id)),
+        finish: (id, status, output, error) =>
+          sql
+            .exec(
+              "finish run",
+              `UPDATE app_runs SET finished = ?, status = ?, output = ?, error = ? WHERE id = ?`,
               Date.now(),
-            ).pipe(Effect.map((rows) => rows[0]!.id)),
-          finish: (id, status, output, error) =>
-            run("finish run", () =>
-              sql.all(
-                `UPDATE app_runs SET finished = ?, status = ?, output = ?, error = ? WHERE id = ?`,
-                Date.now(),
-                status,
-                output ?? "",
-                error ?? null,
-                id,
-              ),
-            ).pipe(Effect.asVoid),
-          list: ({ limit, automationId }) =>
-            query(
-              "list runs",
-              automationId === undefined
-                ? `${SELECT} ORDER BY id DESC LIMIT ?`
-                : `${SELECT} WHERE automation_id = ? ORDER BY id DESC LIMIT ?`,
-              ...(automationId === undefined ? [limit] : [automationId, limit]),
-            ),
-        });
-      }),
-    );
+              status,
+              output ?? "",
+              error ?? null,
+              id,
+            )
+            .pipe(Effect.asVoid),
+        list: ({ limit, automationId }) =>
+          query(
+            "list runs",
+            automationId === undefined
+              ? `${SELECT} ORDER BY id DESC LIMIT ?`
+              : `${SELECT} WHERE automation_id = ? ORDER BY id DESC LIMIT ?`,
+            ...(automationId === undefined ? [limit] : [automationId, limit]),
+          ),
+      });
+    }),
+  );
 }

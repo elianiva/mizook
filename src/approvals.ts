@@ -1,7 +1,6 @@
-import type { SqlDriver } from "@mizook/memory/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
-import { StateError } from "./errors.ts";
-import { stateSql } from "./sql.ts";
+import type { StateError } from "./errors.ts";
+import { Sql } from "./sql.ts";
 
 export interface Approval {
   readonly id: number;
@@ -50,65 +49,62 @@ export class Approvals extends Context.Service<
     take(id: number): Effect.Effect<Approval | undefined, StateError>;
   }
 >()("mizook/Approvals") {
-  static readonly layer = (sql: SqlDriver) =>
-    Layer.effect(
-      Approvals,
-      Effect.gen(function* () {
-        const { run, rows } = stateSql(sql);
-        yield* run("migrate approvals", () =>
-          sql.all(
-            `CREATE TABLE IF NOT EXISTS app_approvals (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, execution_id TEXT NOT NULL,
-               summary TEXT NOT NULL, posted INTEGER NOT NULL DEFAULT 0,
-               match TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
-               place TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '')`,
-          ),
-        );
-        const selectRows = rows(Row);
-        const query = (operation: string, text: string, ...params: unknown[]) =>
-          selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toApproval)));
-        return Approvals.of({
-          add: (executionId, summary, match, place, action) =>
-            query(
-              "add approval",
-              `INSERT INTO app_approvals (execution_id, summary, match, created, place, action)
+  static readonly layer = Layer.effect(
+    Approvals,
+    Effect.gen(function* () {
+      const sql = yield* Sql;
+      yield* sql.migrate("approvals", [
+        `CREATE TABLE IF NOT EXISTS app_approvals (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, execution_id TEXT NOT NULL,
+             summary TEXT NOT NULL, posted INTEGER NOT NULL DEFAULT 0,
+             match TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
+             place TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '')`,
+      ]);
+      const selectRows = sql.rows(Row);
+      const query = (operation: string, text: string, ...params: unknown[]) =>
+        selectRows(operation, text, ...params).pipe(Effect.map((found) => found.map(toApproval)));
+      return Approvals.of({
+        add: (executionId, summary, match, place, action) =>
+          query(
+            "add approval",
+            `INSERT INTO app_approvals (execution_id, summary, match, created, place, action)
                VALUES (?, ?, ?, ?, ?, ?)
                RETURNING id, execution_id, summary, match, created, place, action`,
-              executionId,
-              summary,
-              match,
-              Date.now(),
-              place,
-              action ?? "",
-            ).pipe(Effect.map((rows) => rows[0]!)),
-          unposted: (place) =>
-            Effect.suspend(() =>
-              query(
-                "unposted approvals",
-                `SELECT id, execution_id, summary, match, created, place, action FROM app_approvals
-                 WHERE posted = 0 AND place = ? AND created > ? ORDER BY id`,
-                place,
-                Date.now() - APPROVAL_TTL_MS,
-              ),
-            ),
-          markPosted: (id) =>
-            run("mark approval posted", () =>
-              sql.all(`UPDATE app_approvals SET posted = 1 WHERE id = ?`, id),
-            ).pipe(Effect.asVoid),
-          take: (id) =>
+            executionId,
+            summary,
+            match,
+            Date.now(),
+            place,
+            action ?? "",
+          ).pipe(Effect.map((rows) => rows[0]!)),
+        unposted: (place) =>
+          Effect.suspend(() =>
             query(
-              "take approval",
-              `DELETE FROM app_approvals WHERE id = ?
-               RETURNING id, execution_id, summary, match, created, place, action`,
-              id,
-            ).pipe(
-              Effect.map((rows) => {
-                const found = rows[0];
-                if (!found) return undefined;
-                return found.created < Date.now() - APPROVAL_TTL_MS ? undefined : found;
-              }),
+              "unposted approvals",
+              `SELECT id, execution_id, summary, match, created, place, action FROM app_approvals
+                 WHERE posted = 0 AND place = ? AND created > ? ORDER BY id`,
+              place,
+              Date.now() - APPROVAL_TTL_MS,
             ),
-        });
-      }),
-    );
+          ),
+        markPosted: (id) =>
+          sql
+            .exec("mark approval posted", `UPDATE app_approvals SET posted = 1 WHERE id = ?`, id)
+            .pipe(Effect.asVoid),
+        take: (id) =>
+          query(
+            "take approval",
+            `DELETE FROM app_approvals WHERE id = ?
+               RETURNING id, execution_id, summary, match, created, place, action`,
+            id,
+          ).pipe(
+            Effect.map((rows) => {
+              const found = rows[0];
+              if (!found) return undefined;
+              return found.created < Date.now() - APPROVAL_TTL_MS ? undefined : found;
+            }),
+          ),
+      });
+    }),
+  );
 }
