@@ -269,6 +269,18 @@ export const applyEvent = (state: ChatState, event: ChatEvent): ChatState =>
     Message: ({ threadId, message }) => {
       const transcript = state.transcripts[threadId] ?? emptyTranscript;
       if (transcript.messages.some((existing) => existing.id === message.id)) return state;
+      // The server's copy of a sent message replaces the local one in its own
+      // place, so the bubble keeps its identity and does not enter again.
+      const settled =
+        message.requestId === undefined
+          ? undefined
+          : transcript.messages.find((existing) => existing.requestId === message.requestId);
+      if (settled !== undefined) {
+        const messages = transcript.messages.map((existing) =>
+          existing === settled ? message : existing,
+        );
+        return withTranscript(state, threadId, { ...transcript, messages });
+      }
       // An agent's message is the turn's result, so the live view of it is done.
       const next = { ...transcript, messages: [...transcript.messages, message] };
       return withTranscript(state, threadId, message.role === "agent" ? withLive(next, "") : next);
@@ -278,12 +290,12 @@ export const applyEvent = (state: ChatState, event: ChatEvent): ChatState =>
       const next = append === undefined ? (text ?? "") : (transcript.streaming ?? "") + append;
       return withTranscript(state, threadId, withLive(transcript, next));
     },
-    Status: ({ threadId, running, approvals }) =>
-      withTranscript(state, threadId, {
-        ...(state.transcripts[threadId] ?? emptyTranscript),
-        running,
-        approvals,
-      }),
+    Status: ({ threadId, running, approvals }) => {
+      const transcript = state.transcripts[threadId] ?? emptyTranscript;
+      const next = { ...transcript, running, approvals };
+      // A turn that is not running cannot still be writing a reply.
+      return withTranscript(state, threadId, running ? next : withLive(next, ""));
+    },
     Agents: ({ agents, defaultAgent }) => ({ ...state, agents, defaultAgent }),
   });
 

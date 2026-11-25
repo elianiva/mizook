@@ -2,10 +2,9 @@
 
 @layer reset, base, tokens, recipes, utilities;
 
-@keyframes pulse {
-  50% {
-    opacity: 0.5;
-  }
+/* A steady caret marks the arrival point; a blinking one makes the reply pulse. */
+[data-markdown="root"] [data-markdown="caret"] {
+  animation: none;
 }
 
 /*

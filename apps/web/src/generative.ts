@@ -118,12 +118,12 @@ export type Segment =
 const isClosedFence = (raw: string): boolean => /\n\s*(```|~~~)$/.test(raw.trimEnd());
 
 /**
- * Splits an answer into Markdown runs and OpenUI Lang programs. An open fence,
- * as while a reply streams in, shows the blocks that already parse, or a
- * placeholder before the first one does. A closed fence that draws nothing
- * renders as the code block it is.
+ * Splits an answer into Markdown runs and OpenUI Lang programs. While it is
+ * still streaming, an open fence shows the blocks that already parse, or a
+ * placeholder before the first one does. Anything else renders as the code
+ * block it is: a finished reply must not show a placeholder forever.
  */
-export const segmentsOf = (text: string): ReadonlyArray<Segment> => {
+export const segmentsOf = (text: string, streaming: boolean): ReadonlyArray<Segment> => {
   const segments: Array<Segment> = [];
   let run: Array<Token> = [];
   const flush = () => {
@@ -139,7 +139,7 @@ export const segmentsOf = (text: string): ReadonlyArray<Segment> => {
     if (blocks.length > 0) {
       flush();
       segments.push({ kind: "ui", blocks });
-    } else if (!isClosedFence(token.raw)) {
+    } else if (streaming && !isClosedFence(token.raw)) {
       flush();
       segments.push({ kind: "pending" });
     } else {

@@ -446,14 +446,7 @@ export const ui = {
     "& img": { maxWidth: "100%", height: "auto", border: "1px solid {colors.border}" },
   }),
   working: css({ display: "flex", alignItems: "center", gap: "6px", height: "24px" }),
-  workingMark: css({
-    width: "10px",
-    height: "10px",
-    backgroundColor: "accent",
-    animation: "blink 900ms steps(2, end) infinite",
-    "&:nth-child(2)": { animationDelay: "150ms" },
-    "&:nth-child(3)": { animationDelay: "300ms" },
-  }),
+  workingMark: css({ width: "10px", height: "10px", backgroundColor: "accent" }),
 
   blocks: css({ display: "flex", flexDirection: "column", gap: "12px", minWidth: 0 }),
   blockTitle: css({ textStyle: "caps", marginBottom: "10px", color: "fgMuted" }),
@@ -461,7 +454,6 @@ export const ui = {
     height: "64px",
     border: "1px dashed {colors.borderStrong}",
     backgroundColor: "bgSubtle",
-    animation: "pulse 1.6s ease-in-out infinite",
   }),
 
   metrics: css({

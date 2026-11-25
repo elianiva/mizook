@@ -52,6 +52,7 @@ const fence = (body: string) => `\`\`\`openui-lang\n${body}\n\`\`\``;
 test("a program between prose becomes its components, and the prose around it stays Markdown", () => {
   const segments = segmentsOf(
     `**Before** the chart\n\n${fence('root = Stack([rain, next])\nrain = Bars([Bar("Mon", 3.5), Bar("Tue", 0)], "Rain")\nnext = Choices(["Umbrella?"])')}\n\nAfter it`,
+    false,
   );
   expect(segments).toEqual([
     { kind: "markdown", source: "**Before** the chart\n\n" },
@@ -83,7 +84,7 @@ test("a closed program that draws nothing from the catalog stays a code block", 
     'root = Sources([Source("x", "javascript:alert(1)")])',
     "not a program",
   ]) {
-    const segments = segmentsOf(fence(body));
+    const segments = segmentsOf(fence(body), false);
     expect(segments).toHaveLength(1);
     expect(segments[0]!.kind).toBe("markdown");
     expect(segments[0]!.kind === "markdown" && segments[0]!.source).toContain("```openui-lang");
@@ -91,12 +92,12 @@ test("a closed program that draws nothing from the catalog stays a code block", 
 });
 
 test("an open program shows the components that already parse, and a placeholder before that", () => {
-  expect(segmentsOf("Loading:\n\n```openui-lang\nroot = Steps([").map((s) => s.kind)).toEqual([
-    "markdown",
-    "pending",
-  ]);
+  expect(segmentsOf("Loading:\n\n```openui-lang\nroot = Steps([", true).map((s) => s.kind)).toEqual(
+    ["markdown", "pending"],
+  );
   const growing = segmentsOf(
     '```openui-lang\nroot = Stack([plan, more])\nplan = Steps([Step("Book flights", "done"), Step("Pack")])\nmore = Choices(["Ye',
+    true,
   );
   expect(growing).toEqual([
     {
@@ -109,12 +110,18 @@ test("an open program shows the components that already parse, and a placeholder
       ],
     },
   ]);
-  expect(segmentsOf("```js\nconst x = 1\n```").map((s) => s.kind)).toEqual(["markdown"]);
+  expect(segmentsOf("```js\nconst x = 1\n```", false).map((s) => s.kind)).toEqual(["markdown"]);
+});
+
+test("an open program in a finished reply stays a code block instead of pulsing forever", () => {
+  const segments = segmentsOf("Loading:\n\n```openui-lang\nroot = Steps([", false);
+  expect(segments.map((s) => s.kind)).toEqual(["markdown"]);
+  expect(segments[0]!.kind === "markdown" && segments[0]!.source).toContain("```openui-lang");
 });
 
 test("the example in the agent's guide draws with the web chat's catalog", () => {
   const example = /```openui-lang\n[\s\S]*?\n```/.exec(TOOL_GUIDE)?.[0] ?? "";
-  const segments = segmentsOf(example);
+  const segments = segmentsOf(example, false);
   expect(segments).toHaveLength(1);
   expect(segments[0]!.kind === "ui" && segments[0]!.blocks.map((block) => block.type)).toEqual([
     "Metrics",

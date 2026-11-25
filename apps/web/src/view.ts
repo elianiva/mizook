@@ -422,7 +422,7 @@ const segmentView = (h: H, segment: Segment, streaming: boolean): Html =>
       : h.div([h.Class(ui.pending), h.AriaBusy(true)], []);
 
 const replyView = (h: H, text: string, streaming: boolean): ReadonlyArray<Html> =>
-  segmentsOf(text).map((segment) => segmentView(h, segment, streaming));
+  segmentsOf(text, streaming).map((segment) => segmentView(h, segment, streaming));
 
 const messageView = (
   message: ChatMessage,
@@ -437,7 +437,12 @@ const messageView = (
     [clock(message.at)],
   );
   return h.article(
-    [h.Key(String(message.id)), h.Class(ui.message({ role: message.role, continued }))],
+    [
+      // A sent message keeps its request id when the server's copy replaces it,
+      // so the bubble is patched in place instead of entering again.
+      h.Key(message.requestId ?? String(message.id)),
+      h.Class(ui.message({ role: message.role, continued })),
+    ],
     user
       ? [
           h.div(

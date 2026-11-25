@@ -90,7 +90,6 @@ export const mizookPreset = definePreset({
         popIn: { from: { opacity: "0", scale: "0.96" } },
         slideIn: { from: { translate: "-100% 0" } },
         riseIn: { from: { opacity: "0", translate: "0 4px" } },
-        blink: { "50%": { opacity: "0.25" } },
       },
       textStyles: {
         // Page names: heavy uppercase with a little air, like the site's headings.

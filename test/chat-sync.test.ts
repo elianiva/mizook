@@ -33,6 +33,22 @@ test("a message event appends once and leaves the other transcript fields alone"
   expect(once.transcripts[thread.id]?.running).toBe(false);
 });
 
+test("the server's copy of a sent message replaces its optimistic one in place", () => {
+  const optimistic: ChatMessage = { ...message, id: -9, requestId: "r1" };
+  const withOptimistic: ChatState = {
+    ...base,
+    transcripts: {
+      [thread.id]: { messages: [optimistic], running: true, approvals: [] },
+    },
+  };
+  const settled: ChatMessage = { ...message, id: 7, requestId: "r1" };
+  const next = applyEvent(
+    withOptimistic,
+    ChatEvent.cases.Message.make({ threadId: thread.id, message: settled }),
+  );
+  expect(next.transcripts[thread.id]?.messages).toEqual([settled]);
+});
+
 test("a status event replaces running and approvals together", () => {
   const approval = { id: 3, summary: "Delete the file", match: "", created: 4 };
   const next = applyEvent(
@@ -44,6 +60,20 @@ test("a status event replaces running and approvals together", () => {
     running: true,
     approvals: [approval],
   });
+});
+
+test("a turn that stops drops the reply that was still arriving", () => {
+  const streaming = applyEvent(
+    base,
+    ChatEvent.cases.Live.make({ threadId: thread.id, text: "Half an ans" }),
+  );
+  expect(streaming.transcripts[thread.id]?.streaming).toBe("Half an ans");
+  const stopped = applyEvent(
+    streaming,
+    ChatEvent.cases.Status.make({ threadId: thread.id, running: false, approvals: [] }),
+  );
+  expect(stopped.transcripts[thread.id]).not.toHaveProperty("streaming");
+  expect(stopped.transcripts[thread.id]?.running).toBe(false);
 });
 
 test("a thread event moves the updated thread to the front and keeps its transcript", () => {
