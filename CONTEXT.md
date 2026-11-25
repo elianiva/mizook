@@ -22,7 +22,8 @@ The chat itself is the memory. A user message is logged as `[in <place>] <text>`
 
 **Message** — one entry of the chat log, with a permanent id. Kinds: `user`, `agent`, `tool`
 (a tool call), `echo` (its result), `note` (imported memory). Thoughts are never logged. A text too
-long for one message is logged as several in a row.
+long for one message is logged as several in a row. A user message may carry up to four images; the
+bytes live in R2 and the turn notes each key, so the agent can read one later.
 
 **Profile** — the short "about you" and the standing rules every agent shares. It lives in the
 Hub, not in a chat's memory: identity, not history.

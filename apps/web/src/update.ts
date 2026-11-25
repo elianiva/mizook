@@ -1,8 +1,19 @@
 import { AsyncData, Command, Subscription, Update } from "foldkit";
 import { focus, scrollIntoViewAfterPaint, streamFromKeyBindings } from "foldkit/dom";
+import { File as FileSchema } from "foldkit/file";
 import { load, pushUrl, UrlRequest } from "foldkit/navigation";
 import { toString as urlToString, type Url } from "foldkit/url";
-import { Duration, Effect, Equal, Option, Predicate, Schedule, Schema, Stream } from "effect";
+import {
+  Array,
+  Duration,
+  Effect,
+  Equal,
+  Option,
+  Predicate,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import {
   Dialog,
   Drawer,
@@ -14,14 +25,23 @@ import {
   Message as UiMessage,
   type UiRegistry,
 } from "@mizook/ui";
-import { WebChat, type Bootstrap, type ChatState, type ThreadState } from "@mizook/chat-sync";
+import {
+  Attachment,
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_BYTES,
+  WebChat,
+  type Bootstrap,
+  type ChatState,
+  type ThreadState,
+} from "@mizook/chat-sync";
 import { swipeDrawer } from "@mizook/ui/swipe";
 import { Confirmation, arm, isArmed } from "@mizook/ui/confirmation";
 
 import { ChatSync } from "./sync.ts";
 import { kit } from "./kit.ts";
 import { Message } from "./message.ts";
-import { Model } from "./model.ts";
+import { Model, PendingImage } from "./model.ts";
+import { imageUrl } from "./format.ts";
 import { TurnState, turnMachine } from "./turn-machine.ts";
 import { AppRoute, routeHref, routeThread, urlToAppRoute } from "./route.ts";
 
@@ -56,10 +76,11 @@ const SendMessage = Command.define("SendMessage", {
     threadId: Schema.String,
     text: Schema.String,
     requestId: Schema.String,
+    attachments: Schema.optionalKey(Schema.Array(Attachment)),
     agent: Schema.optionalKey(Schema.String),
   },
   messages: [Message.SentMessage, Message.FailedSend],
-  execute: ({ threadId, text, requestId, agent }) =>
+  execute: ({ threadId, text, requestId, attachments, agent }) =>
     Effect.gen(function* () {
       const sync = yield* ChatSync;
       if (agent !== undefined) yield* sync.submit(WebChat.actions.create, { id: threadId, agent });
@@ -67,13 +88,52 @@ const SendMessage = Command.define("SendMessage", {
         threadId,
         text,
         requestId,
+        ...(attachments !== undefined && { attachments }),
       });
       yield* command.awaitResult;
       return Message.SentMessage({ threadId, text });
     }).pipe(
       Effect.catch((error) => {
-        return Effect.succeed(Message.FailedSend({ reason: describe(error), text, threadId }));
+        return Effect.succeed(
+          Message.FailedSend({
+            reason: describe(error),
+            text,
+            threadId,
+            ...(attachments !== undefined && { attachments }),
+          }),
+        );
       }),
+    ),
+});
+
+const IMAGE_TYPE = /^image\/(?:png|jpe?g|webp|gif|avif)$/;
+
+const UploadImage = Command.define("UploadImage", {
+  args: { id: Schema.String, file: FileSchema },
+  messages: [Message.UploadedImage, Message.FailedImage],
+  execute: ({ id, file }) =>
+    Effect.gen(function* () {
+      const body = yield* Effect.tryPromise(async () => {
+        const response = await fetch("/c/upload", {
+          method: "POST",
+          headers: {
+            "content-type": file.type || "application/octet-stream",
+            "x-mizook-name": encodeURIComponent(file.name),
+          },
+          body: file,
+        });
+        const reply = (await response.json().catch(() => null)) as { reason?: unknown } | null;
+        if (!response.ok) {
+          throw new Error(
+            typeof reply?.reason === "string" ? reply.reason : "Could not upload that image.",
+          );
+        }
+        return reply;
+      });
+      const attachment = yield* Schema.decodeUnknownEffect(Attachment)(body);
+      return Message.UploadedImage({ id, attachment });
+    }).pipe(
+      Effect.catch((error) => Effect.succeed(Message.FailedImage({ id, reason: describe(error) }))),
     ),
 });
 
@@ -265,6 +325,66 @@ const uiChange = (
 
 const clearComposer = (model: Model) => uiChange(model, "textarea", "composer", { value: "" });
 
+const forgetImage = (image: PendingImage): void => {
+  if (image.preview.startsWith("blob:")) URL.revokeObjectURL(image.preview);
+};
+
+/** Drops the composer's images and the preview URLs only they hold. */
+const clearAttachments = (model: Model): Model => {
+  for (const image of model.attachments) forgetImage(image);
+  return { ...model, attachments: [], dragging: false };
+};
+
+/**
+ * Queues images the user pasted, dropped or picked. Each upload starts at once,
+ * so Send only has to wait for the last one to land.
+ */
+const addImages = (model: Model, files: ReadonlyArray<File>) => {
+  const images = files.filter((file) => IMAGE_TYPE.test(file.type));
+  const sized = images.filter((file) => file.size > 0 && file.size <= MAX_ATTACHMENT_BYTES);
+  const room = Math.max(MAX_ATTACHMENTS - model.attachments.length, 0);
+  const taken = sized.slice(0, room).map((file) => ({
+    file,
+    image: {
+      id: crypto.randomUUID(),
+      name: file.name === "" ? "image" : file.name,
+      preview: URL.createObjectURL(file),
+      file: Option.some(file),
+      uploaded: Option.none(),
+    } satisfies PendingImage,
+  }));
+  const notice =
+    images.length < files.length
+      ? "Only PNG, JPEG, WebP, GIF or AVIF images work."
+      : sized.length < images.length
+        ? "Images must be under 10 MB."
+        : sized.length > taken.length
+          ? `Up to ${MAX_ATTACHMENTS} images at a time.`
+          : undefined;
+  return {
+    model: {
+      ...model,
+      attachments: [...model.attachments, ...taken.map(({ image }) => image)],
+      dragging: false,
+      ...(notice === undefined ? {} : { notice: Option.some(notice) }),
+    },
+    commands: taken.map(({ file, image }) => UploadImage({ id: image.id, file })),
+  };
+};
+
+/** Images on the clipboard. A paste of text stays with the browser. */
+const pastedImages = (event: ClipboardEvent): ReadonlyArray<File> => {
+  const items = Array.fromIterable(event.clipboardData?.items ?? []);
+  const fromItems = items.flatMap((item) => {
+    if (item.kind !== "file") return [];
+    const file = item.getAsFile();
+    return file === null ? [] : [file];
+  });
+  const files =
+    fromItems.length > 0 ? fromItems : Array.fromIterable(event.clipboardData?.files ?? []);
+  return files.filter((file) => IMAGE_TYPE.test(file.type));
+};
+
 const setAgent = (
   model: Model,
   items: ReadonlyArray<{ value: string; label: string }>,
@@ -407,6 +527,8 @@ export const init = (flags: Flags, url: Url) => {
       renameInput: Input.init({ key: "rename-input" }),
     },
     turn: turnMachine.initial,
+    attachments: [],
+    dragging: false,
     notice: Option.none(),
     offline: typeof navigator !== "undefined" && !navigator.onLine,
     atBottom: true,
@@ -535,6 +657,44 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     Recovered: () => ({ model: { ...model, notice: Option.none() } }),
     FailedRecover: ({ reason }) => ({ model: withNotice(model, reason) }),
 
+    AddedImages: ({ files }) => {
+      const added = addImages(model, files);
+      return { model: added.model, commands: added.commands };
+    },
+    RemovedImage: ({ id }) => {
+      const found = model.attachments.find((image) => image.id === id);
+      if (found !== undefined) forgetImage(found);
+      return {
+        model: {
+          ...model,
+          attachments: model.attachments.filter((image) => image.id !== id),
+        },
+      };
+    },
+    UploadedImage: ({ id, attachment }) => ({
+      model: {
+        ...model,
+        attachments: model.attachments.map((image) =>
+          image.id === id ? { ...image, uploaded: Option.some(attachment) } : image,
+        ),
+      },
+    }),
+    FailedImage: ({ id, reason }) => {
+      const found = model.attachments.find((image) => image.id === id);
+      if (found !== undefined) forgetImage(found);
+      return {
+        model: withNotice(
+          {
+            ...model,
+            attachments: model.attachments.filter((image) => image.id !== id),
+          },
+          reason,
+        ),
+      };
+    },
+    DraggedImagesOver: () => ({ model: { ...model, dragging: true } }),
+    DraggedImagesAway: () => ({ model: { ...model, dragging: false } }),
+
     WentOffline: () => ({ model: { ...model, offline: true } }),
     WentOnline: () => ({
       model: { ...model, offline: false },
@@ -551,16 +711,35 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         commands: [ScrollToBottom(), settleComposer(model)],
       };
     },
-    FailedSend: ({ reason, text, threadId }) => {
+    FailedSend: ({ reason, text, threadId, attachments }) => {
       const turn = stepTurn(model, message);
-      const next: Model = { ...model, turn, notice: Option.some(reason) };
-      // Put the unsent text back, unless the user has moved on or started
-      // something new.
       const sameThread = threadId === undefined || Option.contains(activeThread(model), threadId);
-      if (text === undefined || !sameThread || model.ui.composer.value.trim() !== "")
-        return { model: next };
-      const restored = uiChange(next, "textarea", "composer", { value: text });
-      return { model: { ...next, ui: restored.ui }, commands: restored.commands };
+      const next: Model = { ...model, turn, notice: Option.some(reason) };
+      if (!sameThread) return { model: next };
+      // Put the unsent draft back, unless the user has moved on or started
+      // something new.
+      const draft =
+        text !== undefined && model.ui.composer.value.trim() === ""
+          ? uiChange(next, "textarea", "composer", { value: text })
+          : { ui: next.ui, commands: [] };
+      const restored: ReadonlyArray<PendingImage> =
+        attachments !== undefined && model.attachments.length === 0
+          ? attachments.map((attachment) => ({
+              id: crypto.randomUUID(),
+              name: attachment.name,
+              preview: imageUrl(attachment.key),
+              file: Option.none(),
+              uploaded: Option.some(attachment),
+            }))
+          : [];
+      return {
+        model: {
+          ...next,
+          ui: draft.ui,
+          attachments: restored.length > 0 ? restored : next.attachments,
+        },
+        commands: draft.commands,
+      };
     },
 
     Stopped: ({ ok }) => {
@@ -632,9 +811,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         renameThreadId: Option.none(),
       };
       const cleared = clearComposer(next);
-      const drawer = setDrawer({ ...next, ui: cleared.ui }, false);
+      const emptied = clearAttachments({ ...next, ui: cleared.ui });
+      const drawer = setDrawer(emptied, false);
       return {
-        model: { ...next, ui: drawer.ui },
+        model: { ...emptied, ui: drawer.ui },
         commands: [
           NavigateInternal({ url: routeHref(route) }),
           ...cleared.commands,
@@ -646,19 +826,30 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedSend: () => {
       const text = model.ui.composer.value.trim();
-      if (text === "" || !TurnState.guards.Idle(model.turn)) return { model };
+      const ready = model.attachments.flatMap((image) =>
+        Option.isSome(image.uploaded) ? [image.uploaded.value] : [],
+      );
+      const uploading = model.attachments.some((image) => Option.isNone(image.uploaded));
+      if (uploading) return { model: withNotice(model, "Wait for the image to finish uploading.") };
+      if ((text === "" && ready.length === 0) || !TurnState.guards.Idle(model.turn))
+        return { model };
       const requestId = crypto.randomUUID();
       const turn = stepTurn(model, message);
       // Clear on press, not on the server's answer: the message is already on its way.
       const cleared = clearComposer({ ...model, turn, notice: Option.none() });
-      const writing: Model = { ...model, ui: cleared.ui, turn, notice: Option.none() };
+      const writing = clearAttachments({ ...model, ui: cleared.ui, turn, notice: Option.none() });
       const active = activeThread(model);
       if (Option.isSome(active))
         return {
           model: writing,
           commands: [
             ...cleared.commands,
-            SendMessage({ threadId: active.value, text, requestId }),
+            SendMessage({
+              threadId: active.value,
+              text,
+              requestId,
+              ...(ready.length > 0 && { attachments: ready }),
+            }),
             settleComposer(model),
           ],
         };
@@ -679,7 +870,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         commands: [
           ...cleared.commands,
           NavigateInternal({ url: routeHref(route) }),
-          SendMessage({ threadId, text, requestId, agent }),
+          SendMessage({
+            threadId,
+            text,
+            requestId,
+            agent,
+            ...(ready.length > 0 && { attachments: ready }),
+          }),
           settleComposer(model),
         ],
       };
@@ -850,6 +1047,14 @@ export const subscriptions = Subscription.make<Model, Message, ChatSync>()((entr
     streamFromKeyBindings<Message>({
       bindings: [{ keys: "/", preventDefault: true, mapEvent: () => Message.PressedSlash() }],
     }),
+  ),
+  paste: Subscription.persistentEntry(
+    Stream.fromEventListener<ClipboardEvent>(document, "paste").pipe(
+      Stream.map((event) => ({ event, files: pastedImages(event) })),
+      Stream.filter(({ files }) => files.length > 0),
+      Stream.tap(({ event }) => Effect.sync(() => event.preventDefault())),
+      Stream.map(({ files }) => Message.AddedImages({ files })),
+    ),
   ),
   swipe: Subscription.persistentEntry(
     swipeDrawer<Message>({

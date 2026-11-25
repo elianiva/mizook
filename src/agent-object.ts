@@ -1,4 +1,5 @@
 import type { Overview } from "@mizook/admin-api";
+import type { Attachment } from "@mizook/chat-sync";
 import { DurableObject } from "cloudflare:workers";
 import { Effect } from "effect";
 import { Agent } from "./agent.ts";
@@ -249,9 +250,10 @@ export class AgentObject extends DurableObject<Env> {
     requestId: string,
     where: string,
     first: boolean,
+    attachments: ReadonlyArray<Attachment>,
   ): Promise<WebTurnResult> {
     return this.runtime.runPromise(
-      Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where, first)).pipe(
+      Bot.use((bot) => bot.beginWebTurn(place, text, requestId, where, first, attachments)).pipe(
         Effect.tap(Effect.promise(() => this.rearmAlarm())),
         Effect.catchCause((cause) =>
           Effect.as(Effect.logError("web turn failed to start", cause), {

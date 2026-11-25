@@ -10,6 +10,7 @@ import { routeOf } from "./route.ts";
 import { agentObject, automationsObject, hubObject } from "./objects.ts";
 import { handleAdmin } from "./admin/handler.ts";
 import { accessWho, verifierFor } from "./admin/access.ts";
+import { serveWebMedia, uploadWebMedia } from "./uploads.ts";
 
 export { AgentObject } from "./agent-object.ts";
 export { Hub } from "./hub.ts";
@@ -28,6 +29,7 @@ const PUBLISHED_ARTIFACT_PATH = /^\/a\/([\w-]{16,64})(?:\/.*)?$/;
 const ARTIFACT_DATA_PATH = /^\/d\/([\w-]{16,64})(?:\/([^/]*))?$/;
 const ONE_HOUR_EXPORT_PATH = /^\/x\/([\w-]{16,64})$/;
 const AUTOMATION_HOOK_PATH = /^\/hook\/(\d+)\/([\w-]{16,64})$/;
+const WEB_MEDIA_PATH = /^\/c\/media\/([\w-]+\.(?:png|jpe?g|webp|gif|avif))$/;
 const MAX_HOOK_BODY_CHARS = 100_000;
 
 const isPubliclyVisibleArtifact = <T extends R2Object>(object: T | null): object is T => {
@@ -44,7 +46,7 @@ const ANY_ORIGIN_READ_ONLY_CORS = {
 };
 
 const WEB_CONTENT_SECURITY_POLICY =
-  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob: https:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const SERVICE_WORKER_PATH = "/sw.js";
 const WEB_MANIFEST_PATH = "/manifest.webmanifest";
@@ -118,6 +120,10 @@ export default {
     if (pathname === "/admin" || pathname.startsWith("/admin/")) return handleAdmin(request, env);
     if (pathname === "/c/sync" || pathname.startsWith("/c/sync/"))
       return Effect.runPromise(webChatHandler(env)(request));
+    if (pathname === "/c/upload" && request.method === "POST") return uploadWebMedia(request, env);
+    const media = WEB_MEDIA_PATH.exec(pathname);
+    if (media !== null && (request.method === "GET" || request.method === "HEAD"))
+      return serveWebMedia(request, env, media[1]!);
 
     if (pathname === "/telegram/webhook" && request.method === "POST") {
       const secretSentByTelegram = request.headers.get("x-telegram-bot-api-secret-token") ?? "";

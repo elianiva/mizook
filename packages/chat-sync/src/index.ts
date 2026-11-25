@@ -36,12 +36,25 @@ export const ThreadSummary = Schema.Struct({
 });
 export type ThreadSummary = typeof ThreadSummary.Type;
 
+/** A file the user sent with a message. The bytes live in R2 under `key`. */
+export const Attachment = Schema.Struct({
+  key: Schema.String,
+  name: Schema.String,
+  type: Schema.String,
+  size: Schema.Finite,
+});
+export type Attachment = typeof Attachment.Type;
+
+export const MAX_ATTACHMENTS = 4;
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
 export const ChatMessage = Schema.Struct({
   id: Schema.Finite,
   role: Schema.Literals(["user", "agent"]),
   text: Schema.String,
   at: Schema.Finite,
   requestId: Schema.optionalKey(Schema.String),
+  attachments: Schema.optionalKey(Schema.Array(Attachment)),
 });
 export type ChatMessage = typeof ChatMessage.Type;
 
@@ -119,6 +132,7 @@ const SendMessage = Action.make("send", {
     threadId: Schema.String,
     text: Schema.String,
     requestId: Schema.String,
+    attachments: Schema.optionalKey(Schema.Array(Attachment)),
   }),
   success: Schema.Struct({ message: ChatMessage }),
   error: ActionError,
@@ -220,8 +234,8 @@ export const WebChatSource = "main";
 
 export const emptyTranscript: ThreadTranscript = { messages: [], running: false, approvals: [] };
 
-export const previewOf = (text: string): string =>
-  text
+export const previewOf = (text: string, attachments: ReadonlyArray<Attachment> = []): string => {
+  const preview = text
     .replace(/(```|~~~)openui-lang\b[\s\S]*?(\1|$)/g, (block) => {
       const names = [...block.matchAll(/^\s*\w+\s*=\s*([A-Z]\w*)\(/gm)].map((match) => match[1]);
       return ` ${names.find((name) => name !== "Stack") ?? ""} `;
@@ -229,9 +243,17 @@ export const previewOf = (text: string): string =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 160);
+  if (preview !== "") return preview;
+  if (attachments.length === 0) return "";
+  return attachments.length === 1 ? "Image" : `${attachments.length} images`;
+};
 
-export const titleOf = (thread: ThreadSummary, text: string): string => {
-  const preview = previewOf(text);
+export const titleOf = (
+  thread: ThreadSummary,
+  text: string,
+  attachments: ReadonlyArray<Attachment> = [],
+): string => {
+  const preview = previewOf(text, attachments);
   return thread.title === "New chat" && preview !== "" ? preview.slice(0, 60) : thread.title;
 };
 
@@ -320,22 +342,29 @@ const optimistic = {
   },
   send: (
     state: ChatState,
-    payload: { readonly threadId: string; readonly text: string; readonly requestId: string },
+    payload: {
+      readonly threadId: string;
+      readonly text: string;
+      readonly requestId: string;
+      readonly attachments?: ReadonlyArray<Attachment>;
+    },
   ) => {
     const thread = state.threads.find((candidate) => candidate.id === payload.threadId);
     if (thread === undefined) return state;
     const transcript = state.transcripts[thread.id] ?? emptyTranscript;
     const at = Date.now();
+    const attachments = payload.attachments ?? [];
     const message: ChatMessage = {
       id: -at,
       role: "user",
       text: payload.text,
       at,
       requestId: payload.requestId,
+      ...(attachments.length > 0 && { attachments }),
     };
     const updated = asThread(thread, {
-      title: titleOf(thread, payload.text),
-      preview: previewOf(payload.text),
+      title: titleOf(thread, payload.text, attachments),
+      preview: previewOf(payload.text, attachments),
       updated: at,
     });
     return withTranscript(withThread(state, updated), thread.id, {

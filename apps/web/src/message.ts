@@ -1,9 +1,10 @@
 import { Schema } from "effect";
+import { File as FileSchema } from "foldkit/file";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 import { Message as UiMessage } from "@mizook/ui";
-import { ThreadSummary } from "@mizook/chat-sync";
+import { Attachment, ThreadSummary } from "@mizook/chat-sync";
 
 import { SyncView } from "./sync.ts";
 
@@ -22,11 +23,19 @@ export const Message = defineMessageUnion({
   Recovered: {},
   FailedRecover: { reason: Schema.String },
 
+  AddedImages: { files: Schema.Array(FileSchema) },
+  RemovedImage: { id: Schema.String },
+  UploadedImage: { id: Schema.String, attachment: Attachment },
+  FailedImage: { id: Schema.String, reason: Schema.String },
+  DraggedImagesOver: {},
+  DraggedImagesAway: {},
+
   SentMessage: { threadId: Schema.String, text: Schema.String },
   FailedSend: {
     reason: Schema.String,
     text: Schema.optionalKey(Schema.String),
     threadId: Schema.optionalKey(Schema.String),
+    attachments: Schema.optionalKey(Schema.Array(Attachment)),
   },
   Stopped: { ok: Schema.Boolean },
   FailedStop: { reason: Schema.String },

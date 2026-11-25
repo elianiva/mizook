@@ -2,6 +2,8 @@ import {
   ChatEvent,
   ChatMessage,
   ChatState,
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_BYTES,
   ThreadSummary,
   ThreadTranscript,
   WebChat,
@@ -13,6 +15,7 @@ import {
   withTranscript,
   type Agent,
   type Approval,
+  type Attachment,
 } from "@mizook/chat-sync";
 import { Server } from "@yielded/sync/server";
 import { ProtocolError } from "@yielded/sync";
@@ -66,6 +69,7 @@ const transcriptOf = (state: WebState): ThreadTranscript => ({
     role: message.role,
     text: message.text,
     at: message.at,
+    ...(message.attachments !== undefined && { attachments: message.attachments }),
   })),
   running: state.running,
   approvals: state.approvals.map(({ id, summary, match, created }) => ({
@@ -152,14 +156,35 @@ const create = (state: ServerState, payload: { readonly id: string; readonly age
 const send = (
   env: Env,
   state: ServerState,
-  payload: { readonly threadId: string; readonly text: string; readonly requestId: string },
+  payload: {
+    readonly threadId: string;
+    readonly text: string;
+    readonly requestId: string;
+    readonly attachments?: ReadonlyArray<Attachment>;
+  },
 ) =>
   Effect.gen(function* () {
     const thread = threadOf(state, payload.threadId);
     if (thread === undefined) return yield* Effect.fail({ reason: "That chat is gone." });
     const text = payload.text.trim();
-    if (text === "") return yield* Effect.fail({ reason: "Say something first." });
+    const attachments = payload.attachments ?? [];
+    if (text === "" && attachments.length === 0)
+      return yield* Effect.fail({ reason: "Say something first." });
     if (text.length > 20_000) return yield* Effect.fail({ reason: "That message is too long." });
+    if (attachments.length > MAX_ATTACHMENTS)
+      return yield* Effect.fail({ reason: `Up to ${MAX_ATTACHMENTS} images at a time.` });
+    for (const attachment of attachments) {
+      if (!/^inbox\/web\/[\w-]+\.(?:png|jpe?g|webp|gif|avif)$/.test(attachment.key))
+        return yield* Effect.fail({ reason: "That image is not one of ours." });
+      if (!attachment.type.startsWith("image/"))
+        return yield* Effect.fail({ reason: "Only images can be sent." });
+      if (attachment.size <= 0 || attachment.size > MAX_ATTACHMENT_BYTES)
+        return yield* Effect.fail({ reason: "That image is too large." });
+      // A key the upload route did not issue would leave a broken image in the chat.
+      const stored = yield* promise("read an uploaded image", () => env.Files.head(attachment.key));
+      if (stored === null)
+        return yield* Effect.fail({ reason: "That image is gone. Add it again." });
+    }
     const requestId = payload.requestId.trim();
     if (requestId === "") return yield* Effect.fail({ reason: "Missing message id." });
     const transcript = transcriptOfThread(state, thread.id);
@@ -173,10 +198,11 @@ const send = (
       text,
       at,
       requestId,
+      ...(attachments.length > 0 && { attachments }),
     };
     const first = thread.title === "New chat";
-    const title = titleOf(thread, text);
-    const preview = previewOf(text);
+    const title = titleOf(thread, text, attachments);
+    const preview = previewOf(text, attachments);
     const updated: ThreadSummary = { ...thread, title, preview, updated: at };
     const chat = withTranscript(withThread(state.chat, updated), thread.id, {
       ...transcript,
@@ -184,7 +210,7 @@ const send = (
       running: true,
     });
     const result = yield* promise("start a web turn", () =>
-      agentOf(env, thread).webTurn(`web:${thread.id}`, text, requestId, title, first),
+      agentOf(env, thread).webTurn(`web:${thread.id}`, text, requestId, title, first, attachments),
     );
     if (!result.ok) return yield* Effect.fail({ reason: result.reason });
     return Server.commit({

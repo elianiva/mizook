@@ -32,6 +32,10 @@ export const previewText = (text: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
+/** The URL of an image the chat stored in R2. Its key's last segment names the file. */
+export const imageUrl = (key: string): string =>
+  `/c/media/${encodeURIComponent(key.split("/").at(-1) ?? "")}`;
+
 /** The thread list's group for a time: today, yesterday, or earlier. */
 export const dayGroup = (at: number, now = Date.now()): "Today" | "Yesterday" | "Earlier" => {
   const start = new Date(now);

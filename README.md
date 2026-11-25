@@ -17,7 +17,7 @@ and nothing needs resetting.
   every turn is a durable run. Model calls and tool calls are committed to the Durable Object's
   SQLite before anything is shown, so a restart picks the turn up where it stopped.
 - **Telegram** — [Chat SDK](https://chat-sdk.dev) with the Telegram adapter.
-- **Web chat:** [`apps/web`](apps/web) is a full-page chat at `https://mzk.elianiva.com`. It has its own `web` agent and a thread list from the Hub. Foldkit holds the state, `@mizook/ui` supplies the interactive behaviors, and `@mizook/design` supplies the Panda preset both apps use.
+- **Web chat:** [`apps/web`](apps/web) is a full-page chat at `https://mzk.elianiva.com`. It has its own `web` agent and a thread list from the Hub. Foldkit holds the state, `@mizook/ui` supplies the interactive behaviors, and `@mizook/design` supplies the Panda preset both apps use. Paste, drop or pick up to four images in a message; each is stored in R2, described for the agent, and shown in the thread.
 - **Deploy** — [Alchemy](https://alchemy.run), declared in `alchemy.run.ts`.
 - Everything is [Effect](https://effect.website): services, layers, typed errors.
 
@@ -172,9 +172,9 @@ To work on the dashboard, run `pnpm --filter @mizook/dashboard dev`. It proxies 
 
 The web chat lives at `/c`. The Worker redirects `/` to `/c`. One `WebChat` Durable Object owns the thread list and every transcript. The browser keeps a replica in IndexedDB and talks to that source over an Effect RPC WebSocket at `/c/sync`. The agent appends its bubbles and turn status through the same source actions, so the order the browser reads is the order the agent wrote. The old `web_messages` and `web_threads` tables are read once when the source initializes. Threads are places named `web:<id>`, so one web agent shares its memory across every web thread.
 
-The chat installs as a PWA: `/manifest.webmanifest` names it, and a service worker at `/sw.js` with scope `/c` precaches the shell, so an installed copy opens offline. The synced replica lives in IndexedDB, so the saved thread list and conversations stay readable without a connection and queued actions run when the connection returns. Navigations go to the network first so Cloudflare Access can still renew a session. Only a failed fetch falls back to the cached shell. A new version takes over on the next launch, after every open copy has closed.
+The chat installs as a PWA: `/manifest.webmanifest` names it, and a service worker at `/sw.js` with scope `/c` precaches the shell, so an installed copy opens offline. The manifest and icons use the Mizook mark and brand magenta, with a maskable icon for Android and an apple-touch icon for iOS. The synced replica lives in IndexedDB, so the saved thread list and conversations stay readable without a connection and queued actions run when the connection returns. Navigations go to the network first so Cloudflare Access can still renew a session. Only a failed fetch falls back to the cached shell. A new version takes over on the next launch, after every open copy has closed.
 
-To work on the chat, run `pnpm --filter @mizook/web dev`. It proxies `/c/sync` to `CHAT_API` (default `http://localhost:8788`), including the WebSocket. `pnpm run build` builds both apps and assembles `dist/` as one asset directory.
+To work on the chat, run `pnpm --filter @mizook/web dev`. It proxies `/c/sync`, `/c/upload` and `/c/media` to `CHAT_API` (default `http://localhost:8788`), including the WebSocket. `pnpm run build` builds both apps and assembles `dist/` as one asset directory.
 
 ## Access
 

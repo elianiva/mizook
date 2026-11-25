@@ -1,6 +1,8 @@
 import {
   applyEvent,
   ChatEvent,
+  previewOf,
+  titleOf,
   type ChatMessage,
   type ChatState,
   type ThreadSummary,
@@ -118,4 +120,18 @@ test("live events extend, replace and clear the reply in progress, and the reply
   );
   expect(done.transcripts[thread.id]).not.toHaveProperty("streaming");
   expect(done.transcripts[thread.id]?.messages).toEqual([reply]);
+});
+
+test("an image-only message gets a preview and a name", () => {
+  const image = {
+    key: "inbox/web/one.png",
+    name: "one.png",
+    type: "image/png",
+    size: 1200,
+  };
+  expect(previewOf("", [image])).toBe("Image");
+  expect(previewOf("", [image, { ...image, key: "inbox/web/two.png" }])).toBe("2 images");
+  expect(previewOf("look at this", [image])).toBe("look at this");
+  expect(titleOf(thread, "", [image])).toBe("Image");
+  expect(titleOf({ ...thread, title: "Kept" }, "", [image])).toBe("Kept");
 });

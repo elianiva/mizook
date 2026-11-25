@@ -27,6 +27,7 @@ import { Commands } from "./commands.ts";
 import { COMMANDS } from "./command-list.ts";
 import { WebChatClient } from "./chat/web-chat-client.ts";
 import type { WebTurnResult } from "./chat/types.ts";
+import type { Attachment } from "@mizook/chat-sync";
 import { Agents, Self } from "./host.ts";
 import { Usage } from "./usage.ts";
 import { State } from "./state.ts";
@@ -65,6 +66,7 @@ export class Bot extends Context.Service<
       requestId: string,
       where: string,
       first: boolean,
+      attachments: ReadonlyArray<Attachment>,
     ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError>;
     postTo(place: string, text: string): Effect.Effect<void, StateError | TelegramError>;
     approve(
@@ -147,6 +149,74 @@ export class Bot extends Context.Service<
         match,
         created,
       });
+
+      // An attachment is a note in the turn's text, so the agent sees what it
+      // is and can open the stored file again later. Images are described and
+      // audio is transcribed when Workers AI is available.
+      const plainAttachmentNote = (file: {
+        key: string;
+        name: string;
+        contentType: string;
+        kind: string;
+        size: number;
+      }) =>
+        `[attached ${file.kind}: ${file.name}, ${file.contentType}, ${file.size} bytes, key ${file.key}]`;
+
+      const attachmentNote = (file: {
+        key: string;
+        name: string;
+        contentType: string;
+        kind: string;
+        bytes: Uint8Array;
+      }) =>
+        Effect.gen(function* () {
+          const note = plainAttachmentNote({ ...file, size: file.bytes.length });
+          const extracted = yield* media
+            .extract({
+              bytes: file.bytes,
+              contentType: file.contentType,
+              name: file.name,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(`media ${file.key} failed: ${error.message}`).pipe(
+                  Effect.as(undefined),
+                ),
+              ),
+            );
+          return extracted === undefined
+            ? note
+            : `${note}\n${MEDIA_LABEL[extracted.kind]}:\n${clipToolOutput(extracted.text, MAX_EXTRACTED_MEDIA_CHARS)}`;
+        });
+
+      const storedAttachmentNote = (attachment: Attachment) =>
+        Effect.gen(function* () {
+          const blob = yield* blobs
+            .get(attachment.key)
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(`reading ${attachment.key} failed: ${error.message}`).pipe(
+                  Effect.as(undefined),
+                ),
+              ),
+            );
+          if (blob === undefined) {
+            return `${plainAttachmentNote({
+              key: attachment.key,
+              name: attachment.name,
+              contentType: attachment.type,
+              kind: "image",
+              size: attachment.size,
+            })} (missing)`;
+          }
+          return yield* attachmentNote({
+            key: attachment.key,
+            name: attachment.name,
+            contentType: attachment.type || blob.contentType,
+            kind: "image",
+            bytes: blob.body,
+          });
+        });
 
       const deliver = (threadId: string, text: string) =>
         isWebPlace(threadId)
@@ -306,24 +376,16 @@ export class Bot extends Context.Service<
               Effect.orElseSucceed(() => false),
             );
           if (stored) {
-            const note = `[attached ${file.type}: ${name}, ${file.mimeType ?? "unknown type"}, ${bytes.length} bytes, key ${key}]`;
-            const extracted = yield* media
-              .extract({
-                bytes,
-                contentType: file.mimeType ?? "application/octet-stream",
-                name,
-              })
-              .pipe(
-                Effect.catch((error) =>
-                  Effect.logWarning(`media ${key} failed: ${error.message}`).pipe(
-                    Effect.as(undefined),
-                  ),
-                ),
-              );
+            const fileKind = file.type || "file";
+            const contentType = file.mimeType ?? "application/octet-stream";
             notesOfFilesKeptInBlobStore.push(
-              extracted === undefined
-                ? note
-                : `${note}\n${MEDIA_LABEL[extracted.kind]}:\n${clipToolOutput(extracted.text, MAX_EXTRACTED_MEDIA_CHARS)}`,
+              yield* attachmentNote({
+                key,
+                name,
+                contentType,
+                kind: fileKind,
+                bytes,
+              }),
             );
           }
         }
@@ -434,6 +496,7 @@ export class Bot extends Context.Service<
         requestId: string,
         where: string,
         first: boolean,
+        attachments: ReadonlyArray<Attachment>,
       ): Effect.Effect<WebTurnResult, AgentError | StateError | TelegramError> =>
         Effect.gen(function* () {
           if (settings.budgetDaily > 0) {
@@ -444,10 +507,33 @@ export class Bot extends Context.Service<
                 reason: `Daily budget reached (${spent.toFixed(2)} of ${settings.budgetDaily}). Raise it with /budget.`,
               };
           }
+          // Describing four images can take a few seconds. The note keeps the
+          // key either way, so `files.read` can describe one later.
+          const attachmentNotes = yield* Effect.forEach(attachments, storedAttachmentNote, {
+            concurrency: 2,
+          }).pipe(
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () =>
+                Effect.succeed(
+                  attachments.map((attachment) =>
+                    plainAttachmentNote({
+                      key: attachment.key,
+                      name: attachment.name,
+                      contentType: attachment.type,
+                      kind: "image",
+                      size: attachment.size,
+                    }),
+                  ),
+                ),
+            }),
+          );
+          const said = [...attachmentNotes, text.trim()].filter((part) => part !== "").join("\n");
+          if (said === "") return { ok: false as const, reason: "Say something first." };
           const started = yield* agent.begin({
             chatId: place,
             threadId: place,
-            text,
+            text: said,
             where,
             requestId: `${place}:${requestId}`,
             source: "user",

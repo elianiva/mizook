@@ -27,6 +27,7 @@ export const glyphs = {
   chevronDown: { d: "M5 9l7 7 7-7" },
   chevronRight: { d: "M9 5l7 7-7 7" },
   thread: { d: "M3 4h18v13H8l-5 4zM12 7.5v6M9 10.5h6" },
+  image: { d: "M3 4h18v16H3zM3 16l5-5 4 4 3-3 6 6M15 8.5h1" },
   grid: { d: "M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" },
   log: { d: "M8 5h13M8 12h13M8 19h13M3 4h2v2H3zM3 11h2v2H3zM3 18h2v2H3z" },
   tree: { d: "M10 2h4v4h-4zM2 18h4v4H2zM10 18h4v4h-4zM18 18h4v4h-4zM12 6v6M4 18v-6h16v6M12 12v6" },

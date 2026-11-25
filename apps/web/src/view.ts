@@ -18,7 +18,7 @@ import type { Approval, ChatMessage, ThreadState, ThreadSummary } from "@mizook/
 import { icon, logo } from "@mizook/ui/icon";
 import { isArmed } from "@mizook/ui/confirmation";
 
-import { clock, dayGroup, previewText, timeAgo } from "./format.ts";
+import { clock, dayGroup, imageUrl, previewText, timeAgo } from "./format.ts";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
 import { TurnState } from "./turn-machine.ts";
@@ -432,6 +432,7 @@ const messageView = (
   copied: boolean,
 ): Html => {
   const user = message.role === "user";
+  const attachments = message.attachments ?? [];
   const time = h.time(
     [h.Class(ui.time), h.Attribute("datetime", new Date(message.at).toISOString())],
     [clock(message.at)],
@@ -447,7 +448,37 @@ const messageView = (
       ? [
           h.div(
             [h.Class(ui.bubble)],
-            [h.span([h.Class(ui.srOnly)], ["You said: "]), h.p([h.Class(ui.text)], [message.text])],
+            [
+              h.span([h.Class(ui.srOnly)], ["You said: "]),
+              ...(attachments.length === 0
+                ? []
+                : [
+                    h.div(
+                      [h.Class(ui.messageImages)],
+                      attachments.map((attachment) => {
+                        const src = imageUrl(attachment.key);
+                        return h.a(
+                          [
+                            h.Key(attachment.key),
+                            h.Href(src),
+                            h.Target("_blank"),
+                            h.Rel("noopener noreferrer"),
+                            h.Class(ui.messageImageLink),
+                          ],
+                          [
+                            h.img([
+                              h.Src(src),
+                              h.Alt(attachment.name),
+                              h.Loading("lazy"),
+                              h.Class(ui.messageImage),
+                            ]),
+                          ],
+                        );
+                      }),
+                    ),
+                  ]),
+              ...(message.text === "" ? [] : [h.p([h.Class(ui.text)], [message.text])]),
+            ],
           ),
           ...(continued ? [] : [time]),
         ]
@@ -685,7 +716,11 @@ const homeView = (model: Model, h: H, config: PartsConfig<Message>, failure?: st
             ],
           ),
           ...(failure === undefined
-            ? [agentPicker(model, h, config), composerBox(model, h, config, false)]
+            ? [
+                noticeView(model, h),
+                agentPicker(model, h, config),
+                composerBox(model, h, config, false),
+              ]
             : [
                 h.div(
                   [h.Class(ui.errorBox), h.Role("alert")],
@@ -735,45 +770,114 @@ const threadContent = (model: Model, h: H): Html =>
 const composerBox = (model: Model, h: H, config: PartsConfig<Message>, running: boolean): Html => {
   const textarea = Textarea.parts(model.ui.composer, h, config);
   const empty = model.ui.composer.value.trim() === "";
+  const uploading = model.attachments.some((image) => Option.isNone(image.uploaded));
+  const canSend = (!empty || model.attachments.length > 0) && !uploading;
   const agent = agentNameOf(model);
   return h.div(
-    [h.Class(ui.composerBox)],
     [
-      textarea.root({}, [
-        h.Class(ui.textarea),
-        h.Placeholder(`Message ${agent}`),
-        h.AriaLabel("Message"),
-        h.Rows(1),
-        ...(model.touch
-          ? []
-          : [
-              h.OnKeyDownPreventDefault((key, modifiers) =>
-                key === "Enter" &&
-                !modifiers.shiftKey &&
-                !modifiers.ctrlKey &&
-                !modifiers.metaKey &&
-                !modifiers.altKey
-                  ? Option.some(Message.ClickedSend())
-                  : Option.none(),
+      h.Class(cx(ui.composerBox, model.dragging ? ui.composerDragging : undefined)),
+      h.AllowDrop(),
+      h.OnDragEnter(Message.DraggedImagesOver()),
+      h.OnDragLeave(Message.DraggedImagesAway()),
+      h.OnDropFiles((files) => Message.AddedImages({ files })),
+    ],
+    [
+      ...(model.dragging
+        ? [h.div([h.Class(ui.dropHint), h.Role("status")], ["Drop images to attach"])]
+        : []),
+      ...(model.attachments.length === 0
+        ? []
+        : [
+            h.div(
+              [h.Class(ui.attachments), h.Role("group"), h.AriaLabel("Images to send")],
+              model.attachments.map((image) =>
+                h.div(
+                  [
+                    h.Key(image.id),
+                    h.Class(
+                      cx(
+                        ui.attachment,
+                        Option.isNone(image.uploaded) ? ui.attachmentUploading : undefined,
+                      ),
+                    ),
+                  ],
+                  [
+                    h.img([h.Src(image.preview), h.Alt(image.name), h.Class(ui.attachmentImage)]),
+                    ...(Option.isSome(image.uploaded)
+                      ? []
+                      : [h.span([h.Class(ui.attachmentBusy), h.Role("status")], ["Uploading"])]),
+                    h.button(
+                      [
+                        h.Type("button"),
+                        h.Class(ui.attachmentRemove),
+                        h.AriaLabel(`Remove ${image.name}`),
+                        h.Title(`Remove ${image.name}`),
+                        h.OnClick(Message.RemovedImage({ id: image.id })),
+                      ],
+                      [icon(h, "close", 14)],
+                    ),
+                  ],
+                ),
               ),
-            ]),
-      ]),
-      // One slot: Send while idle, Stop while a turn runs.
-      running
-        ? h.button(
-            [
-              h.Type("button"),
-              h.Class(button({ tone: "danger", size: "icon" })),
-              h.AriaLabel("Stop"),
-              h.Title("Stop"),
-              h.Disabled(TurnState.guards.Stopping(model.turn)),
-              h.OnClick(Message.ClickedStop()),
-            ],
-            [icon(h, "stop", 16)],
-          )
-        : iconButton(h, "send", "Send", Message.ClickedSend(), "primary", [
-            h.Disabled(empty || TurnState.guards.Sending(model.turn)),
+            ),
           ]),
+      h.div(
+        [h.Class(ui.composerRow)],
+        [
+          h.label(
+            [
+              h.Class(cx(button({ tone: "ghost", size: "icon" }), ui.attach)),
+              h.Title("Add an image"),
+            ],
+            [
+              icon(h, "image", 20),
+              h.span([h.Class(ui.srOnly)], ["Add an image"]),
+              h.input([
+                h.Type("file"),
+                h.Accept("image/png,image/jpeg,image/webp,image/gif,image/avif"),
+                h.Multiple(true),
+                h.Class(ui.fileInput),
+                h.OnFileChange((files) => Message.AddedImages({ files })),
+              ]),
+            ],
+          ),
+          textarea.root({}, [
+            h.Class(ui.textarea),
+            h.Placeholder(`Message ${agent}`),
+            h.AriaLabel("Message"),
+            h.Rows(1),
+            ...(model.touch
+              ? []
+              : [
+                  h.OnKeyDownPreventDefault((key, modifiers) =>
+                    key === "Enter" &&
+                    !modifiers.shiftKey &&
+                    !modifiers.ctrlKey &&
+                    !modifiers.metaKey &&
+                    !modifiers.altKey
+                      ? Option.some(Message.ClickedSend())
+                      : Option.none(),
+                  ),
+                ]),
+          ]),
+          // One slot: Send while idle, Stop while a turn runs.
+          running
+            ? h.button(
+                [
+                  h.Type("button"),
+                  h.Class(button({ tone: "danger", size: "icon" })),
+                  h.AriaLabel("Stop"),
+                  h.Title("Stop"),
+                  h.Disabled(TurnState.guards.Stopping(model.turn)),
+                  h.OnClick(Message.ClickedStop()),
+                ],
+                [icon(h, "stop", 16)],
+              )
+            : iconButton(h, "send", "Send", Message.ClickedSend(), "primary", [
+                h.Disabled(!canSend || TurnState.guards.Sending(model.turn)),
+              ]),
+        ],
+      ),
     ],
   );
 };
