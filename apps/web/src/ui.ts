@@ -469,7 +469,15 @@ export const ui = {
     "& img": { maxWidth: "100%", height: "auto", border: "1px solid {colors.border}" },
   }),
   working: css({ display: "flex", alignItems: "center", gap: "6px", height: "24px" }),
-  workingMark: css({ width: "10px", height: "10px", backgroundColor: "accent" }),
+  // Marks brighten in turn, so a running turn reads as alive without blinking.
+  workingMark: css({
+    width: "10px",
+    height: "10px",
+    backgroundColor: "accent",
+    animation: "working 1.1s ease-in-out infinite backwards",
+    "&:nth-child(2)": { animationDelay: "160ms" },
+    "&:nth-child(3)": { animationDelay: "320ms" },
+  }),
 
   blocks: css({ display: "flex", flexDirection: "column", gap: "12px", minWidth: 0 }),
   blockTitle: css({ textStyle: "caps", marginBottom: "10px", color: "fgMuted" }),

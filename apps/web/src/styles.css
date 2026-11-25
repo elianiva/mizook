@@ -2,6 +2,17 @@
 
 @layer reset, base, tokens, recipes, utilities;
 
+/* The working marks take turns at full strength, so the row never goes dark. */
+@keyframes working {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* A steady caret marks the arrival point; a blinking one makes the reply pulse. */
 [data-markdown="root"] [data-markdown="caret"] {
   animation: none;
