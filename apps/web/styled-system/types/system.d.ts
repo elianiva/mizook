@@ -505,7 +505,7 @@ export type InlineSizeValue = CssDimensionGlobals | TokenValue<"sizes"> | "1/12"
 
 export type InvertValue = string | number | CssVars | AnyString
 
-export type KeyframesValue = "blink" | "bounce" | "fadeIn" | "ping" | "popIn" | "pulse" | "riseIn" | "slideIn" | "spin" | CssVars | AnyString | AnyNumber
+export type KeyframesValue = "bounce" | "fadeIn" | "ping" | "popIn" | "pulse" | "riseIn" | "slideIn" | "spin" | CssVars | AnyString | AnyNumber
 
 export type LetterSpacingsValue = CssGlobals | TokenValue<"letterSpacings"> | CssVars | AnyString | AnyNumber
 
